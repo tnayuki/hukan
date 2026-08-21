@@ -1,0 +1,252 @@
+import AppKit
+
+/// Renders transcript styling to a PNG, with no window and no session.
+///
+/// Iterating on the look inside the running app means launching it, opening a repository,
+/// picking a session and scrolling to the right place — and a screenshot only works while the
+/// display is awake and nothing is covering the window. This draws the same views offscreen,
+/// so the result is a file that can be looked at directly.
+///
+/// The content is one of the named cases in `RenderCase` rather than a single hardcoded sample,
+/// so a new thing to eyeball (or snapshot-test) is a case in the registry, not a one-off `--flag`
+/// and a bespoke builder each time:
+///
+///     hukan-render <case> /tmp/out.png [width]     # any registered case
+public enum TranscriptPreview {
+  public static func run(to path: String, width: CGFloat, content: NSAttributedString) -> Never {
+    let image = image(content: content, width: width)
+    guard let tiff = image.tiffRepresentation,
+      let rep = NSBitmapImageRep(data: tiff),
+      let png = rep.representation(using: .png, properties: [:])
+    else {
+      FileHandle.standardError.write(Data("could not encode a PNG\n".utf8))
+      exit(1)
+    }
+    do {
+      try png.write(to: URL(fileURLWithPath: path))
+    } catch {
+      FileHandle.standardError.write(Data("could not write \(path): \(error)\n".utf8))
+      exit(1)
+    }
+    print("\(path) \(Int(width))x\(Int(image.size.height))")
+    exit(0)
+  }
+
+  /// Draw `content` to an image at `width`, sized to fit its laid-out height. Split out from
+  /// `run` so a snapshot test can render a case and compare the bitmap without the CLI's
+  /// write-and-exit — it exercises exactly the transcript's own drawing path, custom block
+  /// fills included.
+  public static func image(content: NSAttributedString, width: CGFloat) -> NSImage {
+    // Semantic colours resolve against whatever appearance is current, and offscreen that
+    // is the light one — so labelColor comes out black and the whole transcript vanishes
+    // into the dark background it is designed for.
+    let appearance = NSAppearance(named: .darkAqua)!
+    NSApplication.shared.appearance = appearance
+
+    let (scrollView, textView) = makeTranscriptTextView()
+    textView.appearance = appearance
+    textView.textStorage?.setAttributedString(content)
+
+    // A tall container first, so layout is never the thing that truncates.
+    scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 20_000)
+    textView.frame = scrollView.bounds
+    textView.layoutSubtreeIfNeeded()
+    guard let layout = textView.textLayoutManager else {
+      FileHandle.standardError.write(Data("no TextKit 2 layout manager\n".utf8))
+      exit(1)
+    }
+    layout.ensureLayout(for: layout.documentRange)
+
+    let inset = textView.textContainerInset
+    let height = layout.usageBoundsForTextContainer.height + inset.height * 2
+    textView.frame = NSRect(x: 0, y: 0, width: width, height: height)
+    textView.layoutSubtreeIfNeeded()
+
+    // Drawn fragment by fragment rather than snapshotted with `cacheDisplay`, which comes
+    // back empty for a view that was never in a window.
+    let image = NSImage(size: NSSize(width: width, height: height))
+    image.lockFocus()
+    appearance.performAsCurrentDrawingAppearance {
+      NSColor(calibratedWhite: 0.13, alpha: 1).setFill()
+      NSBezierPath.fill(NSRect(x: 0, y: 0, width: width, height: height))
+      guard let context = NSGraphicsContext.current?.cgContext else { return }
+      context.saveGState()
+      // Text lays out downward from the top; the image context counts up from the bottom.
+      context.translateBy(x: inset.width, y: height - inset.height)
+      context.scaleBy(x: 1, y: -1)
+      layout.enumerateTextLayoutFragments(from: nil, options: [.ensuresLayout]) { fragment in
+        fragment.draw(at: fragment.layoutFragmentFrame.origin, in: context)
+        return true
+      }
+      context.restoreGState()
+    }
+    image.unlockFocus()
+    return image
+  }
+}
+
+/// The named render cases: each is one region of transcript styling built from the real
+/// renderer. Adding a thing to eyeball or snapshot means adding a case here, not a new CLI flag.
+/// The focused cases pin the mistakes that have actually happened — emphasis against CJK
+/// punctuation, a mixed-width table — while `transcript` keeps one screen of everything.
+public enum RenderCase {
+  public static let all: [(name: String, content: () -> NSAttributedString)] = [
+    ("transcript", transcript),
+    ("cjk-emphasis", cjkEmphasis),
+    ("tables", tables),
+    ("wide-table", wideTable),
+    ("tool-states", toolStates),
+    ("exit-plan", exitPlan),
+    ("markdown-blocks", markdownBlocks),
+  ]
+
+  public static func content(for name: String) -> NSAttributedString? {
+    all.first { $0.name == name }?.content()
+  }
+
+  public static var names: [String] { all.map(\.name) }
+
+  /// One screen of every block the renderer knows.
+  private static func transcript() -> NSAttributedString {
+    let text = NSMutableAttributedString()
+    text.append(Transcript.timeSeparator(Date(timeIntervalSince1970: 1_766_000_000)))
+    text.append(cjkEmphasis())
+    text.append(toolStates())
+    text.append(exitPlan())
+    text.append(NSAttributedString(string: "\n", attributes: [.font: Transcript.mono]))
+    text.append(markdownBlocks())
+    return text
+  }
+
+  /// Japanese emphasis lands on bracketed/quoted phrases, which CommonMark flanking rules
+  /// refuse — the reason inline markup is hand-rolled. This is the case that catches a
+  /// regression back to literal asterisks.
+  private static func cjkEmphasis() -> NSAttributedString {
+    Transcript.userMessage(
+      """
+      アイコンの配色を変えたい
+      **「白黒」**と**（角丸）**が太字になるかも確認
+      """)
+  }
+
+  /// A short call's plain line, a foldable call's `▸` line, and the same call opened into its
+  /// code-block slab — every tool-call state is text, so all three render here.
+  private static func toolStates() -> NSAttributedString {
+    let text = NSMutableAttributedString()
+    text.append(
+      Transcript.toolUse(name: "Bash", input: ["command": "git worktree list --porcelain"]))
+    let multiline = """
+      for w in $(git worktree list --porcelain | awk '/^worktree/{print $2}'); do
+        git -C "$w" status --short
+      done
+      """
+    text.append(Transcript.toolUse(name: "Bash", input: ["command": multiline]))
+    text.append(Transcript.spacer(4))
+    text.append(
+      Transcript.toolCallExpandedRun(
+        ToolCallToken(
+          name: "Bash", summary: "for w in $(git worktree list …", full: multiline)))
+    return text
+  }
+
+  /// ExitPlanMode in the transcript is a compact foldable record — a `▸ Here is Claude's plan:`
+  /// one-liner that opens to the whole plan as markdown (no mechanical tool name). Both the
+  /// folded line and the opened whole are here.
+  private static func exitPlan() -> NSAttributedString {
+    let plan = """
+      ## Cache rendered thumbnails
+
+      - **Source**: render once per `(path, size)`, keyed by content hash in an LRU.
+      - **Eviction**: cap at 256 entries; drop the oldest on overflow.
+      - **Invalidation**: a file save clears its own entries, nothing else.
+      - **検証**: scroll a 1,000-file tree twice and compare the timings.
+
+      The store is a new `ThumbnailCache.swift`; the cap is tuned once wired up.
+      """
+    let text = NSMutableAttributedString()
+    text.append(Transcript.toolUse(name: "ExitPlanMode", input: ["plan": plan]))
+    text.append(Transcript.spacer(4))
+    text.append(
+      Transcript.planExpandedRun(
+        ToolCallToken(
+          name: "ExitPlanMode", summary: "", full: plan, rendersMarkdown: true)))
+    return text
+  }
+
+  /// A mixed-width table (CJK glyphs whose advance is not a monospace multiple) and a short
+  /// one, the pair that drove the column-measuring and header-fill work.
+  private static func tables() -> NSAttributedString {
+    Transcript.markdown(
+      """
+      | プロセス | メモリ | 状態 |
+      |---|---|---|
+      | **検索インデクサ** (pid 4021) | 約1.2GB | 🟢 継続中 |
+      | worker (thumbnail) ×4 | 合計 640MB | 待機 |
+      | backup (nightly) | 210MB | 停止可 |
+
+      ### 短い表
+
+      | ビルド | 状態 |
+      |---|---|
+      | #42 | 成功 |
+      """)
+  }
+
+  /// Five columns of mixed CJK/latin content that no narrow pane can fit on one line, so the
+  /// cells have to wrap within their columns (see `TableAttachment`). Render it at a few widths
+  /// (`HUKAN_PREVIEW_WIDTH`) to check the reflow.
+  private static func wideTable() -> NSAttributedString {
+    Transcript.markdown(
+      """
+      | 指標 | 場所 | 出所 | 表示例 | 粒度 |
+      |---|---|---|---|---|
+      | 推定コスト($) | 会話ヘッダ右 | transcript のトークン × 料金表 | $6.08(未知モデル混在時 ~$…) | セッションごと |
+      | プラン利用率(%) | ツールバー右端 | claude -p /usage(課金ゼロ) | ⏳ 17% 📅 55% Fable 27% | アカウント全体 |
+      """)
+  }
+
+  /// Lists (nested and numbered), a quote, a fenced code block, a rule and inline runs — the
+  /// non-table markdown, plus the tables so this case stands alone as the prose renderer.
+  private static func markdownBlocks() -> NSAttributedString {
+    Transcript.markdown(
+      """
+      Got it — here is the **current state**, straight from the `--porcelain` output.
+
+      ## Measured
+
+      | プロセス | メモリ | 状態 |
+      |---|---|---|
+      | **検索インデクサ** (pid 4021) | 約1.2GB | 🟢 継続中 |
+      | worker (thumbnail) ×4 | 合計 640MB | 待機 |
+      | backup (nightly) | 210MB | 停止可 |
+
+      ### 短い表
+
+      | ビルド | 状態 |
+      |---|---|
+      | #42 | 成功 |
+
+      Lists, for completeness:
+
+      - the first item, with **emphasis**
+      - the second item
+        - a nested item
+      1. numbered
+      2. the second
+
+      > A block quote renders like this.
+      > Its second line joins the same slab.
+
+      ```swift
+      func render(_ text: String) -> NSAttributedString {
+          // fenced code block
+          return Transcript.markdown(text)
+      }
+      ```
+
+      ---
+
+      A closing paragraph, with a [link](https://example.com) and `inline code`.
+      """)
+  }
+}

@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="hukan" xmlns:xi="http://www.w3.org/2003/XInclude">
+
+    <xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef"
+                xpointer="xpointer(/dictionary/suite)"/>
+
+    <suite name="hukan Suite" code="Hukn" description="Control hukan">
+
+        <!-- Objects: application → window → repository → worktree → session. -->
+
+        <class name="repository" code="cRep" description="An open repository" plural="repositories">
+            <cocoa class="SDRepository"/>
+            <property name="id" code="ID  " type="text" access="r" description="The repository path, its unique identifier">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="Display name of the repository"/>
+            <element type="worktree">
+                <cocoa key="worktrees"/>
+            </element>
+            <responds-to command="close">
+                <cocoa method="handleCloseScriptCommand:"/>
+            </responds-to>
+        </class>
+
+        <class name="worktree" code="cWkt" description="A worktree — one working directory of a repository">
+            <cocoa class="SDWorktree"/>
+            <property name="id" code="ID  " type="text" access="r" description="Stable unique identifier">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="Branch name, or the directory name"/>
+            <property name="branch" code="Brnc" type="text" access="r" description="Checked-out branch, if any"/>
+            <element type="session">
+                <cocoa key="sessions"/>
+            </element>
+        </class>
+
+        <class name="session" code="cSes" description="An agent session running claude in a worktree">
+            <cocoa class="SDSession"/>
+            <property name="id" code="ID  " type="text" access="r" description="Stable unique identifier">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="Session title (may be empty or repeat; use id to address reliably)">
+                <cocoa key="title"/>
+            </property>
+            <property name="transcript" code="Tscr" type="text" access="r" description="The transcript as plain text">
+                <cocoa key="transcript"/>
+            </property>
+            <property name="pending approval" code="pApr" type="text" access="r" description="The tool call the session is waiting on, or an empty string">
+                <cocoa key="pendingApproval"/>
+            </property>
+            <property name="running" code="bRun" type="boolean" access="r" description="Whether the session's process is live">
+                <cocoa key="running"/>
+            </property>
+            <property name="detached" code="bDet" type="boolean" access="r" description="Whether the session is restored but not yet reattached">
+                <cocoa key="detached"/>
+            </property>
+        </class>
+
+        <class-extension extends="window" description="A hukan workspace window">
+            <cocoa class="NSWindow"/>
+            <element type="repository">
+                <cocoa key="repositories"/>
+            </element>
+            <property name="selected worktree" code="sWkt" type="worktree" access="rw" description="The worktree currently selected in this window">
+                <cocoa key="selectedWorktree"/>
+            </property>
+            <property name="selected session" code="sSes" type="session" access="rw" description="The session currently selected in this window">
+                <cocoa key="selectedSession"/>
+            </property>
+            <property name="session filter" code="sFil" type="text" access="rw" description="The rail's full-text filter over session titles and transcripts. Set to narrow the rail, empty to clear">
+                <cocoa key="sessionFilter"/>
+            </property>
+            <element type="session" access="r">
+                <cocoa key="filteredSessions"/>
+                <accessor style="index"/>
+            </element>
+            <property name="transcript match count" code="tMcn" type="integer" access="r" hidden="yes" description="How many times the filter's terms are highlighted in the open transcript">
+                <cocoa key="transcriptMatchCount"/>
+            </property>
+            <property name="first match offset" code="tMof" type="integer" access="r" hidden="yes" description="Character offset of the first highlighted match in the open transcript (the one scrolled to), or -1 for none">
+                <cocoa key="transcriptFirstMatchOffset"/>
+            </property>
+        </class-extension>
+
+        <!-- Commands. Opening a repository, creating a session and closing a repository are the
+             Standard Suite's own verbs — `open POSIX file "…"`, `make new session at …`, `close
+             repository …` — not custom ones.
+
+             For the remaining app-level commands the object a verb acts on is a by-name parameter,
+             never the direct parameter: an object direct-parameter makes AppleScript target that
+             object as the receiver, which no proxy answers (-1708). A named parameter routes the
+             command to the app instead. -->
+
+        <command name="send" code="HuknSend" description="Send a message to a session">
+            <cocoa class="SendCommand"/>
+            <direct-parameter type="text" description="Message body"/>
+            <parameter name="to" code="Tose" type="session" description="Session to send to">
+                <cocoa key="toSession"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
+        <command name="approve" code="HuknAllw" description="Allow the tool call a session is waiting on. Requires HUKAN_SCRIPTING_GUARDED=1">
+            <cocoa class="ApproveCommand"/>
+            <parameter name="session" code="ApSe" type="session" description="Session to act on">
+                <cocoa key="onSession"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
+        <command name="deny" code="HuknDeny" description="Deny the tool call a session is waiting on. Requires HUKAN_SCRIPTING_GUARDED=1">
+            <cocoa class="DenyCommand"/>
+            <parameter name="session" code="DnSe" type="session" description="Session to act on">
+                <cocoa key="onSession"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
+        <!-- The development-harness verbs and probes are hidden: they keep working (the dev loop
+             in the charter depends on them) but stay out of the public dictionary. -->
+
+        <command name="hukan status" code="HuknStat" hidden="yes" description="Return one line per worktree with its sessions">
+            <cocoa class="StatusCommand"/>
+            <result type="text"/>
+        </command>
+
+        <command name="fold" code="HuknFold" hidden="yes" description="Inspect or drive the tool-call fold in the selected transcript, for automated checks">
+            <cocoa class="FoldCommand"/>
+            <direct-parameter type="text" optional="yes" description="status (default), expand, or collapse"/>
+            <result type="text"/>
+        </command>
+
+        <command name="restart" code="HuknRstt" hidden="yes" description="Quit and relaunch the app, picking up a fresh build; window, Space and repositories restore">
+            <cocoa class="RestartCommand"/>
+            <result type="text"/>
+        </command>
+
+        <command name="screenshot" code="HuknShot" description="Capture a window to a PNG. Runs in-app, so it uses the bundle's screen-recording grant where a terminal screencapture comes back black">
+            <cocoa class="ScreenshotCommand"/>
+            <parameter name="to" code="Topa" type="text" description="Path of the PNG to write">
+                <cocoa key="toPath"/>
+            </parameter>
+            <parameter name="in" code="ShWn" type="window" optional="yes" description="Window to capture. Defaults to the front window">
+                <cocoa key="inWindow"/>
+            </parameter>
+            <result type="text" description="Dimensions and path"/>
+        </command>
+
+    </suite>
+</dictionary>
