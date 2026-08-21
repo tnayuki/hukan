@@ -63,6 +63,24 @@ when its repository is closed; an out-of-band `git worktree remove` is not notic
 
 ---
 
+## Install
+
+Homebrew. hukan is a rolling pre-1.0 snapshot for now — no version numbers yet — so `brew
+reinstall --cask hukan` pulls the latest build:
+
+```sh
+brew tap tnayuki/hukan
+brew install --cask hukan
+```
+
+The cask installs a prebuilt, ad-hoc-signed `Hukan.app` from the GitHub Releases and strips the
+Gatekeeper quarantine so it launches. hukan spawns the Claude Code CLI (`claude`) per session,
+so [install that separately](https://docs.anthropic.com/en/docs/claude-code).
+
+Building from source instead is one `xcodebuild` — see [CLAUDE.md](CLAUDE.md).
+
+---
+
 ## License
 
 hukan is released under the [MIT License](LICENSE).

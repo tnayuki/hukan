@@ -1,0 +1,40 @@
+name: Snapshot
+
+# hukan is a rolling pre-1.0 snapshot: no version numbers while the history is still being
+# rewritten. Run this by hand (Actions tab, or `gh workflow run Snapshot`) to build the latest
+# main and overwrite the single `snapshot` pre-release. The cask in tnayuki/homebrew-hukan is
+# static (version :latest, sha256 :no_check), so nothing here bumps it — no bot commits anywhere.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # hukan builds with Xcode against the macOS 15 SDK (see README); pin the runner to it.
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build .app
+        # hukan.xcodeproj is the only build system; signing is ad-hoc (`-`). Gatekeeper
+        # quarantine is stripped by the cask's postflight on the user's machine.
+        run: |
+          xcodebuild build -project hukan.xcodeproj -scheme Hukan -configuration Release \
+            -derivedDataPath .build/DerivedData
+
+      - name: Zip the bundle
+        run: |
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
+            ".build/DerivedData/Build/Products/Release/Hukan.app" \
+            "Hukan.zip"
+
+      - name: Overwrite the rolling snapshot pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: snapshot
+          name: Snapshot
+          prerelease: true
+          files: Hukan.zip
