@@ -67,7 +67,7 @@ final class FileContentViewController: NSViewController {
     (scrollView, textView) = makeEditorTextView()
     super.init(nibName: nil, bundle: nil)
     textView.allowsUndo = true
-    // ⌘F in a file is the text view's own find bar.
+    // ⌘F in a file is the text view's own find bar, the way ⌘F in a terminal is SwiftTerm's.
     textView.usesFindBar = true
     textView.isIncrementalSearchingEnabled = true
     NotificationCenter.default.addObserver(
@@ -248,7 +248,7 @@ final class FileContentViewController: NSViewController {
   }
 }
 
-/// The worktree's desk (the file tabs) and the files panel that indexes it.
+/// The worktree's desk (the tabs: files and terminals) and the files panel that indexes it.
 ///
 /// Not a view controller, and not a split: the two sit in different places in the window now —
 /// the desk beside the transcript, under the toolbar, and the panel as a column of its own on
@@ -263,6 +263,8 @@ final class FileColumns {
     didSet { desk.workspace = workspace }
   }
   var onNeedsReload: (() -> Void)?
+  /// ⌃⌘T / the desk's `+` bubbles up to the window controller, which owns terminal creation.
+  var onNewTerminal: (() -> Void)?
   /// A double-click on a tab, or its menu, asking for the whole window. The columns are the
   /// window controller's, so this bubbles up the same way.
   var onSetMaximized: ((Bool) -> Void)?
@@ -271,6 +273,7 @@ final class FileColumns {
   let panel = FilesPanelViewController()
 
   init() {
+    desk.onNewTerminal = { [weak self] in self?.onNewTerminal?() }
     desk.onSetMaximized = { [weak self] maximized in self?.onSetMaximized?(maximized) }
     // A save is the panel's cue too: an FSEvents IgnoreSelf drops our own write, so the content
     // hits would otherwise keep listing the line just fixed.
@@ -320,7 +323,13 @@ final class FileColumns {
     desk.reload(worktreeID: workspace.selectedWorktreeID)
   }
 
-  /// ⌘W: close the active file tab. Returns whether one was showing to close.
+  /// Show a just-created terminal in the desk. The controller has already appended it to
+  /// `Workspace.terminals`.
+  func openTerminal(id: UUID) {
+    desk.open(terminalID: id)
+  }
+
+  /// ⌘W: close the active tab (file or terminal). Returns whether one was showing to close.
   @discardableResult
   func closeActiveTab() -> Bool {
     desk.closeActiveTab()
@@ -328,6 +337,9 @@ final class FileColumns {
 
   /// Whether any tab is the active surface — the Close Tab menu item validates on this.
   var hasClosableTab: Bool { desk.isViewLoaded && desk.hasClosableTab }
+
+  /// Whether a terminal is the active tab — the Clear Terminal menu item validates on this.
+  var hasActiveTerminal: Bool { desk.isViewLoaded && desk.activeTerminal != nil }
 
   /// Whether the desk holds more than one tab — the tab-cycling items validate on this.
   var hasMultipleTabs: Bool { desk.isViewLoaded && desk.tabCount > 1 }
@@ -357,14 +369,26 @@ final class FileColumns {
     desk.cycleTab(by: -1)
   }
 
-  /// ⌘F: find within the active tab — the file's own find bar, which reads its action tag off
-  /// the menu item passed through as `sender`.
+  /// ⌘K: clear the active terminal's scrollback.
+  func clearActiveTerminal() {
+    desk.activeTerminal?.clearBuffer()
+  }
+
+  /// ⌘F: find within the active surface — a terminal's find bar (SwiftTerm's) or a file's (the
+  /// text view's). The menu item is the sender both bars read their action tag from
+  /// (`showFindPanel`), so it is passed straight through.
   func findInActiveSurface(_ sender: Any?) {
     desk.performFind(sender)
   }
 
   /// Whether the active surface has something ⌘F can search — the Find item validates on this.
   var canFind: Bool { desk.isViewLoaded && desk.canFind }
+
+  /// A terminal renamed itself (OSC title); repaint the strip's labels.
+  func refreshTerminalTabs() {
+    guard desk.isViewLoaded else { return }
+    desk.reload(worktreeID: workspace?.selectedWorktreeID)
+  }
 
   /// The selected worktree's files changed on disk: refresh every open file and the panel (its
   /// tree if the list moved, its content hits so the worklist reflects the disk), then reload so

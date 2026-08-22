@@ -271,6 +271,31 @@ final class SDWorktree: NSObject {
     return SDSession(uuid: session.id, workspace: workspace, window: window)
   }
 
+  @objc var terminals: [SDTerminal] {
+    workspace.terminals
+      .filter { $0.worktreeID == uuid }
+      .map { SDTerminal(uuid: $0.id, workspace: workspace, window: window) }
+  }
+
+  @objc(valueInTerminalsWithUniqueID:)
+  func valueInTerminals(withUniqueID id: Any) -> SDTerminal? {
+    guard let key = id as? String, let terminalID = UUID(uuidString: key),
+      workspace.terminals.contains(where: { $0.id == terminalID && $0.worktreeID == uuid })
+    else { return nil }
+    return SDTerminal(uuid: terminalID, workspace: workspace, window: window)
+  }
+
+  /// A terminal's title can repeat, so a name specifier is best-effort — the id is reliable.
+  @objc(valueInTerminalsWithName:)
+  func valueInTerminals(withName name: String) -> SDTerminal? {
+    guard
+      let terminal = workspace.terminals.first(where: {
+        $0.worktreeID == uuid && $0.title.localizedCaseInsensitiveCompare(name) == .orderedSame
+      })
+    else { return nil }
+    return SDTerminal(uuid: terminal.id, workspace: workspace, window: window)
+  }
+
   /// Standard Suite `make new session` — `tell worktree 1 of … to make new session`, or `make
   /// new session at end of sessions of worktree 1 of …`. NSCreateCommand asks the container to
   /// create; the session is born in the model right here, so the insertion step that follows
@@ -288,6 +313,9 @@ final class SDWorktree: NSObject {
     case "sessions":
       let session = controller.makeSession(in: worktree)
       return SDSession(uuid: session.id, workspace: workspace, window: window)
+    case "terminals":
+      let terminal = controller.makeTerminal(in: worktree)
+      return SDTerminal(uuid: terminal.id, workspace: workspace, window: window)
     default:
       return super.newScriptingObject(
         of: objectClass, forValueForKey: key, withContentsValue: contentsValue,
@@ -298,7 +326,7 @@ final class SDWorktree: NSObject {
   override func insertValue(_ value: Any, at index: Int, inPropertyWithKey key: String) {
     // `newScriptingObject` already created the object in the workspace — the model, not the
     // proxy list, is the storage — so NSCreateCommand's insertion is a no-op.
-    guard key == "sessions" else {
+    guard key == "sessions" || key == "terminals" else {
       return super.insertValue(value, at: index, inPropertyWithKey: key)
     }
   }
@@ -519,6 +547,45 @@ final class SDSession: NSObject {
 
   override func isEqual(_ object: Any?) -> Bool {
     guard let other = object as? SDSession else { return false }
+    return other.uuid == uuid && other.workspace === workspace
+  }
+  override var hash: Int { uuid.hashValue }
+}
+
+// MARK: - Terminal
+
+@objc(SDTerminal)
+final class SDTerminal: NSObject {
+  let uuid: UUID
+  let workspace: Workspace
+  let window: NSWindow
+
+  init(uuid: UUID, workspace: Workspace, window: NSWindow) {
+    self.uuid = uuid
+    self.workspace = workspace
+    self.window = window
+  }
+
+  var terminalModel: TerminalSession? { workspace.terminals.first { $0.id == uuid } }
+
+  @objc var uniqueID: String { uuid.uuidString }
+  /// Exposed to AppleScript as the `name` property (see the sdef `<cocoa key="title"/>`).
+  @objc var title: String { terminalModel?.title ?? "" }
+  @objc var running: Bool { terminalModel?.isRunning ?? false }
+
+  override var objectSpecifier: NSScriptObjectSpecifier? {
+    guard let model = terminalModel,
+      let container = SDWorktree(uuid: model.worktreeID, workspace: workspace, window: window)
+        .objectSpecifier,
+      let desc = container.keyClassDescription
+    else { return nil }
+    return NSUniqueIDSpecifier(
+      containerClassDescription: desc, containerSpecifier: container,
+      key: "terminals", uniqueID: uuid.uuidString)
+  }
+
+  override func isEqual(_ object: Any?) -> Bool {
+    guard let other = object as? SDTerminal else { return false }
     return other.uuid == uuid && other.workspace === workspace
   }
   override var hash: Int { uuid.hashValue }

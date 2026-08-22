@@ -21,7 +21,7 @@ leaving them out is what keeps hukan small enough for one person to hold in thei
 here instead is an editable source viewer: fixing the file an agent just wrote should not mean
 leaving the window.
 
-Swift 5, AppKit; macOS 15 and up, built against the current SDK. No package dependencies.
+Swift 5, AppKit; macOS 15 and up, built against the current SDK. SwiftTerm is the only package dependency.
 
 ---
 
@@ -70,9 +70,10 @@ and all — the insertion line falls only between repositories, never inside one
 only, every worktree the same. The size is in the toolbar for the selected worktree; the files
 themselves are the panel's changed scope (below). Reading the diff belongs to the PR.
 
-**The desk.** The desk is the selected worktree's open file tabs, with the **files panel** as the
-window's trailing column, which the toggle at the toolbar's far end hides. The panel
-navigates and nothing else — a pick opens a tab, which is where everything is read and edited.
+**The desk.** The desk is the selected worktree's open tabs — files, and terminals (a shell in
+the worktree, also from the strip's `+`) — with the **files panel** as the window's trailing
+column, which the toggle at the toolbar's far end hides. The panel navigates and nothing
+else — a pick opens a tab, which is where everything is read and edited.
 One field over the tree, in the toolbar's own row over the panel, with the two file-finding jobs
 kept apart by the gesture that runs them: **typing** narrows the tree by path, live, and it stays
 a tree; **Return** searches the files' contents and the panel becomes a list of files and matching
@@ -84,24 +85,23 @@ beside the field scopes both to the worktree's changed files. Each row carries i
 directory the sum of what changed beneath it, so a folded tree still says where the work is — the
 total for the worktree stays in the toolbar.
 
-The strip is walked, numbered, closed and reordered the way a browser's is — a new tab opens at
+A single click from the panel previews, a double-click or Return pins. Opening a file shows its
+source, always editable; find works within the active tab, a file's bar or the
+terminal's. A terminal's tab is named as Terminal.app names one: the command running
+in it, or its working directory when nothing is running. Nothing above the text names the file —
+the tab does that, with the full path in its tooltip — and a file's tab wears a dot in front of
+the name while the buffer holds an unsaved edit. The strip is walked, numbered, closed and reordered the way a browser's is — a new tab opens at
 the end, a drag puts one wherever it is dropped, and closing the active one lands on its
-right-hand neighbour, and find works within the
-active tab. Past the point where the tabs stop fitting, it scrolls sideways instead of squeezing
-every label at once, and whichever tab is picked is scrolled back into sight.
+right-hand neighbour; past the point where the tabs stop fitting it scrolls sideways instead of
+squeezing every label at once, and whichever tab is picked is scrolled back into sight.
 
-A single click from the panel previews, a double-click or Return pins. A double-click on the tab
-itself promotes it as far as it will go: a preview becomes a lasting tab, and a tab that is
-already lasting takes the whole window — the rail, the transcript and the files panel fold away
-(the tab's menu does the same, and either puts them back). Being sent to a session — by key, or
-by a tapped notification — restores them, since that is where what is waiting on you lives.
-Right-clicking a tab offers the four ways to close from there (this one, the others, the ones to
-its right, all of them, each stopping at a Cancel on an unsaved file), Keep Open while it is
-still a preview, and that same maximize.
-
-Opening a file shows its source, always editable. Nothing above the text names the
-file — the tab does that, with the full path in its tooltip — and the tab wears a dot in front of
-the name while the buffer holds an unsaved edit.
+A double-click on the tab itself promotes it as far as it will go: a preview becomes a lasting
+tab, and a tab that is already lasting takes the whole window — the rail, the transcript and the
+files panel fold away (the tab's menu does the same, and either puts them back). Being sent to a
+session — by key, or by a tapped notification — restores them, since that is where what is
+waiting on you lives. Right-clicking a tab offers the four ways to close from there (this one, the
+others, the ones to its right, all of them, each stopping at a Cancel on an unsaved file), Keep
+Open while it is still a preview, and that same maximize.
 
 **Cost & usage.** A per-session cost estimate in the conversation header (the "if it were
 API-metered" figure), the account-wide plan usage in the toolbar, and beside it the CPU and

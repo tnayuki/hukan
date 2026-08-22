@@ -17,7 +17,7 @@ Workspace (one window)
 └─ Repository        ← the open/close unit; identity is git's common dir's parent
    └─ Worktree
       ├─ Session (agent)   ← claude -p over pipes
-      ├─ Terminal          ← a shell over a PTY (not built yet — see TODO)
+      ├─ Terminal          ← a shell over a PTY
       └─ File
 ```
 
@@ -77,6 +77,17 @@ Workspace (one window)
   folded with no way to it. Everything that can fold does; the strip stays, because it is the way
   back. The strip's right-click menu is the same set of acts spelled out — the four ways to close
   from a tab, `Keep Open` while it is still a preview, and that maximize.
+- **A terminal's tab is named the way Terminal.app names one** — the command holding the pty
+  while something is running, the working directory's last component when nothing is. The path
+  relative to the worktree is the alternative, and the one thing it buys — two tabs in one
+  worktree that can never read alike — is a distinction rarely needed, paid for in length: the
+  tab worth finding is the busy one, and the busy one says `make` or `claude` itself. The
+  directory half arrives free — OSC 7, which the stock `/etc/zshrc` emits at every prompt because
+  hukan poses as `Apple_Terminal` — but the command half does not: nothing announces a command
+  *starting* (`sleep 60` writes no byte), so the window polls `tcgetpgrp` on the master fd twice a
+  second. That is two syscalls per terminal per tick, which is why the poll needs no bookkeeping
+  to be affordable and why it stops the moment the last terminal goes. The name only, never the
+  arguments: `git` fits a tab where `git log --oneline --graph` does not.
 - **The file pane is the source, and only the source.** It had a Diff/Source switch; the diff
   was unreadable-as-work — a coloured diff cannot be edited, and the files carrying a diff are
   exactly the ones an agent just wrote and you want to correct, so the mode you needed was always
@@ -274,14 +285,6 @@ Workspace (one window)
 
 ## TODO
 
-- **Terminal** — a shell over a PTY. The old empty model scaffolding (the `TerminalSession` husk,
-  the rail's new-session badge, the middle-column tab bar) was removed once it was clear none of it was
-  ever wired to a creation path. What remains is the feature itself — a terminal model that is
-  the sibling of `AgentSession` (a process running in this worktree; `ClaudeSession` stays
-  pipes-only precisely because the PTY belongs here), an AppKit view wrapping an emulator
-  (SwiftTerm is the candidate: it brings the emulator and a `LocalProcess` PTY spawn, at the cost
-  of a package dependency the vendoring rule would otherwise refuse), a creation path, the
-  middle-column tab switching, and the scripting surface (`SDTerminal`, mirroring `SDSession`).
 - **Syntax highlighting** — the source pane renders as plain monospace. It is editable
   (Cmd+S writes back atomically, leaving a file with an unsaved edit asks first — Save / Don't
   Save / Cancel — and a dirty buffer is never clobbered by an agent's on-disk refresh), but the
@@ -330,10 +333,22 @@ separate "fast loop" was measured no faster and dropped). One scheme, two target
 `HukanAppTests`):
 
 ```sh
-xcodebuild build -project hukan.xcodeproj -scheme Hukan -derivedDataPath .build/DerivedData
+xcodebuild build -project hukan.xcodeproj -scheme Hukan -derivedDataPath .build/DerivedData -skipPackagePluginValidation
 open ".build/DerivedData/Build/Products/Debug/Hukan Dev.app"   # relaunch; restoration needs open, not the raw binary
-xcodebuild test  -project hukan.xcodeproj -scheme Hukan -derivedDataPath .build/DerivedData
+xcodebuild test  -project hukan.xcodeproj -scheme Hukan -derivedDataPath .build/DerivedData -skipPackagePluginValidation
 ```
+
+`-skipPackagePluginValidation` is there for one dependency: SwiftTerm (the terminal emulator, see
+the model) ships a build-tool plugin that stamps its version in, and Xcode blocks an unvalidated
+plugin — the flag pre-trusts it, since plugin trust is stored per-user (`~/Library/org.swift.swiftpm`)
+and so cannot be committed. SwiftTerm is the one exception to the vendoring rule: it is pulled as
+an Xcode-managed package dependency (pinned to an exact version in `project.pbxproj`, its graph
+locked in the tracked `Package.resolved`), *not* a committed binary like `Clibgit2.xcframework`.
+That does not resurrect the rejected "SwiftPM as the build system" — the build is still
+`xcodebuild`, hukan still has no `Package.swift`; it is a pure-Swift library with a build plugin,
+which a hand-built static `xcframework` fights (the plugin breaks a universal `swift build`), so
+letting Xcode resolve it is the path of least resistance where libgit2's network-less custom C
+build was not.
 
 The project is hand-authored and tracked — edit `project.pbxproj` directly. Folder groups are
 file-system-synchronized, so a new file under `Sources/` just appears. `Resources/hukan.icns`

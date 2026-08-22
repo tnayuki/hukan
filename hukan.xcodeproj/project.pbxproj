@@ -11,6 +11,8 @@
 		AC000000000000000000001B /* hukan.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001A /* hukan.icns */; };
 		AC000000000000000000001F /* hukan-dev.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001E /* hukan-dev.icns */; };
 		AD00000000000000000000C2 /* Clibgit2.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD00000000000000000000C1 /* Clibgit2.xcframework */; };
+		AD00000000000000000000D2 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000D1 /* SwiftTerm */; };
+		AD00000000000000000000D4 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000D3 /* SwiftTerm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -46,6 +48,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AD00000000000000000000C2 /* Clibgit2.xcframework in Frameworks */,
+				AD00000000000000000000D2 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -53,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AD00000000000000000000D4 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -121,6 +125,9 @@
 				AE0000000000000000000002 /* Engine */,
 			);
 			name = Hukan;
+			packageProductDependencies = (
+				AD00000000000000000000D1 /* SwiftTerm */,
+			);
 			productName = Hukan;
 			productReference = AC0000000000000000000003 /* Hukan.app */;
 			productType = "com.apple.product-type.application";
@@ -142,6 +149,9 @@
 				AF0000000000000000000002 /* HukanAppTests */,
 			);
 			name = HukanAppTests;
+			packageProductDependencies = (
+				AD00000000000000000000D3 /* SwiftTerm */,
+			);
 			productName = HukanAppTests;
 			productReference = AF0000000000000000000003 /* HukanAppTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -173,6 +183,9 @@
 			);
 			mainGroup = AA0000000000000000000002 /* Main */;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AD00000000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA0000000000000000000003 /* Products */;
 			projectDirPath = "";
@@ -353,6 +366,30 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AD00000000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
+			requirement = {
+				kind = exactVersion;
+				version = 1.20.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AD00000000000000000000D1 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD00000000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+		AD00000000000000000000D3 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD00000000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 	};
 	rootObject = AA0000000000000000000001 /* Project object */;

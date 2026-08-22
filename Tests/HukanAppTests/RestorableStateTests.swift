@@ -83,6 +83,35 @@ final class RestorableStateTests: XCTestCase {
     XCTAssertTrue(revived(UUID(), by: restored).availableModels.isEmpty)
   }
 
+  func testTerminalsRoundTripByWorktreeWithDirectoryAndSession() throws {
+    let workspace = Workspace()
+    let worktreeA = UUID()
+    let worktreeB = UUID()
+    let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+    // An unspawned terminal carrying restored scrollback stands in for one saved and not yet
+    // re-shown: `scrollbackText()` passes its text straight through, no live shell needed.
+    let first = TerminalSession(
+      worktreeID: worktreeA, cwd: tmp, restoredScrollback: "line one\nline two")
+    let second = TerminalSession(worktreeID: worktreeB, cwd: tmp)
+    workspace.terminals = [first, second]
+
+    let restored = try roundTrip(workspace)
+    let pending = restored.takeRestoredTerminals()
+
+    XCTAssertEqual(pending.count, 2)
+    XCTAssertEqual(pending[0].worktreeID, worktreeA)
+    // Directory and session id round-trip, so a restored terminal reopens where it was and picks
+    // its history back up.
+    XCTAssertEqual(pending[0].directory, tmp.path)
+    XCTAssertEqual(pending[0].sessionID, first.sessionID)
+    XCTAssertEqual(pending[0].scrollback, "line one\nline two")
+    XCTAssertEqual(pending[1].worktreeID, worktreeB)
+    XCTAssertEqual(pending[1].sessionID, second.sessionID)
+    XCTAssertEqual(pending[1].scrollback, "", "an empty terminal saves no scrollback")
+    // Taking the list empties it — the controller materializes once.
+    XCTAssertTrue(restored.takeRestoredTerminals().isEmpty)
+  }
+
   func testRosterShortFieldsFallBackToValue() throws {
     // Hand-built archive with the display-name and resolved arrays truncated, the way a partial
     // or older archive would read. The raw keys here are the on-disk format, pinned on purpose.

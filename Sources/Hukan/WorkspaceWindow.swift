@@ -300,6 +300,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // The ± is drawn by the toolbar, so a refresh dropping a scope that went empty has to reach
     // the item that draws it.
     files.panel.onScopeChanged = { [weak self] in self?.updateFilesToolbarItem() }
+    // The desk's + button opens a terminal in the selected worktree, same as ⌃⌘T.
+    files.onNewTerminal = { [weak self] in self?.newTerminal(nil) }
     // A watched worktree's files moved: refresh in place, no full reload.
     workspace.onWorktreeFilesChanged = { [weak self] id, changed in
       self?.worktreeFilesChanged(id, changed: changed)
@@ -354,6 +356,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   deinit {
     observers.forEach(NotificationCenter.default.removeObserver)
     systemUsageTimer?.invalidate()
+    terminalTitleTimer?.invalidate()
   }
 
   required init?(coder: NSCoder) { fatalError("interface builder is not used") }
@@ -856,6 +859,30 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     systemUsageTimer = timer
   }
 
+  /// A terminal tab is named for the command holding its pty (see `TerminalSession.title`), and
+  /// nothing announces one starting, so the set is polled. Quick enough that a command's name is
+  /// there by the time you look at the tab, and each tick is two syscalls per terminal.
+  private static let terminalTitleInterval: TimeInterval = 0.5
+  private var terminalTitleTimer: Timer?
+
+  /// Poll only while terminals exist: the first one starts the timer and the tick that finds none
+  /// left stops it, which covers every way a terminal can go — ⌘W, `exit`, a closed repository —
+  /// without each of those having to remember.
+  private func startTerminalTitleTimerIfNeeded() {
+    guard terminalTitleTimer == nil else { return }
+    let timer = Timer(timeInterval: Self.terminalTitleInterval, repeats: true) {
+      [weak self] timer in
+      guard let self, !self.workspace.terminals.isEmpty else {
+        timer.invalidate()
+        self?.terminalTitleTimer = nil
+        return
+      }
+      for terminal in self.workspace.terminals { terminal.refreshForegroundProcess() }
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    terminalTitleTimer = timer
+  }
+
   private func refreshSystemUsage() {
     applySystemUsage(
       systemUsageSampler.sample(engines: Set(workspace.sessions.compactMap(\.enginePID))))
@@ -982,11 +1009,16 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   }
 
   func window(_ window: NSWindow, willEncodeRestorableState state: NSCoder) {
-    workspace.encodeState(to: state)
+    // The terminals in strip order, and the order itself — the desk's, since the strip is.
+    workspace.encodeState(
+      to: state, terminals: files.desk.restorableTerminals(workspace.terminals),
+      tabOrder: files.desk.restorableTabOrder)
   }
 
   func window(_ window: NSWindow, didDecodeRestorableState state: NSCoder) {
     workspace.decodeState(from: state)
+    materializeRestoredTerminals()
+    files.desk.restoreTabOrder(workspace.takeRestoredTabOrder())
     reload()
     // The column widths only exist now. Arranging from init instead would run before this
     // and lay out the defaults — and then record them, destroying what was saved.
@@ -1451,28 +1483,81 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.saveCurrent()
   }
 
+  /// File ▸ New Terminal (⌃⌘T). A shell in the selected worktree, shown as a tab on its desk.
+  @objc func newTerminal(_ sender: Any?) {
+    guard let worktreeID = workspace.selectedWorktreeID,
+      let worktree = workspace.worktree(id: worktreeID)
+    else { return }
+    createTerminal(in: worktree)
+  }
+
+  /// The scripting seam (`make new terminal`), mirroring `makeSession`.
+  func makeTerminal(in worktree: Worktree) -> TerminalSession {
+    createTerminal(in: worktree)
+  }
+
+  private func createTerminal(in worktree: Worktree) -> TerminalSession {
+    let terminal = TerminalSession(worktreeID: worktree.id, cwd: worktree.url)
+    registerTerminal(terminal)
+    // Show it now only if its worktree is the one on screen; otherwise it waits, unspawned, for
+    // that worktree to be selected (scripting can make a terminal in any worktree).
+    if workspace.selectedWorktreeID == worktree.id {
+      files.openTerminal(id: terminal.id)
+    }
+    return terminal
+  }
+
+  /// Wire a terminal's callbacks and add it to the workspace — shared by live creation and
+  /// restore. Invalidates restorable state so the terminal set (and its scrollback) is saved.
+  private func registerTerminal(_ terminal: TerminalSession) {
+    // Capture the id, not the terminal — the terminal owns these closures, so holding it back
+    // would be a cycle that outlives its removal.
+    let id = terminal.id
+    terminal.onTitleChange = { [weak self] in self?.files.refreshTerminalTabs() }
+    startTerminalTitleTimerIfNeeded()
+    terminal.onExit = { [weak self] in
+      self?.workspace.removeTerminal(id: id)
+      self?.files.reload()
+      self?.window?.invalidateRestorableState()
+    }
+    workspace.terminals.append(terminal)
+    window?.invalidateRestorableState()
+  }
+
+  /// Turn the terminals decoded from restoration state into live sessions — the scrollback is
+  /// carried on the model and replayed above a fresh shell when the desk first shows it.
+  private func materializeRestoredTerminals() {
+    for pending in workspace.takeRestoredTerminals() {
+      guard let worktree = workspace.worktree(id: pending.worktreeID) else { continue }
+      // Reopen where the shell was, unless that directory is gone — then fall back to the worktree.
+      var isDirectory: ObjCBool = false
+      let exists =
+        !pending.directory.isEmpty
+        && FileManager.default.fileExists(atPath: pending.directory, isDirectory: &isDirectory)
+        && isDirectory.boolValue
+      let directory = exists ? URL(fileURLWithPath: pending.directory) : nil
+      registerTerminal(
+        TerminalSession(
+          worktreeID: worktree.id, cwd: worktree.url, restoredDirectory: directory,
+          sessionID: pending.sessionID.isEmpty ? nil : pending.sessionID,
+          restoredScrollback: pending.scrollback))
+    }
+    files.reload()
+  }
+
   /// File ▸ Close Tab (⌘W). Closes the active tab — an open file (after the unsaved-edit prompt)
-  /// — and is validated off when the desk is empty.
+  /// or a terminal — and is validated off when the desk is empty.
   @objc func closeTab(_ sender: Any?) {
     files.closeActiveTab()
   }
 
-  /// Window ▸ Select Next/Previous Tab (⌃⇥ / ⌃⇧⇥). Cycles the desk's file tabs.
-  @objc func selectNextTab(_ sender: Any?) {
-    files.selectNextTab()
+  /// Edit ▸ Clear Terminal (⌘K). Drops the active terminal's scrollback, as in Terminal.app.
+  @objc func clearTerminal(_ sender: Any?) {
+    files.clearActiveTerminal()
   }
 
-  @objc func selectPreviousTab(_ sender: Any?) {
-    files.selectPreviousTab()
-  }
-
-  /// Window ▸ Select Tab ▸ Tab N (⌘1…⌘9). The item's tag is N; the strip counts from zero.
-  @objc func selectTabAtIndex(_ sender: NSMenuItem) {
-    files.selectTab(at: sender.tag - 1)
-  }
-
-  /// Edit ▸ Find (⌘F). Finds within the active tab — the file's own find bar — scoped to the
-  /// desk so it does not fight the rail's session search.
+  /// Edit ▸ Find (⌘F). Finds within the active tab — a terminal's bar (SwiftTerm's own) or a
+  /// file's (the text view's) — scoped to the desk so it does not fight the rail's session search.
   @objc func find(_ sender: Any?) {
     files.findInActiveSurface(sender)
   }
@@ -1652,6 +1737,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     if filesPanelItem.isCollapsed { setFilesPanelCollapsed(false) }
   }
 
+  /// Window ▸ Select Next/Previous Tab (⌃⇥ / ⌃⇧⇥). Cycles the desk's file and terminal tabs.
+  @objc func selectNextTab(_ sender: Any?) {
+    files.selectNextTab()
+  }
+
+  @objc func selectPreviousTab(_ sender: Any?) {
+    files.selectPreviousTab()
+  }
+
+  /// Window ▸ Select Tab ▸ Tab N (⌘1…⌘9). The item's tag is N; the strip counts from zero.
+  @objc func selectTabAtIndex(_ sender: NSMenuItem) {
+    files.selectTab(at: sender.tag - 1)
+  }
+
   /// Bring a session into view across every open window — the target of a tapped notification.
   /// Like `focusNextPending`, it selects the session's worktree; unlike it, the session is
   /// named, so it also fronts the window that holds it. Activation is the caller's job.
@@ -1704,8 +1803,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       return workspace.selectedWorktreeID != nil
     case #selector(saveFile(_:)):
       return files.hasUnsavedEdit
+    case #selector(newTerminal(_:)):
+      return workspace.selectedWorktreeID != nil
     case #selector(closeTab(_:)):
       return files.hasClosableTab
+    case #selector(clearTerminal(_:)):
+      return files.hasActiveTerminal
     case #selector(find(_:)):
       return files.canFind
     case #selector(goToFile(_:)), #selector(findInFiles(_:)):

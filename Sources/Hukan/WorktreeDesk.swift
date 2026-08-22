@@ -192,17 +192,22 @@ private final class TabLabelButton: NSButton, NSDraggingSource {
   func ignoreModifierKeys(for session: NSDraggingSession) -> Bool { true }
 }
 
-/// The right column's content area: this worktree's open files, side by side as tabs. Each tab
-/// navigates inside itself — a file by its find bar; getting *to* a file is the files panel beside
-/// this, and getting to another worktree is the rail. The strip shows only when there is something
-/// to switch between — a lone open file is the plain file pane it replaced.
+/// The right column's content area: this worktree's open files and terminals, side by side as
+/// tabs. Each navigates inside itself — a file by its find bar, a terminal by its prompt; getting
+/// *to* a file is the files panel beside this, and getting to another worktree is the rail.
+/// Terminals arrive by ⌃⌘T / the strip's `+`. The strip shows only when there is something to
+/// switch between — a lone open file with no terminal is the plain file pane it replaced.
 ///
-/// Open files are the desk's own state, kept per worktree so switching worktrees swaps the whole
-/// set. The strip's order is the desk's too, whatever kind
+/// Open files are the desk's own state (kept per worktree so switching worktrees swaps the whole
+/// set); terminals it only renders — the window controller owns their creation and removal over
+/// `Workspace.terminals`. The strip's order is the desk's too, whatever kind
 /// a tab is: a new tab takes the end, a drag puts it wherever it was dropped, and closing the
 /// active one lands on the neighbour to its right.
 final class WorktreeDeskViewController: NSViewController {
   var workspace: Workspace?
+  /// ⌃⌘T or the strip's `+` asks the controller to make a terminal in the selected worktree; it
+  /// appends the model, then calls `open(terminalID:)` back.
+  var onNewTerminal: (() -> Void)?
   /// A file tab wrote itself back to disk — the column reloads so the change shows in the diffstat.
   var onFileSaved: (() -> Void)?
   /// Ask the window for the whole width, or to put the other columns back. The desk is a column
@@ -244,20 +249,24 @@ final class WorktreeDeskViewController: NSViewController {
   /// truncated to nothing at once, and the whole row said the same thing about none of them.
   private let tabScroll = TabStripScrollView()
   private let hairline = NSView()
+  private let plusButton = NSButton()
   private let container = NSView()
   private let placeholder = NSView()
   private lazy var tabBarHeight = tabScroll.heightAnchor.constraint(equalToConstant: 0)
   private var worktreeID: UUID?
   private var fileTabsByWorktree: [UUID: [FileTab]] = [:]
+  private var terminals: [TerminalSession] = []
   /// The strip's order per worktree: the order the tabs were opened in, then whatever dragging
   /// has made of it. Written back on every rebuild, so a tab it has not met — one just opened —
   /// takes the end of the strip, which is where a browser puts a new tab, and one that has since
-  /// closed drops out.
+  /// closed drops out. Only the terminals outlive the window, so only their part of it is saved,
+  /// and as their relative order (see `restorableTabOrder`).
   private var tabOrderByWorktree: [UUID: [Surface]] = [:]
 
   private enum Surface: Equatable {
     case none
     case file(UUID)
+    case terminal(UUID)
   }
   private var surface: Surface = .none
   /// The selected tab's view in the strip, so it can be scrolled back into sight after a rebuild.
@@ -265,8 +274,8 @@ final class WorktreeDeskViewController: NSViewController {
 
   private var fileTabs: [FileTab] { worktreeID.flatMap { fileTabsByWorktree[$0] } ?? [] }
 
-  /// The file content of the active tab, or nil when nothing is showing. The column drives save /
-  /// diff-toggle / refresh through this.
+  /// The file content of the active tab, or nil when a terminal (or nothing) is showing. The
+  /// column drives save / diff-toggle / refresh through this.
   var activeFileContent: FileContentViewController? {
     guard case .file(let id) = surface, let tab = fileTabs.first(where: { $0.id == id }) else {
       return nil
@@ -274,38 +283,112 @@ final class WorktreeDeskViewController: NSViewController {
     return tab.content
   }
 
-  /// Whether ⌘W has a tab to close — a file is the active surface.
+  /// Whether ⌘W has a tab to close — any file or terminal is the active surface.
   var hasClosableTab: Bool { surface != .none }
 
-  /// Whether ⌘F has a surface to search in — a file, not an empty desk.
+  /// Whether ⌘F has a surface to search in — a file or a terminal, not an empty desk.
   var canFind: Bool {
     switch surface {
-    case .file: return true
+    case .file, .terminal: return true
     case .none: return false
     }
   }
 
-  /// ⌘F: find within the active surface — the file's own find bar, which reads its action tag
-  /// off the menu item passed through as `sender`.
+  /// ⌘F: find within the active surface. A terminal's bar is SwiftTerm's, a file's the text
+  /// view's; both read their action tag off the menu item passed through as `sender`.
   func performFind(_ sender: Any?) {
-    guard case .file(let id) = surface else { return }
-    fileTabs.first { $0.id == id }?.content.performFind(sender)
+    switch surface {
+    case .terminal(let id):
+      guard let terminal = terminals.first(where: { $0.id == id }) else { return }
+      view.window?.makeFirstResponder(terminal.view)
+      terminal.view.performFindPanelAction(sender)
+    case .file(let id):
+      fileTabs.first { $0.id == id }?.content.performFind(sender)
+    case .none:
+      break
+    }
+  }
+
+  /// The terminal showing right now, if the active tab is one — what ⌘K clears.
+  var activeTerminal: TerminalSession? {
+    guard case .terminal(let id) = surface else { return nil }
+    return terminals.first { $0.id == id }
   }
 
   /// How many tabs the desk holds — ⌃⇥ tab-cycling validates on more than one.
-  var tabCount: Int { fileTabs.count }
+  var tabCount: Int { fileTabs.count + terminals.count }
 
   /// The tabs in strip order, so ⌃⇥ / ⌃⇧⇥ walk them the way they read: the order kept in
   /// `tabOrderByWorktree`, then any tab it does not know yet.
   private var orderedSurfaces: [Surface] {
-    worktreeID.map { orderedSurfaces(in: $0) } ?? []
+    worktreeID.map { orderedSurfaces(in: $0, terminals: terminals) } ?? []
   }
 
-  /// The same for any worktree.
-  private func orderedSurfaces(in worktreeID: UUID) -> [Surface] {
-    let present = (fileTabsByWorktree[worktreeID] ?? []).map { Surface.file($0.id) }
+  /// The same for any worktree, given its terminals — the desk caches only the on-screen
+  /// worktree's, and the window's state is saved for every worktree at once.
+  private func orderedSurfaces(in worktreeID: UUID, terminals: [TerminalSession]) -> [Surface] {
+    let present =
+      (fileTabsByWorktree[worktreeID] ?? []).map { Surface.file($0.id) }
+      + terminals.map { .terminal($0.id) }
     let known = (tabOrderByWorktree[worktreeID] ?? []).filter(present.contains)
     return known + present.filter { !known.contains($0) }
+  }
+
+  /// The strip order of the tabs that come back after a relaunch — the terminals — as
+  /// one row per tab across every worktree, in strip order. The desk's contribution to the
+  /// window's restorable state beside the tabs themselves: the two saved lists are written in
+  /// this order too (see the window), so a row
+  /// need only say which kind it is for `restoreTabOrder` to know which tab it names. Files and
+  /// commits are not saved, so their places are not either; a restored strip is the saved tabs in
+  /// the order they stood, and what is opened after them goes to the end as it always does.
+  var restorableTabOrder: [Workspace.RestoredTabOrder] {
+    guard let workspace else { return [] }
+    return workspace.worktrees.flatMap { worktree in
+      orderedSurfaces(in: worktree.id, terminals: workspace.terminals(inWorktree: worktree.id))
+        .compactMap { surface -> Workspace.RestoredTabOrder? in
+          switch surface {
+          case .terminal: return .init(worktreeID: worktree.id, kind: .terminal)
+          case .file, .none: return nil
+          }
+        }
+    }
+  }
+
+  /// The terminals in strip order, for saving — so that they come back in it.
+  func restorableTerminals(_ terminals: [TerminalSession]) -> [TerminalSession] {
+    var rank: [UUID: Int] = [:]
+    for worktreeID in Set(terminals.map(\.worktreeID)) {
+      let order = orderedSurfaces(
+        in: worktreeID, terminals: terminals.filter { $0.worktreeID == worktreeID })
+      for (index, surface) in order.enumerated() {
+        if case .terminal(let id) = surface { rank[id] = index }
+      }
+    }
+    return terminals.enumerated().sorted { a, b in
+      (rank[a.element.id] ?? .max, a.offset) < (rank[b.element.id] ?? .max, b.offset)
+    }.map(\.element)
+  }
+
+  /// Lay last run's terminals out in the order they were saved in. Called once they are back on
+  /// their worktrees, in the order they were saved — which is the strip's — so walking the rows
+  /// and taking the next tab of each row's kind rebuilds the strip. A row
+  /// past the end of its list (a terminal whose worktree is gone) is skipped.
+  func restoreTabOrder(_ rows: [Workspace.RestoredTabOrder]) {
+    guard let workspace else { return }
+    var next: [Workspace.RestoredTabOrder: Int] = [:]
+    var order: [UUID: [Surface]] = [:]
+    for row in rows {
+      let index = next[row, default: 0]
+      next[row] = index + 1
+      switch row.kind {
+      case .terminal:
+        let tabs = workspace.terminals(inWorktree: row.worktreeID)
+        guard index < tabs.count else { continue }
+        order[row.worktreeID, default: []].append(.terminal(tabs[index].id))
+      }
+    }
+    for (worktreeID, surfaces) in order { tabOrderByWorktree[worktreeID] = surfaces }
+    if isViewLoaded { rebuildTabBar() }
   }
 
   /// A tab dragged from `from` into the gap at `to` — gaps counted in tabs from the strip's
@@ -319,6 +402,8 @@ final class WorktreeDeskViewController: NSViewController {
     order.insert(moved, at: to > from ? to - 1 : to)
     tabOrderByWorktree[worktreeID] = order
     rebuildTabBar()
+    // The terminals' order is part of what comes back after a relaunch.
+    view.window?.invalidateRestorableState()
   }
 
   /// ⌃⇥ (+1) / ⌃⇧⇥ (−1): move to the next or previous tab, wrapping, and hand it focus.
@@ -335,6 +420,8 @@ final class WorktreeDeskViewController: NSViewController {
 
   private func focusActiveSurface() {
     switch surface {
+    case .terminal(let id):
+      view.window?.makeFirstResponder(terminals.first { $0.id == id }?.view)
     case .file, .none:
       break
     }
@@ -347,6 +434,11 @@ final class WorktreeDeskViewController: NSViewController {
     tabBar.alignment = .centerY
     tabBar.spacing = 4
     tabBar.edgeInsets = NSEdgeInsets(top: 3, left: 6, bottom: 3, right: 6)
+    // Fill the width deterministically: the tabs keep their natural size, and a trailing spacer
+    // (added last in rebuildTabBar) soaks up the slack. Left to its default the stack has
+    // to park leftover width on some arranged view and chooses inconsistently, which is what made
+    // a tab's width jump on a resize or a tab open/close.
+    tabBar.distribution = .fill
     tabBar.translatesAutoresizingMaskIntoConstraints = false
     tabBar.onMove = { [weak self] from, to in self?.moveTab(at: from, to: to) }
     tabScroll.documentView = tabBar
@@ -356,21 +448,35 @@ final class WorktreeDeskViewController: NSViewController {
     tabScroll.verticalScrollElasticity = .none
     tabScroll.automaticallyAdjustsContentInsets = false
     tabScroll.translatesAutoresizingMaskIntoConstraints = false
-    // The stack is the document: as tall as the clip, as wide as its tabs, and pinned to the
-    // leading edge — so a strip that fits sits where it always did and one that does not scrolls
-    // instead of compressing.
+    // The stack is the document: as tall as the clip, and at least as wide — so a strip that fits
+    // still stretches into its spacer, and one that does not scrolls instead of compressing.
     let clip = tabScroll.contentView
     NSLayoutConstraint.activate([
       tabBar.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
       tabBar.topAnchor.constraint(equalTo: clip.topAnchor),
       tabBar.heightAnchor.constraint(equalTo: clip.heightAnchor),
+      tabBar.widthAnchor.constraint(greaterThanOrEqualTo: clip.widthAnchor),
     ])
+
+    // `+` sits outside the scrolling strip, at the trailing edge. Inside it, the one control that
+    // makes a tab would be the first thing to scroll away exactly when there are enough tabs to
+    // have to scroll.
+    plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Terminal")
+    plusButton.imagePosition = .imageOnly
+    plusButton.isBordered = false
+    plusButton.bezelStyle = .accessoryBarAction
+    plusButton.contentTintColor = .secondaryLabelColor
+    plusButton.toolTip = "New Terminal"
+    plusButton.target = self
+    plusButton.action = #selector(addTerminalTab)
+    plusButton.translatesAutoresizingMaskIntoConstraints = false
     // A hairline under the strip, so the tab row reads as a header the way the other columns' do.
     hairline.wantsLayer = true
     hairline.layer?.backgroundColor = NSColor.separatorColor.cgColor
     hairline.translatesAutoresizingMaskIntoConstraints = false
     container.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(tabScroll)
+    view.addSubview(plusButton)
     view.addSubview(hairline)
     view.addSubview(container)
     NSLayoutConstraint.activate([
@@ -378,8 +484,10 @@ final class WorktreeDeskViewController: NSViewController {
       // same as the top — kept as the safe area for the cases AppKit adds one anyway.
       tabScroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
       tabScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-      tabScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      tabScroll.trailingAnchor.constraint(equalTo: plusButton.leadingAnchor),
       tabBarHeight,
+      plusButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+      plusButton.centerYAnchor.constraint(equalTo: tabScroll.centerYAnchor),
       hairline.topAnchor.constraint(equalTo: tabScroll.bottomAnchor),
       hairline.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       hairline.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -392,11 +500,12 @@ final class WorktreeDeskViewController: NSViewController {
     setSurfaceView(placeholder)
   }
 
-  /// Re-render for the given worktree: show its open files, dropping any surface whose tab is gone
-  /// (the worktree switched out from under it).
+  /// Re-render for the given worktree: show its open files and terminals, dropping any surface
+  /// whose tab is gone (a terminal closed, or the worktree switched out from under it).
   func reload(worktreeID: UUID?) {
     loadViewIfNeeded()
     self.worktreeID = worktreeID
+    terminals = worktreeID.flatMap { workspace?.terminals(inWorktree: $0) } ?? []
     pruneClosedWorktrees()
     reconcileSurface()
     rebuildTabBar()
@@ -407,7 +516,7 @@ final class WorktreeDeskViewController: NSViewController {
   /// click) opens it in the reused preview slot; a non-preview open (a double-click) makes a
   /// lasting tab — and pins the preview one if that is what was already showing this file.
   /// `reveal` lands the view on a line, selecting `term` there — the files panel's hand-off for
-  /// a content hit.
+  /// a content hit, so stepping down its lines steps the preview tab through the occurrences.
   func openFile(
     worktree: Worktree, path: String, preview: Bool, reveal: (line: Int, term: String?)? = nil
   ) {
@@ -443,6 +552,7 @@ final class WorktreeDeskViewController: NSViewController {
       tab = fresh
     }
     surface = .file(tab.id)
+    terminals = workspace?.terminals(inWorktree: worktree.id) ?? []
     rebuildTabBar()
     applySurface()
     if let reveal { tab.content.reveal(line: reveal.line, term: reveal.term) }
@@ -459,13 +569,22 @@ final class WorktreeDeskViewController: NSViewController {
       guard let tab = fileTabs.first(where: { $0.id == id }), tab.isPreview else { return false }
       tab.isPreview = false
       return true
-    case .none:
+    case .terminal, .none:
       return false
     }
   }
 
-  /// ⌘W: close the active tab — a file, after the unsaved-edit prompt. Returns whether there was
-  /// one to close, so the menu action is a no-op on an empty desk.
+  /// Show a just-created terminal and hand it the keyboard.
+  func open(terminalID: UUID) {
+    surface = .terminal(terminalID)
+    reload(worktreeID: worktreeID)
+    if let terminal = terminals.first(where: { $0.id == terminalID }) {
+      view.window?.makeFirstResponder(terminal.view)
+    }
+  }
+
+  /// ⌘W: close the active tab — a file (after the unsaved-edit prompt) or a terminal. Returns
+  /// whether there was one to close, so the menu action is a no-op on an empty desk.
   @discardableResult
   func closeActiveTab() -> Bool {
     guard surface != .none else { return false }
@@ -489,11 +608,15 @@ final class WorktreeDeskViewController: NSViewController {
     if isMaximized, surface == .none { onSetMaximized?(false) }
   }
 
-  /// Remove one tab, leaving the selection to the caller. Returns false only when a file's
-  /// unsaved edit was kept by Cancel — the one thing that can refuse.
+  /// Remove one tab, whichever kind, leaving the selection to the caller. Returns false only
+  /// when a file's unsaved edit was kept by Cancel — the one thing that can refuse.
   private func close(_ target: Surface) -> Bool {
     switch target {
     case .none:
+      return true
+    case .terminal(let id):
+      workspace?.removeTerminal(id: id)
+      terminals = worktreeID.flatMap { workspace?.terminals(inWorktree: $0) } ?? []
       return true
     case .file(let id):
       guard let worktreeID, var tabs = fileTabsByWorktree[worktreeID],
@@ -560,20 +683,23 @@ final class WorktreeDeskViewController: NSViewController {
     }
     selectedTabView = nil
     let files = fileTabs
-    // Nothing to switch between — a lone open file is the plain file pane — so collapse the strip.
-    let total = files.count
-    guard total > 1 else {
+    // Nothing to switch between — a lone file with no terminal is the plain pane — so collapse the
+    // strip. A terminal (even one) always earns the strip, so its `+` is reachable.
+    let total = files.count + terminals.count
+    guard terminals.count > 0 || total > 1 else {
       tabScroll.isHidden = true
+      plusButton.isHidden = true
       hairline.isHidden = true
       tabBarHeight.constant = 0
       return
     }
     tabScroll.isHidden = false
+    plusButton.isHidden = false
     hairline.isHidden = false
     tabBarHeight.constant = 30
 
     var tabs: [NSView] = []
-    // A tab's identity in the strip is its position in
+    // One running index across both kinds. A tab's identity in the strip is its position in
     // `orderedSurfaces`, which is what ⌃⇥, ⌘1…⌘9, a drag and the tab menu's "Close to the Right"
     // all count in — so every control on a tab carries that number and nothing else.
     let order = orderedSurfaces
@@ -591,6 +717,13 @@ final class WorktreeDeskViewController: NSViewController {
           selected: surface == item, preview: file.isPreview)
         tab.toolTip = file.path
         tabs.append(tab)
+      case .terminal(let id):
+        guard let terminal = terminals.first(where: { $0.id == id }) else { continue }
+        tabs.append(
+          makeTab(
+            index: index, title: terminal.title,
+            image: NSImage(systemSymbolName: "terminal", accessibilityDescription: nil),
+            selected: surface == item))
       case .none:
         continue
       }
@@ -601,6 +734,15 @@ final class WorktreeDeskViewController: NSViewController {
       tabBar.addArrangedSubview(tab)
     }
     tabBar.tabViews = tabs
+
+    // The flexible tail the `.fill` distribution stretches into, so leftover width lands here
+    // rather than on a tab. It hugs and resists compression at the floor priority, so it is both
+    // the first thing to grow when there is room and the first to collapse when there is not —
+    // past which the strip scrolls rather than the labels giving way.
+    let spacer = NSView()
+    spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+    spacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+    tabBar.addArrangedSubview(spacer)
     revealSelectedTab()
   }
 
@@ -639,6 +781,9 @@ final class WorktreeDeskViewController: NSViewController {
     button.target = self
     button.action = #selector(selectTab(_:))
     button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    // Cap the title so one long filename cannot eat the strip while others are pushed to a sliver;
+    // `.byTruncatingMiddle` keeps the extension visible past the cap.
+    button.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
 
     let closeButton = NSButton()
     closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")
@@ -722,7 +867,8 @@ final class WorktreeDeskViewController: NSViewController {
   /// A click on a tab's label: show it. A double-click promotes the tab as far as it will go —
   /// a preview becomes a lasting tab, and a tab that is already lasting takes the whole window.
   /// So the gesture that pins keeps pinning wherever pinning is what is left to do (the files
-  /// panel's rule and the rail's, unchanged), and past that the same gesture maximizes.
+  /// panel's rule and the rail's, unchanged), and on a terminal — which has no preview state to
+  /// leave — the first double-click is already the maximize.
   @objc private func selectTab(_ sender: NSButton) {
     let order = orderedSurfaces
     guard order.indices.contains(sender.tag) else { return }
@@ -733,6 +879,8 @@ final class WorktreeDeskViewController: NSViewController {
     }
     rebuildTabBar()
     applySurface()
+    // A terminal wants the keyboard as soon as it is showing; a file is picked to be read.
+    if case .terminal = target { focusActiveSurface() }
   }
 
   /// ⌘1…⌘9: the Nth tab of the strip, if the strip is that long.
@@ -790,6 +938,10 @@ final class WorktreeDeskViewController: NSViewController {
     onSetMaximized?(!isMaximized)
   }
 
+  @objc private func addTerminalTab() {
+    onNewTerminal?()
+  }
+
   // MARK: Surface swap
 
   private var currentSurfaceView: NSView?
@@ -801,6 +953,12 @@ final class WorktreeDeskViewController: NSViewController {
     case .file(let id):
       if let tab = fileTabs.first(where: { $0.id == id }) {
         setSurfaceView(tab.content.view)
+      } else {
+        setSurfaceView(placeholder)
+      }
+    case .terminal(let id):
+      if let terminal = terminals.first(where: { $0.id == id }) {
+        setSurfaceView(terminal.view)
       } else {
         setSurfaceView(placeholder)
       }

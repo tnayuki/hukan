@@ -179,6 +179,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Open Repository…",
       action: #selector(WorkspaceWindowController.openRepository(_:)), keyEquivalent: "O")
     fileMenu.addItem(.separator())
+    // A terminal is a worktree's, so New Terminal needs a selected worktree and disables without
+    // one. ⌃⌘T, beside the window's own ⌃⌘S and ⌃⌘M, rather than the plain ⌘T: a terminal opened
+    // by hand is the occasional act here — the shell work is the agent's — and ⌘T reads everywhere
+    // as "new tab", a meaning the desk's strip is better left free to take. ⇧⌘T stays free too:
+    // beside a tab strip it means reopen the closed one.
+    let terminal = fileMenu.addItem(
+      withTitle: "New Terminal", action: #selector(WorkspaceWindowController.newTerminal(_:)),
+      keyEquivalent: "t")
+    terminal.keyEquivalentModifierMask = [.command, .control]
+    fileMenu.addItem(.separator())
     // Save the edited source file. Only the Source pane is editable, so this is disabled unless
     // an edit is pending; plain ⌘S, since Hide Sidebar took ⌃⌘S.
     fileMenu.addItem(
@@ -217,22 +227,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     editMenu.addItem(
       withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     editMenu.addItem(.separator())
-    // Find in the active tab (the file's own bar). The tag is the sender field
-    // performFindPanelAction reads — showFindPanel opens the bar. Targets the controller so it
-    // stays clear of the rail's session search.
+    // Find in the active tab — a terminal's bar (SwiftTerm's own) or a file's (the text view's).
+    // The tag is the sender field performFindPanelAction reads — showFindPanel opens the bar.
+    // Targets the controller (disabled on an empty desk) so it stays clear of the rail's session
+    // search.
     let find = editMenu.addItem(
       withTitle: "Find", action: #selector(WorkspaceWindowController.find(_:)),
       keyEquivalent: "f")
     find.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
-    // Both land on the files panel's one field; they differ in which of its two operations runs —
-    // ⌘P leaves it filtering the tree by path, ⌘⇧F searches the files' contents (what Return in
-    // the field does). Neither opens a surface of its own.
+    // Both land on the files panel's filter — one field over the tree that narrows by name and
+    // grows content hits under files, so "go to file" and "find in files" are the same place.
+    // Two items so both keys an editor hand reaches for (⌘P, ⌘⇧F) work.
     editMenu.addItem(
-      withTitle: "Go to File…", action: #selector(WorkspaceWindowController.goToFile(_:)),
+      withTitle: "Go to File…", action: #selector(WorkspaceWindowController.findInFiles(_:)),
       keyEquivalent: "p")
     editMenu.addItem(
       withTitle: "Find in Files…", action: #selector(WorkspaceWindowController.findInFiles(_:)),
       keyEquivalent: "F")
+    // Clear the active terminal's scrollback, where Terminal.app keeps its Cmd-K. Targets the
+    // controller (not the responder chain), and disables unless a terminal is the active tab.
+    editMenu.addItem(
+      withTitle: "Clear Terminal",
+      action: #selector(WorkspaceWindowController.clearTerminal(_:)), keyEquivalent: "k")
     editItem.submenu = editMenu
     main.addItem(editItem)
 
@@ -249,11 +265,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Maximize Tab",
       action: #selector(WorkspaceWindowController.toggleMaximize(_:)), keyEquivalent: "m")
     maximize.keyEquivalentModifierMask = [.command, .control]
-    // The files panel docks on the desk's trailing edge; ⌘⇧E is the key editors give it.
-    let filesPanel = viewMenu.addItem(
+    // The files panel on the column's trailing edge. ⌘⇧E, where every editor puts its explorer.
+    viewMenu.addItem(
       withTitle: "Hide Files",
       action: #selector(WorkspaceWindowController.toggleFilesPanel(_:)), keyEquivalent: "E")
-    filesPanel.keyEquivalentModifierMask = [.command, .shift]
     viewMenu.addItem(.separator())
     let sidebar = viewMenu.addItem(
       withTitle: "Hide Sidebar",
@@ -300,7 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     windowMenu.addItem(
       withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
     windowMenu.addItem(.separator())
-    // Walk the desk's tabs (files) with ⌃⇥ / ⌃⇧⇥ — the Tab key carries
+    // Walk the desk's tabs (files, terminals) with ⌃⇥ / ⌃⇧⇥ — the Tab key carries
     // Control so it beats focus traversal, and enables only when there is more than one tab.
     let nextTab = windowMenu.addItem(
       withTitle: "Select Next Tab",

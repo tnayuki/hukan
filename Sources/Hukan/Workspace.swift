@@ -8,6 +8,9 @@ final class Workspace {
   var repositories: [Repository] = []
   var worktrees: [Worktree] { repositories.flatMap(\.worktrees) }
   var sessions: [AgentSession] = []
+  /// This window's terminals, keyed to their worktree like `sessions`. A worktree's desk shows
+  /// `terminals(inWorktree:)`; the array is the one store, so a terminal outlives tab switches.
+  var terminals: [TerminalSession] = []
 
   /// Something arrived that the rail is showing — a session title read in the background,
   /// for instance. Set by the window that owns this workspace.
@@ -214,6 +217,40 @@ final class Workspace {
   /// session within the same second and so reshuffled the day's rows on every restart.
   private var restoredInstructedAt: [String: Date] = [:]
 
+  /// Terminals decoded from restoration state, waiting for the window controller to turn them into
+  /// live `TerminalSession`s (it owns the callback wiring). Each carries the worktree to reopen on
+  /// and the scrollback to replay. Unlike sessions, a terminal has no disk source to rediscover —
+  /// the model is the state — so it is rebuilt from here, then this is emptied by `takeRestoredTerminals`.
+  private var pendingRestoredTerminals:
+    [(worktreeID: UUID, directory: String, sessionID: String, scrollback: String)] = []
+
+  func takeRestoredTerminals()
+    -> [(worktreeID: UUID, directory: String, sessionID: String, scrollback: String)]
+  {
+    defer { pendingRestoredTerminals = [] }
+    return pendingRestoredTerminals
+  }
+
+  /// The kinds of tab that outlive the window, and so the only ones whose order on the strip is
+  /// worth carrying across. A tab is named by its position among its kind in the saved list, so
+  /// an order is one row per tab: which worktree, which kind — nothing else.
+  struct RestoredTabOrder: Hashable {
+    enum Kind: String {
+      case terminal
+    }
+    let worktreeID: UUID
+    let kind: Kind
+  }
+
+  /// The strip order decoded from restoration state, waiting for the desk to lay its restored
+  /// terminals out in it once they are back.
+  private var pendingRestoredTabOrder: [RestoredTabOrder] = []
+
+  func takeRestoredTabOrder() -> [RestoredTabOrder] {
+    defer { pendingRestoredTabOrder = [] }
+    return pendingRestoredTabOrder
+  }
+
   /// Set a freshly-discovered session's mode/effort/model from what was restored, if anything
   /// was. The model is display continuity only — it is shown until the engine confirms the real
   /// one on resume; it is never forced onto the engine (the engine remembers the model itself).
@@ -265,6 +302,17 @@ final class Workspace {
       return session
     }
     return candidates.max { $0.updatedAt < $1.updatedAt }
+  }
+
+  func terminals(inWorktree worktreeID: UUID) -> [TerminalSession] {
+    terminals.filter { $0.worktreeID == worktreeID }
+  }
+
+  /// Drop a terminal, killing its shell first so closing a tab never orphans a running process.
+  func removeTerminal(id: UUID) {
+    guard let index = terminals.firstIndex(where: { $0.id == id }) else { return }
+    terminals[index].terminate()
+    terminals.remove(at: index)
   }
 
   /// One session row. It carries the worktree it sits in as well as the session, so a row can
@@ -387,6 +435,8 @@ final class Workspace {
     let doomed = Set(leaving.map(\.id))
     for session in sessions where doomed.contains(session.worktreeID) { session.stop() }
     sessions.removeAll { doomed.contains($0.worktreeID) }
+    for terminal in terminals where doomed.contains(terminal.worktreeID) { terminal.terminate() }
+    terminals.removeAll { doomed.contains($0.worktreeID) }
     for repository in repositories { repository.worktrees.removeAll { doomed.contains($0.id) } }
     syncWatchers()
     if let selected = selectedWorktreeID, doomed.contains(selected) {
@@ -527,9 +577,28 @@ final class Workspace {
     static let rosterValues = "roster.values"
     static let rosterNames = "roster.names"
     static let rosterResolved = "roster.resolved"
+    // Terminals: the shell process is volatile, but enough rides restoration to bring one back on
+    // the same desk (keyed by its worktree, whose id is itself restored), in the same directory,
+    // with its scrollback replayed and its history session picked up. The label is derived from
+    // the directory, not stored. Bounded scrollback; the fresh shell starts below it on display.
+    static let terminalWorktreeIDs = "terminals.worktreeIDs"
+    static let terminalDirectories = "terminals.directories"
+    static let terminalSessionIDs = "terminals.sessionIDs"
+    static let terminalScrollbacks = "terminals.scrollbacks"
+    // The strip's order, so a dragged tab does not spring back on relaunch: one row per
+    // restorable tab, in strip order — the terminal list above is saved in that same order, which
+    // is what makes a row's kind enough to name its tab.
+    static let tabOrderWorktreeIDs = "tabs.orderWorktreeIDs"
+    static let tabOrderKinds = "tabs.orderKinds"
   }
 
-  func encodeState(to coder: NSCoder) {
+  /// `terminals`, when given, come from the desk: the model's list is in the order they were
+  /// opened, and the desk's is the order they stand in, which is the one to come back in.
+  /// `tabOrder` is the strip order that list is in.
+  func encodeState(
+    to coder: NSCoder, terminals: [TerminalSession]? = nil, tabOrder: [RestoredTabOrder] = []
+  ) {
+    let terminals = terminals ?? self.terminals
     coder.encode(worktrees.map(\.url.path) as NSArray, forKey: Key.worktreePaths)
     coder.encode(worktrees.map(\.id.uuidString) as NSArray, forKey: Key.worktreeIDs)
     coder.encode(selectedWorktreeID?.uuidString ?? "", forKey: Key.selectedWorktreeID)
@@ -608,6 +677,15 @@ final class Workspace {
     coder.encode(
       withRoster.map { $0.availableModels.map(\.resolvedModel) as NSArray } as NSArray,
       forKey: Key.rosterResolved)
+
+    coder.encode(terminals.map(\.worktreeID.uuidString) as NSArray, forKey: Key.terminalWorktreeIDs)
+    coder.encode(terminals.map(\.currentDirectoryPath) as NSArray, forKey: Key.terminalDirectories)
+    coder.encode(terminals.map(\.sessionID) as NSArray, forKey: Key.terminalSessionIDs)
+    coder.encode(terminals.map { $0.scrollbackText() } as NSArray, forKey: Key.terminalScrollbacks)
+
+    coder.encode(
+      tabOrder.map(\.worktreeID.uuidString) as NSArray, forKey: Key.tabOrderWorktreeIDs)
+    coder.encode(tabOrder.map(\.kind.rawValue) as NSArray, forKey: Key.tabOrderKinds)
   }
 
   func decodeState(from coder: NSCoder) {
@@ -717,6 +795,32 @@ final class Workspace {
           displayName: i < names.count ? names[i] : value,
           resolvedModel: i < resolved.count ? resolved[i] : value)
       }
+    }
+
+    // Terminals: rebuild the pending list keyed by worktree. The worktrees exist by now (built at
+    // the top of this method with their restored ids), but the live TerminalSessions are made by
+    // the controller (it wires the callbacks) once this returns — see materializeRestoredTerminals.
+    let terminalWorktrees = strings(coder, Key.terminalWorktreeIDs)
+    let terminalDirectories = strings(coder, Key.terminalDirectories)
+    let terminalSessionIDs = strings(coder, Key.terminalSessionIDs)
+    let terminalScrollbacks = strings(coder, Key.terminalScrollbacks)
+    pendingRestoredTerminals = []
+    for (index, idString) in terminalWorktrees.enumerated() {
+      guard let worktreeID = UUID(uuidString: idString) else { continue }
+      let directory = index < terminalDirectories.count ? terminalDirectories[index] : ""
+      let sessionID = index < terminalSessionIDs.count ? terminalSessionIDs[index] : ""
+      let scrollback = index < terminalScrollbacks.count ? terminalScrollbacks[index] : ""
+      pendingRestoredTerminals.append((worktreeID, directory, sessionID, scrollback))
+    }
+
+    let orderWorktrees = strings(coder, Key.tabOrderWorktreeIDs)
+    let orderKinds = strings(coder, Key.tabOrderKinds)
+    pendingRestoredTabOrder = []
+    for (index, idString) in orderWorktrees.enumerated() where index < orderKinds.count {
+      guard let worktreeID = UUID(uuidString: idString),
+        let kind = RestoredTabOrder.Kind(rawValue: orderKinds[index])
+      else { continue }
+      pendingRestoredTabOrder.append(RestoredTabOrder(worktreeID: worktreeID, kind: kind))
     }
 
     // The session list is never stored — it is read back off disk every time.

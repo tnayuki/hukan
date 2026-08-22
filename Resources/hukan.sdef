@@ -33,6 +33,22 @@
             <element type="session">
                 <cocoa key="sessions"/>
             </element>
+            <element type="terminal">
+                <cocoa key="terminals"/>
+            </element>
+        </class>
+
+        <class name="terminal" code="cTrm" description="A shell running in a worktree" plural="terminals">
+            <cocoa class="SDTerminal"/>
+            <property name="id" code="ID  " type="text" access="r" description="Stable unique identifier">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="Terminal title (the command running in it, or its working directory's name)">
+                <cocoa key="title"/>
+            </property>
+            <property name="running" code="bRun" type="boolean" access="r" description="Whether the shell has spawned and is live">
+                <cocoa key="running"/>
+            </property>
         </class>
 
         <class name="session" code="cSes" description="An agent session running claude in a worktree">
