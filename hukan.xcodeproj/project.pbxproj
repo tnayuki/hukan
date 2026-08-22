@@ -1,0 +1,359 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AC000000000000000000000E /* hukan.sdef in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000000D /* hukan.sdef */; };
+		AC000000000000000000001B /* hukan.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001A /* hukan.icns */; };
+		AC000000000000000000001F /* hukan-dev.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001E /* hukan-dev.icns */; };
+		AD00000000000000000000C2 /* Clibgit2.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD00000000000000000000C1 /* Clibgit2.xcframework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		AF00000000000000000000B0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AC0000000000000000000001;
+			remoteInfo = Hukan;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		AC0000000000000000000003 /* Hukan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hukan.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AC000000000000000000000D /* hukan.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = hukan.sdef; sourceTree = "<group>"; };
+		AC000000000000000000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AC000000000000000000001A /* hukan.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = hukan.icns; sourceTree = "<group>"; };
+		AC000000000000000000001E /* hukan-dev.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = "hukan-dev.icns"; sourceTree = "<group>"; };
+		AF0000000000000000000003 /* HukanAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HukanAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD00000000000000000000C1 /* Clibgit2.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/Clibgit2.xcframework; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		AB0000000000000000000002 /* Transcript */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/Transcript; sourceTree = "<group>"; };
+		AC0000000000000000000002 /* Hukan */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/Hukan; sourceTree = "<group>"; };
+		AE0000000000000000000002 /* Engine */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/Engine; sourceTree = "<group>"; };
+		AF0000000000000000000002 /* HukanAppTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Tests/HukanAppTests; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AC0000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AD00000000000000000000C2 /* Clibgit2.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AF0000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AA0000000000000000000002 /* Main */ = {
+			isa = PBXGroup;
+			children = (
+				AC0000000000000000000002 /* Hukan */,
+				AB0000000000000000000002 /* Transcript */,
+				AE0000000000000000000002 /* Engine */,
+				AF0000000000000000000002 /* HukanAppTests */,
+				AA0000000000000000000004 /* Resources */,
+				AD00000000000000000000C0 /* Frameworks */,
+				AA0000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AD00000000000000000000C0 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				AD00000000000000000000C1 /* Clibgit2.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AC0000000000000000000003 /* Hukan.app */,
+				AF0000000000000000000003 /* HukanAppTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000004 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				AC000000000000000000000F /* Info.plist */,
+				AC000000000000000000000D /* hukan.sdef */,
+				AC000000000000000000001A /* hukan.icns */,
+				AC000000000000000000001E /* hukan-dev.icns */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AC0000000000000000000001 /* Hukan */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AC0000000000000000000004 /* Build configuration list for PBXNativeTarget "Hukan" */;
+			buildPhases = (
+				AC0000000000000000000007 /* Sources */,
+				AC0000000000000000000008 /* Frameworks */,
+				AC0000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				AC0000000000000000000002 /* Hukan */,
+				AB0000000000000000000002 /* Transcript */,
+				AE0000000000000000000002 /* Engine */,
+			);
+			name = Hukan;
+			productName = Hukan;
+			productReference = AC0000000000000000000003 /* Hukan.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AF0000000000000000000001 /* HukanAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AF0000000000000000000004 /* Build configuration list for PBXNativeTarget "HukanAppTests" */;
+			buildPhases = (
+				AF0000000000000000000007 /* Sources */,
+				AF0000000000000000000008 /* Frameworks */,
+				AF0000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AF00000000000000000000A0 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AF0000000000000000000002 /* HukanAppTests */,
+			);
+			name = HukanAppTests;
+			productName = HukanAppTests;
+			productReference = AF0000000000000000000003 /* HukanAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AA0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					AC0000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					AF0000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = AC0000000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = AA0000000000000000000005 /* Build configuration list for PBXProject "hukan" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AA0000000000000000000002 /* Main */;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = AA0000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AC0000000000000000000001 /* Hukan */,
+				AF0000000000000000000001 /* HukanAppTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AC0000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AC000000000000000000000E /* hukan.sdef in Resources */,
+				AC000000000000000000001B /* hukan.icns in Resources */,
+				AC000000000000000000001F /* hukan-dev.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AF0000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AC0000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AF0000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AF00000000000000000000A0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AC0000000000000000000001 /* Hukan */;
+			targetProxy = AF00000000000000000000B0 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AA0000000000000000000006 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AA0000000000000000000007 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		AC0000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				ENABLE_HARDENED_RUNTIME = NO;
+				EXECUTABLE_NAME = Hukan;
+				INFOPLIST_FILE = Resources/Info.plist;
+				OTHER_LDFLAGS = "-liconv";
+				ICON_FILE = "hukan-dev";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tnayuki.Hukan.dev";
+				PRODUCT_MODULE_NAME = Hukan;
+				PRODUCT_NAME = "Hukan Dev";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+			};
+			name = Debug;
+		};
+		AC0000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				ENABLE_HARDENED_RUNTIME = NO;
+				EXECUTABLE_NAME = Hukan;
+				INFOPLIST_FILE = Resources/Info.plist;
+				OTHER_LDFLAGS = "-liconv";
+				ICON_FILE = hukan;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tnayuki.Hukan;
+				PRODUCT_MODULE_NAME = Hukan;
+				PRODUCT_NAME = Hukan;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+			};
+			name = Release;
+		};
+		AF0000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tnayuki.HukanAppTests;
+				PRODUCT_NAME = HukanAppTests;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hukan Dev.app/Contents/MacOS/Hukan";
+			};
+			name = Debug;
+		};
+		AF0000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tnayuki.HukanAppTests;
+				PRODUCT_NAME = HukanAppTests;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hukan.app/Contents/MacOS/Hukan";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA0000000000000000000005 /* Build configuration list for PBXProject "hukan" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000000000000000000006 /* Debug */,
+				AA0000000000000000000007 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AC0000000000000000000004 /* Build configuration list for PBXNativeTarget "Hukan" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC0000000000000000000005 /* Debug */,
+				AC0000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AF0000000000000000000004 /* Build configuration list for PBXNativeTarget "HukanAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AF0000000000000000000005 /* Debug */,
+				AF0000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = AA0000000000000000000001 /* Project object */;
+}

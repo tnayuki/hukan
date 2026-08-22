@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="hukan" xmlns:xi="http://www.w3.org/2003/XInclude">
+
+    <xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef"
+                xpointer="xpointer(/dictionary/suite)"/>
+
+    <suite name="hukan Suite" code="Hukn" description="Control hukan">
+
+        <!-- Objects: application → window → repository → worktree → session. -->
+
+        <class name="repository" code="cRep" description="An open repository" plural="repositories">
+            <cocoa class="SDRepository"/>
+            <property name="id" code="ID  " type="text" access="r" description="The repository path, its unique identifier">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="Display name of the repository"/>
+            <element type="worktree">
+                <cocoa key="worktrees"/>
+            </element>
+            <responds-to command="close">
+                <cocoa method="handleCloseScriptCommand:"/>
+            </responds-to>
+        </class>
+
+        <class name="worktree" code="cWkt" description="A worktree — one working directory of a repository">
+            <cocoa class="SDWorktree"/>
+            <property name="id" code="ID  " type="text" access="r" description="Stable unique identifier">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="Branch name, or the directory name"/>
+            <property name="branch" code="Brnc" type="text" access="r" description="Checked-out branch, if any"/>
+            <element type="session">
+                <cocoa key="sessions"/>
+            </element>
+        </class>
+
+        <class name="session" code="cSes" description="An agent session running claude in a worktree">
+            <cocoa class="SDSession"/>
+            <property name="id" code="ID  " type="text" access="r" description="Stable unique identifier">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="Session title (may be empty or repeat; use id to address reliably)">
+                <cocoa key="title"/>
+            </property>
+            <property name="transcript" code="Tscr" type="text" access="r" description="The transcript as plain text">
+                <cocoa key="transcript"/>
+            </property>
+            <property name="pending approval" code="pApr" type="text" access="r" description="The tool call the session is waiting on, or an empty string">
+                <cocoa key="pendingApproval"/>
+            </property>
+            <property name="tasks" code="pTsk" type="text" access="r" description="The agent's task list, one line a task ([x] done, [~] in flight, [ ] still to do)">
+                <cocoa key="tasks"/>
+            </property>
+            <property name="running" code="bRun" type="boolean" access="r" description="Whether the session's process is live">
+                <cocoa key="running"/>
+            </property>
+            <property name="detached" code="bDet" type="boolean" access="r" description="Whether the session is restored but not yet reattached">
+                <cocoa key="detached"/>
+            </property>
+            <property name="held elsewhere" code="bHld" type="boolean" access="r" description="Whether another live process owns this session; it cannot be started until that process exits">
+                <cocoa key="heldElsewhere"/>
+            </property>
+            <property name="held by pid" code="hPid" type="integer" access="r" description="The pid of the process holding this session, or 0 if none">
+                <cocoa key="heldByPID"/>
+            </property>
+            <property name="archived" code="bArc" type="boolean" access="r" description="Whether this session sits below its worktree's Archived fold. A session that is working or waiting on you reads false even when the flag is set — a pulsing row is never hidden">
+                <cocoa key="archived"/>
+            </property>
+            <responds-to command="stop">
+                <cocoa method="handleStopScriptCommand:"/>
+            </responds-to>
+            <responds-to command="start">
+                <cocoa method="handleStartScriptCommand:"/>
+            </responds-to>
+            <responds-to command="interrupt">
+                <cocoa method="handleInterruptScriptCommand:"/>
+            </responds-to>
+            <responds-to command="fork">
+                <cocoa method="handleForkScriptCommand:"/>
+            </responds-to>
+            <responds-to command="roll back">
+                <cocoa method="handleRollBackScriptCommand:"/>
+            </responds-to>
+            <responds-to command="approve">
+                <cocoa method="handleApproveScriptCommand:"/>
+            </responds-to>
+            <responds-to command="deny">
+                <cocoa method="handleDenyScriptCommand:"/>
+            </responds-to>
+            <responds-to command="archive">
+                <cocoa method="handleArchiveScriptCommand:"/>
+            </responds-to>
+            <responds-to command="unarchive">
+                <cocoa method="handleUnarchiveScriptCommand:"/>
+            </responds-to>
+        </class>
+
+        <class-extension extends="window" description="A hukan workspace window">
+            <cocoa class="NSWindow"/>
+            <element type="repository">
+                <cocoa key="repositories"/>
+            </element>
+            <property name="selected worktree" code="sWkt" type="worktree" access="rw" description="The worktree currently selected in this window">
+                <cocoa key="selectedWorktree"/>
+            </property>
+            <property name="selected session" code="sSes" type="session" access="rw" description="The session currently selected in this window">
+                <cocoa key="selectedSession"/>
+            </property>
+            <property name="selected sessions" code="sSss" type="text" access="rw" hidden="yes" description="Every session the rail has selected, one id a line — `selected session` is the anchor of these, the one the transcript column follows. Set it to a list of ids to select them; the last becomes the anchor. Hidden: it exists so a multi-selection is checkable and reproducible without clicking at coordinates">
+                <cocoa key="selectedSessionIDs"/>
+            </property>
+            <property name="session filter" code="sFil" type="text" access="rw" description="The rail's full-text filter over session titles and transcripts. Set to narrow the rail, empty to clear">
+                <cocoa key="sessionFilter"/>
+            </property>
+            <element type="session" access="r">
+                <cocoa key="filteredSessions"/>
+                <accessor style="index"/>
+            </element>
+            <property name="transcript match count" code="tMcn" type="integer" access="r" hidden="yes" description="How many times the filter's terms are highlighted in the open transcript">
+                <cocoa key="transcriptMatchCount"/>
+            </property>
+            <property name="first match offset" code="tMof" type="integer" access="r" hidden="yes" description="Character offset of the first highlighted match in the open transcript (the one scrolled to), or -1 for none">
+                <cocoa key="transcriptFirstMatchOffset"/>
+            </property>
+        </class-extension>
+
+        <!-- Commands. Opening a repository, creating a session and closing a repository are the
+             Standard Suite's own verbs — `open POSIX file "…"`, `make new session at …`, `close
+             repository …` — not custom ones.
+
+             The object-scoped session verbs — stop, start, interrupt, approve, deny — take the
+             session as their receiver — `stop session X`, or `tell session X to stop` — dispatched
+             by the `responds-to` methods on the session class, the same way `close` reaches a
+             repository. They carry no `<cocoa class>`: with one, an NSScriptCommand subclass would
+             own the dispatch and the object direct-parameter would fail to reach the proxy (-1708);
+             without one, Cocoa routes to the receiver's method. `send` is the exception: its direct
+             parameter is the message, so it names the session with `to` and stays a plain command —
+             a verb whose direct parameter is not a specifier does not reach a responds-to method.
+             The app-level utility verbs further down (restart's bare form, status, fold) are
+             genuinely app/window-scoped and likewise stay plain commands. -->
+
+        <command name="send" code="HuknSend" description="Send a message to a session: send &quot;…&quot; to session X">
+            <cocoa class="SendCommand"/>
+            <direct-parameter type="text" description="Message body"/>
+            <parameter name="to" code="Tose" type="session" description="Session to send to">
+                <cocoa key="toSession"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
+        <command name="approve" code="HuknAllw" description="Allow the tool call a session is waiting on: approve session X. Requires HUKAN_SCRIPTING_GUARDED=1">
+            <direct-parameter type="specifier" description="Session to act on"/>
+            <result type="text"/>
+        </command>
+
+        <command name="deny" code="HuknDeny" description="Deny the tool call a session is waiting on: deny session X. Requires HUKAN_SCRIPTING_GUARDED=1">
+            <direct-parameter type="specifier" description="Session to act on"/>
+            <result type="text"/>
+        </command>
+
+        <command name="stop" code="HuknStop" description="Stop a session's engine: stop session X. The next send resumes it from its transcript">
+            <direct-parameter type="specifier" description="Session to stop"/>
+            <result type="text"/>
+        </command>
+
+        <command name="interrupt" code="HuknIntr" description="Interrupt a session's running turn, leaving its engine live: interrupt session X">
+            <direct-parameter type="specifier" description="Session to interrupt"/>
+            <result type="text"/>
+        </command>
+
+        <command name="start" code="HuknStrt" description="Start a session's engine without waiting for a message: start session X, resuming its conversation if it has one">
+            <direct-parameter type="specifier" description="Session to start"/>
+            <result type="text"/>
+        </command>
+
+        <command name="archive" code="HuknArcv" description="Put a session below its worktree's Archived fold: archive session X. Nothing on disk is touched — the transcript stays exactly where Claude Code wrote it">
+            <direct-parameter type="specifier" description="Session to archive"/>
+            <result type="text"/>
+        </command>
+
+        <command name="unarchive" code="HuknUarc" description="Bring a session back out of its worktree's Archived fold: unarchive session X">
+            <direct-parameter type="specifier" description="Session to unarchive"/>
+            <result type="text"/>
+        </command>
+
+        <command name="roll back" code="HuknRlbk" description="Cut a session's conversation back to before one of its messages, in place: roll back session X. The messages leave the conversation but stay in the transcript file">
+            <direct-parameter type="specifier" description="Session to roll back"/>
+            <parameter name="before" code="RbBf" type="integer" optional="yes" description="Which message to cut back to, counting from the top; omit for the last one">
+                <cocoa key="before"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
+        <command name="fork" code="HuknFrkS" description="Branch a session's conversation into a new session in the same worktree, keeping everything said before one of its messages: fork session X. The source is left untouched">
+            <direct-parameter type="specifier" description="Session to branch"/>
+            <parameter name="before" code="FkBf" type="integer" optional="yes" description="Which message to rewind past, counting from the top; omit for the last one">
+                <cocoa key="before"/>
+            </parameter>
+            <result type="text" description="The new session's id"/>
+        </command>
+
+        <!-- `restart` switches on its target: with a session it cycles that session's engine; with
+             none it relaunches the whole app (the dev loop the charter depends on). -->
+        <command name="restart" code="HuknRstt" description="Restart a session's engine, resuming its conversation. With no session, relaunch the whole app; window, Space and repositories restore">
+            <cocoa class="RestartCommand"/>
+            <parameter name="session" code="RsSe" type="session" optional="yes" description="Session to restart; omit to relaunch the app">
+                <cocoa key="onSession"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
+        <!-- The development-harness verbs and probes are hidden: they keep working (the dev loop
+             in the charter depends on them) but stay out of the public dictionary. -->
+
+        <command name="hukan status" code="HuknStat" hidden="yes" description="Return one line per worktree with its sessions">
+            <cocoa class="StatusCommand"/>
+            <result type="text"/>
+        </command>
+
+        <command name="files" code="HuknFile" hidden="yes" description="Report the files panel, or drive its one field, for automated checks">
+            <cocoa class="FilesPanelCommand"/>
+            <direct-parameter type="text" optional="yes" description="omit to report the panel"/>
+            <parameter name="filtering" code="Fltr" type="text" optional="yes" description="type this into the field, filtering the tree by path">
+                <cocoa key="filtering"/>
+            </parameter>
+            <parameter name="searching" code="Srch" type="text" optional="yes" description="type this into the field and press Return, searching every file's contents">
+                <cocoa key="searching"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
+        <command name="fold" code="HuknFold" hidden="yes" description="Inspect or drive the tool-call fold in the selected transcript, for automated checks">
+            <cocoa class="FoldCommand"/>
+            <direct-parameter type="text" optional="yes" description="status (default), expand, or collapse"/>
+            <result type="text"/>
+        </command>
+
+    </suite>
+</dictionary>
