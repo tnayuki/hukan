@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 
 /// The tab strip's clip. A trackpad already scrolls it sideways, but a wheel reports only a
 /// vertical delta and would leave the strip reachable by ⌃⇥ and ⌘1…⌘9 and by nothing a hand does
@@ -192,22 +193,25 @@ private final class TabLabelButton: NSButton, NSDraggingSource {
   func ignoreModifierKeys(for session: NSDraggingSession) -> Bool { true }
 }
 
-/// The right column's content area: this worktree's open files and terminals, side by side as
-/// tabs. Each navigates inside itself — a file by its find bar, a terminal by its prompt; getting
-/// *to* a file is the files panel beside this, and getting to another worktree is the rail.
-/// Terminals arrive by ⌃⌘T / the strip's `+`. The strip shows only when there is something to
-/// switch between — a lone open file with no terminal is the plain file pane it replaced.
+/// The right column's content area: this worktree's open files, web tabs and terminals, side by
+/// side as tabs. Each navigates inside itself — a file by its find bar, a browser by its address
+/// bar, a terminal by its prompt; getting *to* a file is the files panel beside this, and getting
+/// to another worktree is the rail. Browsers and terminals arrive by ⌘T / ⌃⌘T or the strip's `+`.
+/// The strip shows only when there is something to switch between.
 ///
-/// Open files are the desk's own state (kept per worktree so switching worktrees swaps the whole
-/// set); terminals it only renders — the window controller owns their creation and removal over
-/// `Workspace.terminals`. The strip's order is the desk's too, whatever kind
+/// Open files and browsers are the desk's own state (kept per worktree so switching worktrees
+/// swaps the whole set); terminals it only renders — the window controller owns their creation
+/// and removal over `Workspace.terminals`. The strip's order is the desk's too, whatever kind
 /// a tab is: a new tab takes the end, a drag puts it wherever it was dropped, and closing the
 /// active one lands on the neighbour to its right.
+
 final class WorktreeDeskViewController: NSViewController {
   var workspace: Workspace?
   /// ⌃⌘T or the strip's `+` asks the controller to make a terminal in the selected worktree; it
   /// appends the model, then calls `open(terminalID:)` back.
   var onNewTerminal: (() -> Void)?
+  /// ⌘T or the strip's `+` asked for a web tab in the selected worktree.
+  var onNewBrowser: (() -> Void)?
   /// A file tab wrote itself back to disk — the column reloads so the change shows in the diffstat.
   var onFileSaved: (() -> Void)?
   /// Ask the window for the whole width, or to put the other columns back. The desk is a column
@@ -242,6 +246,14 @@ final class WorktreeDeskViewController: NSViewController {
     }
   }
 
+  /// One web tab: its own pane (web view + chrome). Like files, browsers are the desk's state,
+  /// kept per worktree — the task's browser travels with its worktree.
+  private final class BrowserTab {
+    let id = UUID()
+    let pane: BrowserPaneViewController
+    init(pane: BrowserPaneViewController) { self.pane = pane }
+  }
+
   private let tabBar = TabStrip()
   /// The strip's clip. Tabs keep their natural width and run off the edge rather than being
   /// squeezed into slivers, so a desk with a dozen of them is walked rather than read at a
@@ -255,24 +267,30 @@ final class WorktreeDeskViewController: NSViewController {
   private lazy var tabBarHeight = tabScroll.heightAnchor.constraint(equalToConstant: 0)
   private var worktreeID: UUID?
   private var fileTabsByWorktree: [UUID: [FileTab]] = [:]
+  private var browserTabsByWorktree: [UUID: [BrowserTab]] = [:]
   private var terminals: [TerminalSession] = []
   /// The strip's order per worktree: the order the tabs were opened in, then whatever dragging
   /// has made of it. Written back on every rebuild, so a tab it has not met — one just opened —
   /// takes the end of the strip, which is where a browser puts a new tab, and one that has since
-  /// closed drops out. Only the terminals outlive the window, so only their part of it is saved,
-  /// and as their relative order (see `restorableTabOrder`).
+  /// closed drops out. Only the web tabs outlive the window, so only their part of it is saved,
+  /// and as their relative order (see `restorableBrowserTabs`).
   private var tabOrderByWorktree: [UUID: [Surface]] = [:]
 
-  private enum Surface: Equatable {
+  private enum Surface: Hashable {
     case none
     case file(UUID)
+    case browser(UUID)
     case terminal(UUID)
   }
   private var surface: Surface = .none
+  /// The strip's label per surface, so a title that changes on its own — a page loading — can be
+  /// relabelled without rebuilding the strip.
+  private var tabButtons: [Surface: NSButton] = [:]
   /// The selected tab's view in the strip, so it can be scrolled back into sight after a rebuild.
   private weak var selectedTabView: NSView?
 
   private var fileTabs: [FileTab] { worktreeID.flatMap { fileTabsByWorktree[$0] } ?? [] }
+  private var browserTabs: [BrowserTab] { worktreeID.flatMap { browserTabsByWorktree[$0] } ?? [] }
 
   /// The file content of the active tab, or nil when a terminal (or nothing) is showing. The
   /// column drives save / diff-toggle / refresh through this.
@@ -286,13 +304,26 @@ final class WorktreeDeskViewController: NSViewController {
   /// Whether ⌘W has a tab to close — any file or terminal is the active surface.
   var hasClosableTab: Bool { surface != .none }
 
-  /// Whether ⌘F has a surface to search in — a file or a terminal, not an empty desk.
-  var canFind: Bool {
-    switch surface {
-    case .file, .terminal: return true
-    case .none: return false
-    }
+  /// The terminal showing right now, if the active tab is one — what ⌘K clears.
+  var activeTerminal: TerminalSession? {
+    guard case .terminal(let id) = surface else { return nil }
+    return terminals.first { $0.id == id }
   }
+
+  /// Whether ⌘F has a surface to search in — anything but an empty desk.
+  var canFind: Bool { surface != .none }
+
+  /// The web tab showing right now, for the browser's own menu items (back / forward). Nil when
+  /// the active surface is anything else, which is what disables them.
+  private var activeBrowserPane: BrowserPaneViewController? {
+    guard case .browser(let id) = surface else { return nil }
+    return browserTabs.first { $0.id == id }?.pane
+  }
+
+  var canBrowserGoBack: Bool { activeBrowserPane?.webView.canGoBack ?? false }
+  var canBrowserGoForward: Bool { activeBrowserPane?.webView.canGoForward ?? false }
+  func browserGoBack() { activeBrowserPane?.webView.goBack() }
+  func browserGoForward() { activeBrowserPane?.webView.goForward() }
 
   /// ⌘F: find within the active surface. A terminal's bar is SwiftTerm's, a file's the text
   /// view's; both read their action tag off the menu item passed through as `sender`.
@@ -304,19 +335,15 @@ final class WorktreeDeskViewController: NSViewController {
       terminal.view.performFindPanelAction(sender)
     case .file(let id):
       fileTabs.first { $0.id == id }?.content.performFind(sender)
+    case .browser(let id):
+      browserTabs.first { $0.id == id }?.pane.performFind(sender)
     case .none:
       break
     }
   }
 
-  /// The terminal showing right now, if the active tab is one — what ⌘K clears.
-  var activeTerminal: TerminalSession? {
-    guard case .terminal(let id) = surface else { return nil }
-    return terminals.first { $0.id == id }
-  }
-
   /// How many tabs the desk holds — ⌃⇥ tab-cycling validates on more than one.
-  var tabCount: Int { fileTabs.count + terminals.count }
+  var tabCount: Int { fileTabs.count + browserTabs.count + terminals.count }
 
   /// The tabs in strip order, so ⌃⇥ / ⌃⇧⇥ walk them the way they read: the order kept in
   /// `tabOrderByWorktree`, then any tab it does not know yet.
@@ -329,15 +356,16 @@ final class WorktreeDeskViewController: NSViewController {
   private func orderedSurfaces(in worktreeID: UUID, terminals: [TerminalSession]) -> [Surface] {
     let present =
       (fileTabsByWorktree[worktreeID] ?? []).map { Surface.file($0.id) }
+      + (browserTabsByWorktree[worktreeID] ?? []).map { .browser($0.id) }
       + terminals.map { .terminal($0.id) }
     let known = (tabOrderByWorktree[worktreeID] ?? []).filter(present.contains)
     return known + present.filter { !known.contains($0) }
   }
 
-  /// The strip order of the tabs that come back after a relaunch — the terminals — as
+  /// The strip order of the tabs that come back after a relaunch — web tabs and terminals — as
   /// one row per tab across every worktree, in strip order. The desk's contribution to the
   /// window's restorable state beside the tabs themselves: the two saved lists are written in
-  /// this order too (see the window), so a row
+  /// this order too (see `restorableBrowserTabs`, and the window for the terminals), so a row
   /// need only say which kind it is for `restoreTabOrder` to know which tab it names. Files and
   /// commits are not saved, so their places are not either; a restored strip is the saved tabs in
   /// the order they stood, and what is opened after them goes to the end as it always does.
@@ -347,6 +375,7 @@ final class WorktreeDeskViewController: NSViewController {
       orderedSurfaces(in: worktree.id, terminals: workspace.terminals(inWorktree: worktree.id))
         .compactMap { surface -> Workspace.RestoredTabOrder? in
           switch surface {
+          case .browser: return .init(worktreeID: worktree.id, kind: .browser)
           case .terminal: return .init(worktreeID: worktree.id, kind: .terminal)
           case .file, .none: return nil
           }
@@ -369,9 +398,9 @@ final class WorktreeDeskViewController: NSViewController {
     }.map(\.element)
   }
 
-  /// Lay last run's terminals out in the order they were saved in. Called once they are back on
-  /// their worktrees, in the order they were saved — which is the strip's — so walking the rows
-  /// and taking the next tab of each row's kind rebuilds the strip. A row
+  /// Lay last run's web tabs and terminals out in the order they were saved in. Called once both
+  /// kinds are back on their worktrees, each list in the order it was saved — which is the strip's
+  /// — so walking the rows and taking the next tab of each row's kind rebuilds the strip. A row
   /// past the end of its list (a terminal whose worktree is gone) is skipped.
   func restoreTabOrder(_ rows: [Workspace.RestoredTabOrder]) {
     guard let workspace else { return }
@@ -381,6 +410,10 @@ final class WorktreeDeskViewController: NSViewController {
       let index = next[row, default: 0]
       next[row] = index + 1
       switch row.kind {
+      case .browser:
+        let tabs = browserTabsByWorktree[row.worktreeID] ?? []
+        guard index < tabs.count else { continue }
+        order[row.worktreeID, default: []].append(.browser(tabs[index].id))
       case .terminal:
         let tabs = workspace.terminals(inWorktree: row.worktreeID)
         guard index < tabs.count else { continue }
@@ -402,7 +435,7 @@ final class WorktreeDeskViewController: NSViewController {
     order.insert(moved, at: to > from ? to - 1 : to)
     tabOrderByWorktree[worktreeID] = order
     rebuildTabBar()
-    // The terminals' order is part of what comes back after a relaunch.
+    // The web tabs' order is part of what comes back after a relaunch.
     view.window?.invalidateRestorableState()
   }
 
@@ -422,6 +455,8 @@ final class WorktreeDeskViewController: NSViewController {
     switch surface {
     case .terminal(let id):
       view.window?.makeFirstResponder(terminals.first { $0.id == id }?.view)
+    case .browser(let id):
+      view.window?.makeFirstResponder(browserTabs.first { $0.id == id }?.pane.webView)
     case .file, .none:
       break
     }
@@ -458,17 +493,18 @@ final class WorktreeDeskViewController: NSViewController {
       tabBar.widthAnchor.constraint(greaterThanOrEqualTo: clip.widthAnchor),
     ])
 
-    // `+` sits outside the scrolling strip, at the trailing edge. Inside it, the one control that
-    // makes a tab would be the first thing to scroll away exactly when there are enough tabs to
-    // have to scroll.
-    plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Terminal")
+    // `+` offers what can be added to a desk — a web tab or a terminal — as a menu, in the File
+    // menu's order (⌘T / ⌃⌘T). It sits outside the scrolling strip, at the trailing edge: inside
+    // it, the one control that makes a tab would be the first thing to scroll away exactly when
+    // there are enough tabs to have to scroll.
+    plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "Add Tab")
     plusButton.imagePosition = .imageOnly
     plusButton.isBordered = false
     plusButton.bezelStyle = .accessoryBarAction
     plusButton.contentTintColor = .secondaryLabelColor
-    plusButton.toolTip = "New Terminal"
+    plusButton.toolTip = "New Browser or Terminal"
     plusButton.target = self
-    plusButton.action = #selector(addTerminalTab)
+    plusButton.action = #selector(showAddMenu(_:))
     plusButton.translatesAutoresizingMaskIntoConstraints = false
     // A hairline under the strip, so the tab row reads as a header the way the other columns' do.
     hairline.wantsLayer = true
@@ -569,8 +605,142 @@ final class WorktreeDeskViewController: NSViewController {
       guard let tab = fileTabs.first(where: { $0.id == id }), tab.isPreview else { return false }
       tab.isPreview = false
       return true
-    case .terminal, .none:
+    case .browser, .terminal, .none:
       return false
+    }
+  }
+
+  /// Open a new web tab in this worktree, address field focused and ready to type. A popup opens
+  /// the same way but arrives with its web view already built (see `wire`); `url` opens a known
+  /// address instead — a link followed from the transcript — and lands on the tab already showing
+  /// it rather than stacking a second copy, which is the rule a file tab follows.
+  ///
+  /// A web tab has no preview slot, unlike a file: the two or three pages an agent
+  /// hands you are context you want side by side, so they are lasting from the first click, and
+  /// the reuse above is what keeps that from piling up.
+  func openBrowser(worktree: Worktree, webView: WKWebView? = nil, url: URL? = nil) {
+    loadViewIfNeeded()
+    // A popup belongs to the worktree of the page that opened it, which is not necessarily the
+    // one on screen: a sign-in finishing in a background worktree's tab must not swap the desk
+    // out from under the rail's selection. It joins that worktree's tabs and waits there.
+    let popupInBackground = webView != nil && worktreeID != nil && worktreeID != worktree.id
+    if !popupInBackground { self.worktreeID = worktree.id }
+    if let url,
+      let existing = (browserTabsByWorktree[worktree.id] ?? []).first(
+        where: { $0.pane.currentURL == url })
+    {
+      surface = .browser(existing.id)
+      terminals = workspace?.terminals(inWorktree: worktree.id) ?? []
+      rebuildTabBar()
+      applySurface()
+      return
+    }
+    let tab = BrowserTab(pane: BrowserPaneViewController(webView: webView))
+    wire(tab, in: worktree.id)
+    var tabs = browserTabsByWorktree[worktree.id] ?? []
+    tabs.append(tab)
+    browserTabsByWorktree[worktree.id] = tabs
+    view.window?.invalidateRestorableState()
+    guard !popupInBackground else { return }
+    surface = .browser(tab.id)
+    terminals = workspace?.terminals(inWorktree: worktree.id) ?? []
+    rebuildTabBar()
+    applySurface()
+    if let url {
+      tab.pane.load(url)
+    } else if webView == nil {
+      tab.pane.focusAddress()
+    }
+  }
+
+  /// Every web tab worth saving, across every worktree — the desk's contribution to the window's
+  /// restorable state. Files are not here on purpose: a file is one click from the panel, while
+  /// a page reached through a sign-in and three redirects is not.
+  var restorableBrowserTabs: [BrowserTabState] {
+    browserTabsByWorktree.flatMap { worktreeID, tabs in
+      // In strip order rather than the order they were opened, since `restoreBrowserTabs` puts
+      // them back in the order it is given — and a dragged tab must not spring back on relaunch.
+      let order = tabOrderByWorktree[worktreeID] ?? []
+      let sorted = tabs.enumerated().sorted { a, b in
+        (order.firstIndex(of: .browser(a.element.id)) ?? .max, a.offset)
+          < (order.firstIndex(of: .browser(b.element.id)) ?? .max, b.offset)
+      }.map(\.element)
+      return sorted.compactMap { tab -> BrowserTabState? in
+        guard var state = tab.pane.restorableState else { return nil }
+        state.worktreeID = worktreeID
+        return state
+      }
+    }
+  }
+
+  /// Put last run's web tabs back on their worktrees. None loads until its tab is shown — see the
+  /// pane — so a window with a dozen of them comes back as fast as one with none. A tab whose
+  /// worktree is gone stays gone, the way a terminal's does.
+  func restoreBrowserTabs(_ states: [BrowserTabState]) {
+    loadViewIfNeeded()
+    for state in states {
+      guard workspace?.worktree(id: state.worktreeID) != nil else { continue }
+      let tab = BrowserTab(pane: BrowserPaneViewController(restoring: state))
+      wire(tab, in: state.worktreeID)
+      browserTabsByWorktree[state.worktreeID, default: []].append(tab)
+    }
+  }
+
+  /// The web tabs of the worktree on screen, as text — one line each, `●` marking the one
+  /// showing. The scripting surface's handle on the browser: a web tab has no text of its own to
+  /// read back, and its whole job is to end up at a URL, so what the dictionary needs is the
+  /// title and that URL. Without it the only way to check where a click landed is to click at
+  /// coordinates, which is what the dictionary exists to avoid.
+  var browserTabsReport: String {
+    let tabs = browserTabs
+    guard !tabs.isEmpty else { return "(no web tabs)" }
+    return tabs.enumerated().map { index, tab in
+      let marker = surface == .browser(tab.id) ? "●" : " "
+      return
+        "\(index + 1) \(marker) \(tab.pane.pageTitle)  \(tab.pane.currentURL?.absoluteString ?? "")"
+    }.joined(separator: "\n")
+  }
+
+  /// The web tab showing right now — what a script loads an address into.
+  var selectedBrowserPane: BrowserPaneViewController? {
+    guard case .browser(let id) = surface else { return nil }
+    return browserTabs.first { $0.id == id }?.pane
+  }
+
+  private func wire(_ tab: BrowserTab, in worktreeID: UUID) {
+    addChild(tab.pane)
+    let id = tab.id
+    // A page retitles itself several times while it loads. That relabels one tab in place
+    // rather than rebuilding the strip, and marks the window's state stale, since the address
+    // moved too.
+    tab.pane.onTitleChange = { [weak self] in
+      guard let self else { return }
+      if let button = self.tabButtons[.browser(id)] {
+        button.title = tab.pane.pageTitle
+        button.toolTip = tab.pane.currentURL?.absoluteString
+      }
+      self.view.window?.invalidateRestorableState()
+    }
+    tab.pane.onOpenPopup = { [weak self] popup in
+      guard let self, let worktree = self.workspace?.worktree(id: worktreeID) else { return false }
+      self.openBrowser(worktree: worktree, webView: popup)
+      return true
+    }
+    tab.pane.onClose = { [weak self] in
+      guard let self else { return }
+      // The tab may be in a worktree not on screen (a background popup closing itself), so it is
+      // removed from its own bucket rather than through the strip's close.
+      var tabs = self.browserTabsByWorktree[worktreeID] ?? []
+      guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+      let previous = self.orderedSurfaces
+      tabs[index].pane.removeFromParent()
+      tabs.remove(at: index)
+      self.browserTabsByWorktree[worktreeID] = tabs
+      self.view.window?.invalidateRestorableState()
+      guard worktreeID == self.worktreeID else { return }
+      self.reconcileSurface(previous: previous)
+      self.rebuildTabBar()
+      self.applySurface()
     }
   }
 
@@ -628,6 +798,15 @@ final class WorktreeDeskViewController: NSViewController {
       tabs.remove(at: index)
       fileTabsByWorktree[worktreeID] = tabs
       return true
+    case .browser(let id):
+      guard let worktreeID, var tabs = browserTabsByWorktree[worktreeID],
+        let index = tabs.firstIndex(where: { $0.id == id })
+      else { return true }
+      tabs[index].pane.removeFromParent()
+      tabs.remove(at: index)
+      browserTabsByWorktree[worktreeID] = tabs
+      view.window?.invalidateRestorableState()
+      return true
     }
   }
 
@@ -671,6 +850,10 @@ final class WorktreeDeskViewController: NSViewController {
       for tab in fileTabsByWorktree[key] ?? [] { tab.content.removeFromParent() }
       fileTabsByWorktree[key] = nil
     }
+    for key in browserTabsByWorktree.keys where !live.contains(key) {
+      for tab in browserTabsByWorktree[key] ?? [] { tab.pane.removeFromParent() }
+      browserTabsByWorktree[key] = nil
+    }
     for key in tabOrderByWorktree.keys where !live.contains(key) { tabOrderByWorktree[key] = nil }
   }
 
@@ -681,12 +864,15 @@ final class WorktreeDeskViewController: NSViewController {
       tabBar.removeArrangedSubview(arranged)
       arranged.removeFromSuperview()
     }
+    tabButtons = [:]
     selectedTabView = nil
     let files = fileTabs
-    // Nothing to switch between — a lone file with no terminal is the plain pane — so collapse the
-    // strip. A terminal (even one) always earns the strip, so its `+` is reachable.
-    let total = files.count + terminals.count
-    guard terminals.count > 0 || total > 1 else {
+    let browsers = browserTabs
+    // Show the strip whenever anything is open, a lone file included — making a single tab the one
+    // case that hides its own tab (and the `+` with it) was the odd exception. Only nothing open
+    // collapses it.
+    let total = files.count + browsers.count + terminals.count
+    guard total > 0 else {
       tabScroll.isHidden = true
       plusButton.isHidden = true
       hairline.isHidden = true
@@ -699,7 +885,7 @@ final class WorktreeDeskViewController: NSViewController {
     tabBarHeight.constant = 30
 
     var tabs: [NSView] = []
-    // One running index across both kinds. A tab's identity in the strip is its position in
+    // One running index across the three kinds. A tab's identity in the strip is its position in
     // `orderedSurfaces`, which is what ⌃⇥, ⌘1…⌘9, a drag and the tab menu's "Close to the Right"
     // all count in — so every control on a tab carries that number and nothing else.
     let order = orderedSurfaces
@@ -716,6 +902,16 @@ final class WorktreeDeskViewController: NSViewController {
           index: index, title: (file.content.hasUnsavedEdit ? "• " : "") + name, image: nil,
           selected: surface == item, preview: file.isPreview)
         tab.toolTip = file.path
+        tabs.append(tab)
+      case .browser(let id):
+        guard let browser = browsers.first(where: { $0.id == id }) else { continue }
+        // Every web tab wears the same globe, so the address is what tells three GitHub tabs
+        // apart — on the tooltip, where a file tab keeps its path.
+        let tab = makeTab(
+          index: index, title: browser.pane.pageTitle,
+          image: NSImage(systemSymbolName: "globe", accessibilityDescription: nil),
+          selected: surface == item, surface: item)
+        tab.toolTip = browser.pane.currentURL?.absoluteString
         tabs.append(tab)
       case .terminal(let id):
         guard let terminal = terminals.first(where: { $0.id == id }) else { continue }
@@ -763,9 +959,11 @@ final class WorktreeDeskViewController: NSViewController {
   /// tab's place in the strip, and every control built here carries it: what a click, a ✕ or a
   /// menu item acts on is read back out of `orderedSurfaces`, which is rebuilt with the strip.
   private func makeTab(
-    index: Int, title: String, image: NSImage?, selected: Bool, preview: Bool = false
+    index: Int, title: String, image: NSImage?, selected: Bool, preview: Bool = false,
+    surface: Surface? = nil
   ) -> NSView {
     let button = TabLabelButton()
+    if let surface { tabButtons[surface] = button }
     button.title = title
     button.image = image
     button.imagePosition = image == nil ? .noImage : .imageLeading
@@ -867,8 +1065,8 @@ final class WorktreeDeskViewController: NSViewController {
   /// A click on a tab's label: show it. A double-click promotes the tab as far as it will go —
   /// a preview becomes a lasting tab, and a tab that is already lasting takes the whole window.
   /// So the gesture that pins keeps pinning wherever pinning is what is left to do (the files
-  /// panel's rule and the rail's, unchanged), and on a terminal — which has no preview state to
-  /// leave — the first double-click is already the maximize.
+  /// panel's rule and the rail's, unchanged), and on a browser or a terminal — which have no
+  /// preview state to leave — the first double-click is already the maximize.
   @objc private func selectTab(_ sender: NSButton) {
     let order = orderedSurfaces
     guard order.indices.contains(sender.tag) else { return }
@@ -879,7 +1077,7 @@ final class WorktreeDeskViewController: NSViewController {
     }
     rebuildTabBar()
     applySurface()
-    // A terminal wants the keyboard as soon as it is showing; a file is picked to be read.
+    // A terminal wants the keyboard as soon as it is showing; the rest are picked to be read.
     if case .terminal = target { focusActiveSurface() }
   }
 
@@ -938,8 +1136,21 @@ final class WorktreeDeskViewController: NSViewController {
     onSetMaximized?(!isMaximized)
   }
 
+  @objc private func showAddMenu(_ sender: NSButton) {
+    let menu = NSMenu()
+    menu.addItem(withTitle: "New Browser", action: #selector(addBrowserTab), keyEquivalent: "")
+      .target = self
+    menu.addItem(withTitle: "New Terminal", action: #selector(addTerminalTab), keyEquivalent: "")
+      .target = self
+    menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+  }
+
   @objc private func addTerminalTab() {
     onNewTerminal?()
+  }
+
+  @objc private func addBrowserTab() {
+    onNewBrowser?()
   }
 
   // MARK: Surface swap
@@ -953,6 +1164,12 @@ final class WorktreeDeskViewController: NSViewController {
     case .file(let id):
       if let tab = fileTabs.first(where: { $0.id == id }) {
         setSurfaceView(tab.content.view)
+      } else {
+        setSurfaceView(placeholder)
+      }
+    case .browser(let id):
+      if let tab = browserTabs.first(where: { $0.id == id }) {
+        setSurfaceView(tab.pane.view)
       } else {
         setSurfaceView(placeholder)
       }

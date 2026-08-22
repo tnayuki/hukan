@@ -248,7 +248,7 @@ final class FileContentViewController: NSViewController {
   }
 }
 
-/// The worktree's desk (the tabs: files and terminals) and the files panel that indexes it.
+/// The worktree's desk (the tabs: files, web, terminals) and the files panel that indexes it.
 ///
 /// Not a view controller, and not a split: the two sit in different places in the window now —
 /// the desk beside the transcript, under the toolbar, and the panel as a column of its own on
@@ -274,6 +274,7 @@ final class FileColumns {
 
   init() {
     desk.onNewTerminal = { [weak self] in self?.onNewTerminal?() }
+    desk.onNewBrowser = { [weak self] in self?.openBrowser() }
     desk.onSetMaximized = { [weak self] maximized in self?.onSetMaximized?(maximized) }
     // A save is the panel's cue too: an FSEvents IgnoreSelf drops our own write, so the content
     // hits would otherwise keep listing the line just fixed.
@@ -327,6 +328,22 @@ final class FileColumns {
   /// `Workspace.terminals`.
   func openTerminal(id: UUID) {
     desk.open(terminalID: id)
+  }
+
+  /// Open a new web tab in the selected worktree.
+  func openBrowser() {
+    guard let workspace,
+      let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
+    else { return }
+    desk.openBrowser(worktree: worktree)
+  }
+
+  /// Open an address in the selected worktree's desk — a link followed from the transcript.
+  func openBrowser(url: URL) {
+    guard let workspace,
+      let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
+    else { return }
+    desk.openBrowser(worktree: worktree, url: url)
   }
 
   /// ⌘W: close the active tab (file or terminal). Returns whether one was showing to close.
@@ -383,6 +400,13 @@ final class FileColumns {
 
   /// Whether the active surface has something ⌘F can search — the Find item validates on this.
   var canFind: Bool { desk.isViewLoaded && desk.canFind }
+
+  /// Back / forward for the web tab showing on the desk — the browser menu items and their
+  /// validation. Guarded on the view being loaded, like the rest here.
+  var canBrowserGoBack: Bool { desk.isViewLoaded && desk.canBrowserGoBack }
+  var canBrowserGoForward: Bool { desk.isViewLoaded && desk.canBrowserGoForward }
+  func browserGoBack() { desk.browserGoBack() }
+  func browserGoForward() { desk.browserGoForward() }
 
   /// A terminal renamed itself (OSC title); repaint the strip's labels.
   func refreshTerminalTabs() {

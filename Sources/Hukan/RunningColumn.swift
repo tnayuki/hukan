@@ -83,6 +83,10 @@ final class RunningColumnViewController: NSViewController {
   /// and the confirmations.
   var onForkSession: ((AgentSession, String, NSRange) -> Void)?
   var onRollBackSession: ((AgentSession, String, NSRange) -> Void)?
+  /// A link clicked in the transcript. The column knows a URL was pressed and nothing else —
+  /// which worktree's desk it belongs on, and whether it belongs in hukan at all, is the
+  /// window's, the way forking and rolling back are.
+  var onOpenURL: ((URL) -> Bool)?
   /// Ask the window for the whole width, or to put the other columns back — the desk's
   /// `onSetMaximized` for the column beside it. The columns are the window's, so maximizing is
   /// asked for here, never done here.
@@ -96,6 +100,11 @@ final class RunningColumnViewController: NSViewController {
   init() {
     (scrollView, textView) = makeTranscriptTextView()
     super.init(nibName: nil, bundle: nil)
+    // Set once, not per attached session: where a link goes does not depend on which
+    // conversation is on screen (the mirror, set in `attach`, is the thing that does).
+    transcriptClickDelegate(of: textView)?.onOpenURL = { [weak self] url in
+      self?.onOpenURL?(url) ?? false
+    }
     (textView as? TranscriptTextView)?.messageActions = [
       TranscriptTextView.MessageAction(title: "Fork Before This Message") {
         [weak self] anchor, range in

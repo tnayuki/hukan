@@ -6,7 +6,8 @@ import XCTest
 /// The tab strip past the point where the tabs stop fitting: it scrolls rather than squeezing
 /// every label into a sliver, and the tab in play is scrolled back into sight. The strip's order
 /// — what a drag makes of it, where a new tab goes, where closing one lands — is here too, driven
-/// through `moveTab` since a drag session needs a pointer.
+/// through `moveTab` since a drag session needs a pointer. Plus the ⌃⇥ / ⌃⇧⇥ match, which the
+/// Window menu could not make (see `tabCyclingMonitor`).
 final class TabStripTests: XCTestCase {
   /// A desk in a window of `width`, holding `files` lasting tabs on one worktree.
   private func desk(width: CGFloat, files: Int) -> (WorktreeDeskViewController, NSScrollView) {
@@ -186,6 +187,46 @@ final class TabStripTests: XCTestCase {
     XCTAssertEqual(selectedTitle(in: scroll), name(1), "the last tab closed lands to its left")
   }
 
+  /// After a relaunch the saved tabs stand where they stood: the order is rebuilt from the rows
+  /// naming each tab's kind, walked against the two lists that were saved in strip order — and
+  /// it is that order the strip reports back for saving again.
+  func testRestoredTabsTakeTheOrderTheyWereSavedIn() {
+    let (desk, scroll) = desk(width: 900, files: 0)
+    let workspace = desk.workspace!
+    let worktree = workspace.worktrees[0]
+    let shellA = TerminalSession(worktreeID: worktree.id, cwd: worktree.url)
+    let shellB = TerminalSession(worktreeID: worktree.id, cwd: worktree.url)
+    workspace.terminals = [shellA, shellB]
+    desk.restoreBrowserTabs([
+      BrowserTabState(
+        worktreeID: worktree.id, url: "https://a.example", title: "A", interactionState: nil),
+      BrowserTabState(
+        worktreeID: worktree.id, url: "https://b.example", title: "B", interactionState: nil),
+    ])
+    desk.reload(worktreeID: worktree.id)
+    XCTAssertEqual(titles(in: scroll).count, 4)
+
+    // Saved as: B, shell A, A, shell B — the web tabs and terminals each in that order.
+    desk.restoreTabOrder([
+      .init(worktreeID: worktree.id, kind: .browser),
+      .init(worktreeID: worktree.id, kind: .terminal),
+      .init(worktreeID: worktree.id, kind: .browser),
+      .init(worktreeID: worktree.id, kind: .terminal),
+    ])
+    let expected = ["A", shellA.title, "B", shellB.title]
+    XCTAssertEqual(titles(in: scroll), expected)
+
+    desk.moveTab(at: 3, to: 0)
+    XCTAssertEqual(titles(in: scroll), [shellB.title, "A", shellA.title, "B"])
+    XCTAssertEqual(
+      desk.restorableTabOrder.map(\.kind), [.terminal, .browser, .terminal, .browser],
+      "the rows report the strip as it stands")
+    XCTAssertEqual(
+      desk.restorableTerminals(workspace.terminals).map(\.id), [shellB.id, shellA.id],
+      "and the terminals are handed over in that order")
+    XCTAssertEqual(desk.restorableBrowserTabs.map(\.title), ["A", "B"])
+  }
+
   /// Where a drop lands is read off the tabs' middles: over the near half of a tab the drop is
   /// before it, over the far half it is after, and past the last tab it is the end.
   func testTheDropGapFollowsTheTabMiddles() throws {
@@ -197,5 +238,25 @@ final class TabStripTests: XCTestCase {
     XCTAssertEqual(strip.dropIndex(at: NSPoint(x: middle.midX + 1, y: middle.midY)), 2)
     XCTAssertEqual(strip.dropIndex(at: NSPoint(x: 0, y: middle.midY)), 0)
     XCTAssertEqual(strip.dropIndex(at: NSPoint(x: strip.frame.maxX, y: middle.midY)), 3)
+  }
+
+  /// ⌃⇥ forward, ⌃⇧⇥ back. Matched on the Tab key's code: Shift-Tab arrives as 0x19, which is
+  /// why the menu item's `"\t"` never matched it and ⌃⇧⇥ did nothing at all.
+  func testTabCycleDeltaMatchesControlTabBothWays() {
+    func key(_ keyCode: UInt16, _ flags: NSEvent.ModifierFlags, _ chars: String) -> NSEvent {
+      NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
+        context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false,
+        keyCode: keyCode)!
+    }
+    XCTAssertEqual(WorkspaceWindowController.tabCycleDelta(for: key(48, [.control], "\t")), 1)
+    XCTAssertEqual(
+      WorkspaceWindowController.tabCycleDelta(for: key(48, [.control, .shift], "\u{19}")), -1)
+    // A bare Tab is focus traversal, ⌘⇥ is the app switcher's, and no other key is the strip's.
+    XCTAssertNil(WorkspaceWindowController.tabCycleDelta(for: key(48, [], "\t")))
+    XCTAssertNil(WorkspaceWindowController.tabCycleDelta(for: key(48, [.command], "\t")))
+    XCTAssertNil(
+      WorkspaceWindowController.tabCycleDelta(for: key(48, [.control, .option], "\t")))
+    XCTAssertNil(WorkspaceWindowController.tabCycleDelta(for: key(0, [.control], "a")))
   }
 }

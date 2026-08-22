@@ -103,6 +103,7 @@ public enum RenderCase {
     ("exit-plan", exitPlan),
     ("markdown-blocks", markdownBlocks),
     ("message-mark", messageMark),
+    ("links", links),
   ]
 
   public static func content(for name: String) -> NSAttributedString? {
@@ -121,6 +122,26 @@ public enum RenderCase {
     text.append(NSAttributedString(string: "\n", attributes: [.font: Transcript.mono]))
     text.append(markdownBlocks())
     return text
+  }
+
+  /// What an agent's addresses look like when they come back. The bare URL is the case that
+  /// mattered: markdown syntax is what gets written least, so before this the most useful line in
+  /// the whole transcript — the PR that was just opened — was plain black text. The rest are the
+  /// ones that must stay black: a filename with a dot, and anything inside code.
+  private static func links() -> NSAttributedString {
+    Transcript.markdown(
+      """
+      Opened the PR: https://github.com/tnayuki/hukan/pull/12
+
+      The issue it closes is [#8](https://github.com/tnayuki/hukan/issues/8), and the run is at
+      https://github.com/tnayuki/hukan/actions/runs/1234567890 (still going).
+
+      Edited Model.swift and Browser.swift; `curl https://example.com/a` is only quoted here.
+
+      ```
+      curl -sSL https://example.com/install.sh | sh
+      ```
+      """)
   }
 
   /// Japanese emphasis lands on bracketed/quoted phrases, which CommonMark flanking rules

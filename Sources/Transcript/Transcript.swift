@@ -518,6 +518,28 @@ public enum Transcript {
         }
       }
 
+      // A bare URL is a link too, and until now it was not: markdown syntax is what an agent
+      // writes least — `gh pr create` answers with a naked URL, and so does the sentence that
+      // reports it — so the most valuable address in the transcript was plain black text.
+      //
+      // The rule stays narrow so it stays explicable: an explicit `http(s)://`, running to the
+      // first space, with trailing sentence punctuation handed back. No `www.`-style guessing,
+      // which is what would start turning `foo.bar` inside a snippet blue. Code spans return
+      // above this and fenced blocks never reach `styled` at all, so neither can be touched.
+      if style.link == nil, rest.hasPrefix("http://") || rest.hasPrefix("https://") {
+        let end = autolinkEnd(of: rest)
+        if end > rest.startIndex, let url = URL(string: String(rest[rest.startIndex..<end])) {
+          flush()
+          var inner = style
+          inner.link = url
+          // Appended, not recursed: a URL is full of the characters this walker treats as
+          // markup — `_` most of all — and its text is not markdown.
+          result.append(attributed(String(rest[rest.startIndex..<end]), base: base, style: inner))
+          index = end
+          continue
+        }
+      }
+
       if rest.hasPrefix("["),
         let labelEnd = close("](", from: text.index(after: index)),
         let urlEnd = close(")", from: labelEnd.upperBound)
@@ -536,6 +558,33 @@ public enum Transcript {
       index = text.index(after: index)
     }
     flush()
+  }
+
+  /// Where an autolinked URL stops: the first space, less the punctuation that belongs to the
+  /// sentence rather than the address. A closing bracket is given back only when it closes
+  /// nothing inside the URL, so `(https://example.com/a_(b))` keeps its inner pair and loses the
+  /// outer one.
+  private static func autolinkEnd(of text: Substring) -> Substring.Index {
+    var end = text.firstIndex(where: { $0.isWhitespace }) ?? text.endIndex
+    let trailing = Set(".,;:!?'\"\u{201d}\u{2019}\u{3001}\u{3002}\u{ff0c}\u{ff0e}")
+    while end > text.startIndex {
+      let last = text.index(before: end)
+      let character = text[last]
+      if trailing.contains(character) {
+        end = last
+        continue
+      }
+      if character == ")" || character == "]" {
+        let opening: Character = character == ")" ? "(" : "["
+        let inside = text[text.startIndex..<end]
+        if inside.filter({ $0 == character }).count > inside.filter({ $0 == opening }).count {
+          end = last
+          continue
+        }
+      }
+      break
+    }
+    return end
   }
 
   private static func attributed(_ string: String, base: NSFont, style: InlineStyle)

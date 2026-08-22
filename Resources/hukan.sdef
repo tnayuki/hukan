@@ -246,6 +246,12 @@
             <result type="text"/>
         </command>
 
+        <command name="browser" code="HuknBrws" hidden="yes" description="Open an address on the selected worktree's desk, or report its web tabs, for automated checks">
+            <cocoa class="BrowserCommand"/>
+            <direct-parameter type="text" optional="yes" description="what to type into the address bar; omit to report the open web tabs"/>
+            <result type="text"/>
+        </command>
+
         <command name="fold" code="HuknFold" hidden="yes" description="Inspect or drive the tool-call fold in the selected transcript, for automated checks">
             <cocoa class="FoldCommand"/>
             <direct-parameter type="text" optional="yes" description="status (default), expand, or collapse"/>

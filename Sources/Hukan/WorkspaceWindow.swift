@@ -66,6 +66,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// The files panel, for the scripting surface — the panel is rows, which the object model does
   /// not address.
   var filesPanelForScripting: FilesPanelViewController { files.panel }
+  /// The desk, for the scripting surface — `browser` drives a tab the object model does not
+  /// address.
+  var deskForScripting: WorktreeDeskViewController { files.desk }
   /// The panel's own column, owned here because it is a top-level item now.
   private var filesPanelItem: NSSplitViewItem!
   /// The other three columns, held for the same reason: whichever column is being given the
@@ -120,6 +123,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       backing: .buffered,
       defer: false)
     super.init(window: window)
+
+    // Installed on the first window and shared by the rest: the monitor picks its controller out
+    // of the event, so one is enough however many windows are open.
+    _ = Self.tabCyclingMonitor
 
     window.delegate = self
     // The four columns' own minimums (rail 280, transcript and desk 640 between them, panel 260)
@@ -229,6 +236,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     running.onRollBackSession = { [weak self] session, anchor, range in
       self?.rollBackSession(session, to: anchor, keeping: range.location)
     }
+    running.onOpenURL = { [weak self] url in self?.openFromTranscript(url) ?? false }
     workspace.onSessionsChanged = { [weak self] in self?.reload() }
     rail.onSelectWorktree = { [weak self] worktreeID in
       guard let self else { return }
@@ -1009,15 +1017,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   }
 
   func window(_ window: NSWindow, willEncodeRestorableState state: NSCoder) {
-    // The terminals in strip order, and the order itself — the desk's, since the strip is.
+    // The tabs in strip order, and the order itself — the desk's, since the strip is.
     workspace.encodeState(
-      to: state, terminals: files.desk.restorableTerminals(workspace.terminals),
+      to: state, browserTabs: files.desk.restorableBrowserTabs,
+      terminals: files.desk.restorableTerminals(workspace.terminals),
       tabOrder: files.desk.restorableTabOrder)
   }
 
   func window(_ window: NSWindow, didDecodeRestorableState state: NSCoder) {
     workspace.decodeState(from: state)
     materializeRestoredTerminals()
+    files.desk.restoreBrowserTabs(workspace.takeRestoredBrowserTabs())
+    // Only once both kinds are back, since the order names them by position.
     files.desk.restoreTabOrder(workspace.takeRestoredTabOrder())
     reload()
     // The column widths only exist now. Arranging from init instead would run before this
@@ -1496,6 +1507,35 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     createTerminal(in: worktree)
   }
 
+  /// A link pressed in the transcript. It opens on this worktree's desk rather than in the
+  /// default browser, because the address an agent writes is the task's — the PR it just opened,
+  /// the issue it is working from — and that is what the desk's web tab is for. Only http(s):
+  /// anything else is the system's, on the same table the web view's own navigation policy uses.
+  ///
+  /// ⌘ sends it out instead, which is the way out for a page hukan cannot sign into — passkeys
+  /// and iCloud Keychain autofill need browser-vendor entitlements and are measured not to work
+  /// here.
+  ///
+  /// Never automatic: a link is opened because a person pressed it. hukan following an address
+  /// out of the transcript on its own would be the agent driving the browser, which is the same
+  /// line the scripting surface draws around `approve`.
+  @discardableResult
+  private func openFromTranscript(_ url: URL) -> Bool {
+    guard !NSEvent.modifierFlags.contains(.command), BrowserEnvironment.opensAsWebTab(url) else {
+      NSWorkspace.shared.open(url)
+      return true
+    }
+    files.openBrowser(url: url)
+    return true
+  }
+
+  /// File ▸ New Browser (⌘T). A web tab in the selected worktree's desk, over the shared
+  /// cookie store, address field focused.
+  @objc func newBrowserTab(_ sender: Any?) {
+    files.openBrowser()
+  }
+
+  @discardableResult
   private func createTerminal(in worktree: Worktree) -> TerminalSession {
     let terminal = TerminalSession(worktreeID: worktree.id, cwd: worktree.url)
     registerTerminal(terminal)
@@ -1560,6 +1600,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// file's (the text view's) — scoped to the desk so it does not fight the rail's session search.
   @objc func find(_ sender: Any?) {
     files.findInActiveSurface(sender)
+  }
+
+  /// View ▸ Back / Forward (⌘[ / ⌘]). The web tab's history, the keys Safari and Apple's own
+  /// shortcut list use — not ⌘←/→, which Safari leaves to the responder chain so a text field on
+  /// the page keeps them as caret motion; a menu key would take them first and break that. Both
+  /// validate off unless a web tab is showing with somewhere to go.
+  @objc func browserGoBack(_ sender: Any?) {
+    files.browserGoBack()
+  }
+
+  @objc func browserGoForward(_ sender: Any?) {
+    files.browserGoForward()
   }
 
   /// Edit ▸ Go to File… (⌘P). The files panel, shown if hidden, its filter focused.
@@ -1737,13 +1789,49 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     if filesPanelItem.isCollapsed { setFilesPanelCollapsed(false) }
   }
 
-  /// Window ▸ Select Next/Previous Tab (⌃⇥ / ⌃⇧⇥). Cycles the desk's file and terminal tabs.
+  /// Window ▸ Select Next/Previous Tab (⌃⇥ / ⌃⇧⇥). Cycles the desk's file, browser and
+  /// terminal tabs.
   @objc func selectNextTab(_ sender: Any?) {
     files.selectNextTab()
   }
 
   @objc func selectPreviousTab(_ sender: Any?) {
     files.selectPreviousTab()
+  }
+
+  /// ⌃⇥ / ⌃⇧⇥ from wherever the focus is. The Window menu carries both items — that is where a
+  /// person looks a shortcut up — but the menu is not what matches the keystroke, because it
+  /// never gets the chance: AppKit walks the key window's *views* with `performKeyEquivalent`
+  /// before it offers the event to the main menu, and WKWebView answers yes to a key event while
+  /// it is first responder (Tab is the web's own focus key), so ⌃⇥ was dead in exactly the tab a
+  /// browser tab is. ⌃⇧⇥ was dead in all of them: macOS delivers Shift-Tab as NSBackTabCharacter
+  /// (0x19), which a `"\t"` key equivalent cannot match — and AppKit compares the *next* item's
+  /// mask loosely enough that a ⌃⇧⇥ arriving as a plain tab would have gone forward instead.
+  /// So the keystroke is claimed by a local key-down monitor, the one hook ahead of both the view
+  /// walk and the menu — the same reason the terminal's ⌥←/→ uses one. The items keep their key
+  /// equivalents; what those are for now is the label.
+  private static let tabCyclingMonitor: Any? = NSEvent.addLocalMonitorForEvents(matching: .keyDown)
+  { event in
+    guard let controller = event.window?.windowController as? WorkspaceWindowController,
+      let delta = tabCycleDelta(for: event), controller.files.hasMultipleTabs
+    else { return event }
+    // With one tab there is nowhere to go, and the event is handed back rather than swallowed —
+    // a page that binds ⌃⇥ itself keeps it until the desk has a second tab to switch to.
+    if delta > 0 { controller.selectNextTab(nil) } else { controller.selectPreviousTab(nil) }
+    return nil
+  }
+
+  /// +1 for ⌃⇥, −1 for ⌃⇧⇥, nil for anything else. Matched on the Tab key's code rather than on
+  /// the characters the event carries, since those are the whole reason the menu could not do it:
+  /// Shift-Tab arrives as 0x19, not as a shifted `"\t"`. Split out so it can be tested without a
+  /// window, the way the terminal's word jump is.
+  static func tabCycleDelta(for event: NSEvent) -> Int? {
+    guard event.keyCode == 48 else { return nil }  // kVK_Tab
+    switch event.modifierFlags.intersection([.command, .control, .option, .shift]) {
+    case [.control]: return 1
+    case [.control, .shift]: return -1
+    default: return nil
+    }
   }
 
   /// Window ▸ Select Tab ▸ Tab N (⌘1…⌘9). The item's tag is N; the strip counts from zero.
@@ -1803,7 +1891,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       return workspace.selectedWorktreeID != nil
     case #selector(saveFile(_:)):
       return files.hasUnsavedEdit
-    case #selector(newTerminal(_:)):
+    case #selector(newTerminal(_:)), #selector(newBrowserTab(_:)):
       return workspace.selectedWorktreeID != nil
     case #selector(closeTab(_:)):
       return files.hasClosableTab
@@ -1811,6 +1899,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       return files.hasActiveTerminal
     case #selector(find(_:)):
       return files.canFind
+    case #selector(browserGoBack(_:)):
+      return files.canBrowserGoBack
+    case #selector(browserGoForward(_:)):
+      return files.canBrowserGoForward
     case #selector(goToFile(_:)), #selector(findInFiles(_:)):
       return workspace.selectedWorktreeID != nil
     case #selector(selectNextTab(_:)), #selector(selectPreviousTab(_:)):

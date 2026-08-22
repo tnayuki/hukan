@@ -231,19 +231,29 @@ final class Workspace {
     return pendingRestoredTerminals
   }
 
+  /// Web tabs decoded from restoration state, waiting for the desk to put them back on their
+  /// worktrees — the terminals' arrangement, for the same reason: the tabs are the desk's and it
+  /// wires them, so the model only carries them across.
+  private var pendingRestoredBrowserTabs: [BrowserTabState] = []
+
+  func takeRestoredBrowserTabs() -> [BrowserTabState] {
+    defer { pendingRestoredBrowserTabs = [] }
+    return pendingRestoredBrowserTabs
+  }
+
   /// The kinds of tab that outlive the window, and so the only ones whose order on the strip is
-  /// worth carrying across. A tab is named by its position among its kind in the saved list, so
-  /// an order is one row per tab: which worktree, which kind — nothing else.
+  /// worth carrying across. A tab of either kind is named by its position among its kind in the
+  /// saved lists, so an order is one row per tab: which worktree, which kind — nothing else.
   struct RestoredTabOrder: Hashable {
     enum Kind: String {
-      case terminal
+      case browser, terminal
     }
     let worktreeID: UUID
     let kind: Kind
   }
 
   /// The strip order decoded from restoration state, waiting for the desk to lay its restored
-  /// terminals out in it once they are back.
+  /// tabs out in it once both kinds are back.
   private var pendingRestoredTabOrder: [RestoredTabOrder] = []
 
   func takeRestoredTabOrder() -> [RestoredTabOrder] {
@@ -585,18 +595,27 @@ final class Workspace {
     static let terminalDirectories = "terminals.directories"
     static let terminalSessionIDs = "terminals.sessionIDs"
     static let terminalScrollbacks = "terminals.scrollbacks"
-    // The strip's order, so a dragged tab does not spring back on relaunch: one row per
-    // restorable tab, in strip order — the terminal list above is saved in that same order, which
-    // is what makes a row's kind enough to name its tab.
+    // Web tabs: keyed by worktree like the terminals, the address and title so the tab can be
+    // named and found before it loads, and WebKit's own interaction state — the back/forward
+    // list and scroll — carried opaque, base64 so it rides as a string like everything else.
+    static let browserWorktreeIDs = "browsers.worktreeIDs"
+    static let browserURLs = "browsers.urls"
+    static let browserTitles = "browsers.titles"
+    static let browserStates = "browsers.states"
+    // The strip's order across both kinds, so a dragged tab does not spring back on relaunch:
+    // one row per restorable tab, in strip order — the terminal and web tab lists above are saved
+    // in that same order, which is what makes a row's kind enough to name its tab.
     static let tabOrderWorktreeIDs = "tabs.orderWorktreeIDs"
     static let tabOrderKinds = "tabs.orderKinds"
   }
 
-  /// `terminals`, when given, come from the desk: the model's list is in the order they were
-  /// opened, and the desk's is the order they stand in, which is the one to come back in.
-  /// `tabOrder` is the strip order that list is in.
+  /// `browserTabs` come from the desk, which owns them; they are passed in rather than read off
+  /// the model because the model has no view to read them from. `terminals` too, when given:
+  /// the model's list is in the order they were opened, and the desk's is the order they stand
+  /// in, which is the one to come back in. `tabOrder` is the strip order the two lists are in.
   func encodeState(
-    to coder: NSCoder, terminals: [TerminalSession]? = nil, tabOrder: [RestoredTabOrder] = []
+    to coder: NSCoder, browserTabs: [BrowserTabState] = [], terminals: [TerminalSession]? = nil,
+    tabOrder: [RestoredTabOrder] = []
   ) {
     let terminals = terminals ?? self.terminals
     coder.encode(worktrees.map(\.url.path) as NSArray, forKey: Key.worktreePaths)
@@ -682,6 +701,14 @@ final class Workspace {
     coder.encode(terminals.map(\.currentDirectoryPath) as NSArray, forKey: Key.terminalDirectories)
     coder.encode(terminals.map(\.sessionID) as NSArray, forKey: Key.terminalSessionIDs)
     coder.encode(terminals.map { $0.scrollbackText() } as NSArray, forKey: Key.terminalScrollbacks)
+
+    coder.encode(
+      browserTabs.map(\.worktreeID.uuidString) as NSArray, forKey: Key.browserWorktreeIDs)
+    coder.encode(browserTabs.map(\.url) as NSArray, forKey: Key.browserURLs)
+    coder.encode(browserTabs.map(\.title) as NSArray, forKey: Key.browserTitles)
+    coder.encode(
+      browserTabs.map { $0.interactionState?.base64EncodedString() ?? "" } as NSArray,
+      forKey: Key.browserStates)
 
     coder.encode(
       tabOrder.map(\.worktreeID.uuidString) as NSArray, forKey: Key.tabOrderWorktreeIDs)
@@ -811,6 +838,21 @@ final class Workspace {
       let sessionID = index < terminalSessionIDs.count ? terminalSessionIDs[index] : ""
       let scrollback = index < terminalScrollbacks.count ? terminalScrollbacks[index] : ""
       pendingRestoredTerminals.append((worktreeID, directory, sessionID, scrollback))
+    }
+
+    let browserWorktrees = strings(coder, Key.browserWorktreeIDs)
+    let browserURLs = strings(coder, Key.browserURLs)
+    let browserTitles = strings(coder, Key.browserTitles)
+    let browserStates = strings(coder, Key.browserStates)
+    pendingRestoredBrowserTabs = []
+    for (index, idString) in browserWorktrees.enumerated() {
+      guard let worktreeID = UUID(uuidString: idString), index < browserURLs.count else { continue }
+      let state = index < browserStates.count ? browserStates[index] : ""
+      pendingRestoredBrowserTabs.append(
+        BrowserTabState(
+          worktreeID: worktreeID, url: browserURLs[index],
+          title: index < browserTitles.count ? browserTitles[index] : "",
+          interactionState: state.isEmpty ? nil : Data(base64Encoded: state)))
     }
 
     let orderWorktrees = strings(coder, Key.tabOrderWorktreeIDs)

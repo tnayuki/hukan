@@ -156,10 +156,21 @@ public final class TranscriptClickDelegate: NSObject, NSTextViewDelegate {
   /// began.
   private(set) var lastFoldToggle: (location: Int, time: TimeInterval)?
 
+  /// Where a real link goes. Left unset, a click falls through to AppKit, which hands the URL to
+  /// the default browser — and the address an agent just wrote is nearly always one hukan has a
+  /// tab for. `Sources/Transcript` may not know what a desk or a worktree is, so the destination
+  /// is handed in the way `TranscriptStorageMirror` is: return true once the URL has been taken,
+  /// and the default handler is skipped.
+  public var onOpenURL: ((URL) -> Bool)?
+
   public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-    // Only our fold link toggles a block; a real link inside a rendered plan (or anywhere in
-    // the transcript) opens normally through the default handler.
-    guard (link as? URL) == Transcript.toolCallLinkURL else { return false }
+    // Only our fold link toggles a block. A real link — in a rendered plan, or anywhere in the
+    // prose — goes to whoever asked for it, and to the default browser if nobody did.
+    guard (link as? URL) == Transcript.toolCallLinkURL else {
+      let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:))
+      guard let url, let onOpenURL else { return false }
+      return onOpenURL(url)
+    }
     guard let storage = textView.textStorage, charIndex < storage.length else { return false }
     let whole = NSRange(location: 0, length: storage.length)
     var range = NSRange(location: 0, length: 0)

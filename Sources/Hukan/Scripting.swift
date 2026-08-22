@@ -217,6 +217,34 @@ final class FilesPanelCommand: NSScriptCommand {
   }
 }
 
+/// `browser "<address>"` opens or focuses a web tab on the selected worktree's desk, taking the
+/// address bar's own reading of the text — so a script exercises the same address-or-search rule a
+/// person does. With nothing to open it reports the worktree's web tabs, one line each. Hidden,
+/// like `fold` and `files`, and for the same reason: a web tab has no text to read back, so
+/// checking where a click or a typed line landed would otherwise mean clicking at coordinates.
+@objc(BrowserCommand)
+final class BrowserCommand: NSScriptCommand {
+  override func performDefaultImplementation() -> Any? {
+    guard let controller = frontController() else { return fail("no window") }
+    let desk = controller.deskForScripting
+    guard let text = (directParameter as? String), !text.isEmpty else {
+      return desk.browserTabsReport
+    }
+    let workspace = controller.workspace
+    guard let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
+    else { return fail("no selected worktree") }
+    // An address bar takes text, not a URL: sending it through the pane's own `load` is what
+    // makes the search fallback and the refusals scriptable at all.
+    if let pane = desk.selectedBrowserPane {
+      pane.load(text)
+    } else {
+      desk.openBrowser(worktree: worktree)
+      desk.selectedBrowserPane?.load(text)
+    }
+    return "loading \(text)"
+  }
+}
+
 @objc(StatusCommand)
 final class StatusCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {

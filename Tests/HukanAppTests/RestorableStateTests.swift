@@ -83,6 +83,24 @@ final class RestorableStateTests: XCTestCase {
     XCTAssertTrue(revived(UUID(), by: restored).availableModels.isEmpty)
   }
 
+  func testBrowserTabsRoundTripWithTheirState() throws {
+    let worktree = UUID()
+    let tabs = [
+      BrowserTabState(
+        worktreeID: worktree, url: "https://github.com/tnayuki/hukan/pull/12",
+        title: "Pull Request #12", interactionState: Data([0, 255, 7])),
+      BrowserTabState(
+        worktreeID: worktree, url: "https://example.com", title: "", interactionState: nil),
+    ]
+    let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+    Workspace().encodeState(to: archiver, browserTabs: tabs)
+    archiver.finishEncoding()
+    let restored = Workspace()
+    restored.decodeState(from: try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData))
+    XCTAssertEqual(restored.takeRestoredBrowserTabs(), tabs)
+    XCTAssertTrue(restored.takeRestoredBrowserTabs().isEmpty, "taken once")
+  }
+
   func testTerminalsRoundTripByWorktreeWithDirectoryAndSession() throws {
     let workspace = Workspace()
     let worktreeA = UUID()
@@ -110,6 +128,34 @@ final class RestorableStateTests: XCTestCase {
     XCTAssertEqual(pending[1].scrollback, "", "an empty terminal saves no scrollback")
     // Taking the list empties it — the controller materializes once.
     XCTAssertTrue(restored.takeRestoredTerminals().isEmpty)
+  }
+
+  /// The strip's order rides with the tabs: the terminals are saved in the order handed in —
+  /// the desk's, not the model's — and the rows naming each restorable tab's kind come back as
+  /// they went, so a dragged terminal or web tab does not spring back on relaunch.
+  func testTheStripOrderRoundTripsWithTheTerminalsInIt() throws {
+    let workspace = Workspace()
+    let worktree = UUID()
+    let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+    let first = TerminalSession(worktreeID: worktree, cwd: tmp)
+    let second = TerminalSession(worktreeID: worktree, cwd: tmp)
+    workspace.terminals = [first, second]
+    let order: [Workspace.RestoredTabOrder] = [
+      .init(worktreeID: worktree, kind: .terminal), .init(worktreeID: worktree, kind: .browser),
+      .init(worktreeID: worktree, kind: .terminal),
+    ]
+
+    let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+    workspace.encodeState(to: archiver, terminals: [second, first], tabOrder: order)
+    archiver.finishEncoding()
+    let restored = Workspace()
+    restored.decodeState(from: try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData))
+
+    XCTAssertEqual(
+      restored.takeRestoredTerminals().map(\.sessionID), [second.sessionID, first.sessionID],
+      "the terminals are saved in the order given, which is the strip's")
+    XCTAssertEqual(restored.takeRestoredTabOrder(), order)
+    XCTAssertTrue(restored.takeRestoredTabOrder().isEmpty, "taken once")
   }
 
   func testRosterShortFieldsFallBackToValue() throws {

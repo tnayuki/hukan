@@ -179,11 +179,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Open Repository…",
       action: #selector(WorkspaceWindowController.openRepository(_:)), keyEquivalent: "O")
     fileMenu.addItem(.separator())
-    // A terminal is a worktree's, so New Terminal needs a selected worktree and disables without
-    // one. ⌃⌘T, beside the window's own ⌃⌘S and ⌃⌘M, rather than the plain ⌘T: a terminal opened
-    // by hand is the occasional act here — the shell work is the agent's — and ⌘T reads everywhere
-    // as "new tab", a meaning the desk's strip is better left free to take. ⇧⌘T stays free too:
-    // beside a tab strip it means reopen the closed one.
+    // Both are a worktree's, so both need one selected and disable without it. ⌘T is the
+    // browser's: hukan's shell work is the agent's, so the terminal a person opens by hand is the
+    // occasional one, while a task's issue, PR and docs breed tabs by simply being followed. That
+    // also makes ⌘T mean what it means everywhere else — this really is a new browser tab — and
+    // leaves the rest of the desk's vocabulary (⌘W, ⌘1…⌘9, ⌃⇥) reading as a browser's. The terminal
+    // takes ⌃⌘T: ⇧⌘T stays free, because beside a browser tab it means reopen the closed one, and
+    // spending it on a terminal would take that key from the desk for good.
+    fileMenu.addItem(
+      withTitle: "New Browser",
+      action: #selector(WorkspaceWindowController.newBrowserTab(_:)), keyEquivalent: "t")
     let terminal = fileMenu.addItem(
       withTitle: "New Terminal", action: #selector(WorkspaceWindowController.newTerminal(_:)),
       keyEquivalent: "t")
@@ -227,10 +232,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     editMenu.addItem(
       withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     editMenu.addItem(.separator())
-    // Find in the active tab — a terminal's bar (SwiftTerm's own) or a file's (the text view's).
-    // The tag is the sender field performFindPanelAction reads — showFindPanel opens the bar.
-    // Targets the controller (disabled on an empty desk) so it stays clear of the rail's session
-    // search.
+    // Find in the active surface — a terminal's bar (SwiftTerm's own), a file's (the text view's),
+    // or the search tab's query. The tag is the sender field performFindPanelAction reads —
+    // showFindPanel opens the bar. Targets the controller (disabled over a browser or an empty
+    // desk) so it stays clear of the rail's session search.
     let find = editMenu.addItem(
       withTitle: "Find", action: #selector(WorkspaceWindowController.find(_:)),
       keyEquivalent: "f")
@@ -280,6 +285,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Enter Full Screen",
       action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
     fullScreen.keyEquivalentModifierMask = [.command, .control]
+    viewMenu.addItem(.separator())
+    // A web tab's history. ⌘[ / ⌘], the keys Safari and Apple's shortcut list use; the arrow
+    // keys are deliberately not here, so a text field on the page keeps ⌘←/→ as caret motion the
+    // way Safari does. Both disable unless a web tab is showing with somewhere to go.
+    viewMenu.addItem(
+      withTitle: "Back", action: #selector(WorkspaceWindowController.browserGoBack(_:)),
+      keyEquivalent: "[")
+    viewMenu.addItem(
+      withTitle: "Forward", action: #selector(WorkspaceWindowController.browserGoForward(_:)),
+      keyEquivalent: "]")
     viewItem.submenu = viewMenu
     main.addItem(viewItem)
 
@@ -315,8 +330,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     windowMenu.addItem(
       withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
     windowMenu.addItem(.separator())
-    // Walk the desk's tabs (files, terminals) with ⌃⇥ / ⌃⇧⇥ — the Tab key carries
+    // Walk the desk's tabs (files, browsers, terminals) with ⌃⇥ / ⌃⇧⇥ — the Tab key carries
     // Control so it beats focus traversal, and enables only when there is more than one tab.
+    // The keystroke itself is matched by the window controller's key-down monitor, not here;
+    // these items are how it is found and what it is labelled (see `tabCyclingMonitor`).
     let nextTab = windowMenu.addItem(
       withTitle: "Select Next Tab",
       action: #selector(WorkspaceWindowController.selectNextTab(_:)), keyEquivalent: "\t")
@@ -327,6 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     previousTab.keyEquivalentModifierMask = [.control, .shift]
     // ⌘1…⌘9 pick the Nth tab of the strip. Nine items would bury Minimize and Zoom, so they sit
     // in a submenu — a key equivalent still matches from inside one — and the menu stays a line.
+    // ⌘0 is left alone: the desk's plain ⌘T is a browser tab now, so ⌘0/⌘+/⌘− belong to its zoom.
     let selectTab = NSMenuItem(title: "Select Tab", action: nil, keyEquivalent: "")
     let selectTabMenu = NSMenu(title: "Select Tab")
     for n in 1...9 {

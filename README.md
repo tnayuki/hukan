@@ -70,38 +70,50 @@ and all — the insertion line falls only between repositories, never inside one
 only, every worktree the same. The size is in the toolbar for the selected worktree; the files
 themselves are the panel's changed scope (below). Reading the diff belongs to the PR.
 
-**The desk.** The desk is the selected worktree's open tabs — files, and terminals (a shell in
-the worktree, also from the strip's `+`) — with the **files panel** as the window's trailing
-column, which the toggle at the toolbar's far end hides. The panel navigates and nothing
-else — a pick opens a tab, which is where everything is read and edited.
-One field over the tree, in the toolbar's own row over the panel, with the two file-finding jobs
-kept apart by the gesture that runs them: **typing** narrows the tree by path, live, and it stays
-a tree; **Return** searches the files' contents and the panel becomes a list of files and matching
-lines, until Escape brings the tree back. Either can be walked away from: the scan says it is
-searching, and a query typed over it drops the one still reading rather than queueing behind it.
-Picking a matching line opens its file there, so walking the list
-walks the occurrences, and a save re-runs the search so the line just fixed drops out. The ±
-beside the field scopes both to the worktree's changed files. Each row carries its own diffstat, a
-directory the sum of what changed beneath it, so a folded tree still says where the work is — the
-total for the worktree stays in the toolbar.
+**The desk.** The selected worktree's tabs, with the files panel as the trailing column, hidden
+by the toggle at the toolbar's far end. One field over the tree runs two jobs, told apart by
+gesture: typing filters by path, Return searches contents and the panel becomes a result list
+until Escape. Either can be walked away from: the scan says it is searching, and a query typed
+over it drops the one still reading rather than queueing behind it. The ± scopes both to the
+changed files, and every row carries its own diffstat.
 
-A single click from the panel previews, a double-click or Return pins. Opening a file shows its
-source, always editable; find works within the active tab, a file's bar or the
-terminal's. A terminal's tab is named as Terminal.app names one: the command running
-in it, or its working directory when nothing is running. Nothing above the text names the file —
-the tab does that, with the full path in its tooltip — and a file's tab wears a dot in front of
-the name while the buffer holds an unsaved edit. The strip is walked, numbered, closed and reordered the way a browser's is — a new tab opens at
+Tabs are files (always editable source), web tabs (over one shared cookie store, passing as this
+machine's Safari so a sign-in flow does not balk at the agent) and terminals (a shell in the
+worktree), the last two also from the strip's `+`. The plain new-tab key opens a browser rather
+than a terminal, because the shell work here is the agent's — the terminal you open by hand is
+the occasional one, while a task's issue, PR and docs breed tabs by being read.
+A terminal's tab is named as Terminal.app names one: the command running in it, or its working
+directory when nothing is running.
+The strip is walked, numbered, closed and reordered the way a browser's is — a new tab opens at
 the end, a drag puts one wherever it is dropped, and closing the active one lands on its
-right-hand neighbour; past the point where the tabs stop fitting it scrolls sideways instead of
-squeezing every label at once, and whichever tab is picked is scrolled back into sight.
+right-hand neighbour, and find works within the
+active tab. Past the point where the tabs stop fitting it scrolls sideways instead of squeezing
+every label at once, and whichever tab is picked is scrolled back into sight; `+` keeps the
+trailing edge, outside the scroll.
 
-A double-click on the tab itself promotes it as far as it will go: a preview becomes a lasting
-tab, and a tab that is already lasting takes the whole window — the rail, the transcript and the
-files panel fold away (the tab's menu does the same, and either puts them back). Being sent to a
-session — by key, or by a tapped notification — restores them, since that is where what is
-waiting on you lives. Right-clicking a tab offers the four ways to close from there (this one, the
-others, the ones to its right, all of them, each stopping at a Cancel on an unsaved file), Keep
-Open while it is still a preview, and that same maximize.
+A web tab's field is an address bar and a search box at once, and the text decides which: a
+scheme, a slash or a dot makes it an address, anything else is a search. A load that fails says
+so on the page — with what went wrong, the address it was, and the offer to search for what you
+typed instead, or to open it in Safari. A link in the transcript opens here rather than in the
+default browser, ⌘-click sends it out, and a bare URL is a link (code, quoted or fenced, is not).
+The tab does what a page expects of its browser: popups open as tabs and close themselves when
+done, a file picker, dialogs, downloads (into Downloads, the Dock stack bouncing) and a name-and-
+password or client-certificate challenge all get the system's panels, a swipe goes back, and ⌘F
+finds in the page. Web tabs come back after a relaunch, on their worktrees, with their history —
+in the order they and the terminals stood on the strip —
+each loading only once it is looked at.
+
+A single click from the panel previews, a double-click or Return pins. A double-click on the tab
+itself promotes it as far as it will go: a preview becomes a lasting tab, and a tab that is
+already lasting takes the whole window — the rail, the transcript and the files panel fold away
+(the tab's menu does the same, and either puts them back). Being sent to a session — by key, or
+by a tapped notification — restores them, since that is where what is waiting on you lives.
+Right-clicking a tab offers the four ways to close from there (this one, the others, the ones to
+its right, all of them, each stopping at a Cancel on an unsaved file), Keep Open while it is
+still a preview, and that same maximize.
+
+Nothing above the text names the file — the tab does that, with the full path in its tooltip — and
+a file's tab wears a dot in front of the name while the buffer holds an unsaved edit.
 
 **Cost & usage.** A per-session cost estimate in the conversation header (the "if it were
 API-metered" figure), the account-wide plan usage in the toolbar, and beside it the CPU and

@@ -52,31 +52,111 @@ Workspace (one window)
   to stop. If hukan is ever explained to an agent, it is in the description of a tool the agent
   calls on it, read when it is used rather than on every turn.
 - **Session and Terminal are children of a Worktree, not peers of each other** — two
-  implementations of one thing, a process running in this worktree, sharing the middle column
-  via tabs.
+  implementations of one thing, a process running in this worktree. The session's conversation
+  has the column beside the desk; the terminal is a tab on the desk, beside the files and web
+  tabs of the same worktree.
 - **A double-click promotes what it lands on as far as it will go.** A preview becomes a lasting
   tab — the files panel's gesture and the rail's, unchanged — and a tab that is already lasting
   takes the whole window, folding every other column away. One rule covers both halves, which is
-  what let the maximize share the gesture that pins instead of buying a modifier of its own.
-  **The conversation maximizes the same way, from its header.** The gesture belongs to the strip
-  that names what a column is showing — the desk's tab strip, and beside it the session's header
-  — because that strip is also what stays when everything else folds, so the thing pressed and
-  the way back are one view. A conversation has no preview state to leave, so there the first
-  double-click is already the maximize; and the rail's rows are pointedly not the place for it,
-  since a double-click there already means dive into this session. One key serves both, and which
-  column it means is where the focus is: an edge column maximizes the column it feeds — the
-  rail's detail is the conversation, the files panel's is a tab — so nothing is ambiguous and the
-  second maximize costs no second shortcut. Maximizing is a mode you are in, not a state the
-  workspace has: it is never saved with the window (a restored window with no rail and no
-  transcript reads as a broken one), toggling any column by hand ends it, and being sent to a
-  session — by key, by a tapped notification — ends it too, because what is waiting on you is on
-  the rail and in the transcript and the mode must not outlive its own reason. **Ending it that
-  way puts back what nothing else can unfold**: the rail and the files panel have toggles of
-  their own and keep whatever the act that ended the mode makes of them, but the transcript and
-  the desk have none, so a mode dropped where it stood would leave whichever of them it had
+  what let the maximize share the gesture that pins instead of buying a modifier of its own; on a
+  browser or a terminal, which have no preview state to leave, the first double-click is already
+  the maximize. **The conversation maximizes the same way, from its header.** The gesture belongs
+  to the strip that names what a column is showing — the desk's tab strip, and beside it the
+  session's header — because that strip is also what stays when everything else folds, so the
+  thing pressed and the way back are one view. A conversation has no preview state either, so
+  there too the first double-click is the maximize; and the rail's rows are pointedly not the
+  place for it, since a double-click there already means dive into this session. One key serves
+  both, and which column it means is where the focus is: an edge column maximizes the column it
+  feeds — the rail's detail is the conversation, the files panel's is a tab — so nothing is
+  ambiguous and the second maximize costs no second shortcut. Maximizing is a mode you are in,
+  not a state the workspace has: it is never saved with the window (a restored window with no
+  rail and no transcript reads as a broken one), toggling any column by hand ends it, and being
+  sent to a session — by key, by a tapped notification — ends it too, because what is waiting on
+  you is on the rail and in the transcript and the mode must not outlive its own reason. **Ending
+  it that way puts back what nothing else can unfold**: the rail and the files panel have toggles
+  of their own and keep whatever the act that ended the mode makes of them, but the transcript
+  and the desk have none, so a mode dropped where it stood would leave whichever of them it had
   folded with no way to it. Everything that can fold does; the strip stays, because it is the way
   back. The strip's right-click menu is the same set of acts spelled out — the four ways to close
   from a tab, `Keep Open` while it is still a preview, and that maximize.
+- **The desk's plain `⌘T` is the browser's; the terminal takes `⌃⌘T`.** Creation is two families,
+  `⌘N` for the rail and `⌘T` for the desk, and within the desk the plain key goes to what is
+  actually opened most: the shell work here is the agent's, so a terminal a person opens by hand
+  is the occasional act, while a task's issue, PR and docs breed tabs by being followed. It also
+  makes `⌘T` mean what it means everywhere else, which is what leaves the rest of the desk's
+  vocabulary — walking the strip, jumping into it, closing — reading as a browser's. `⇧⌘T` is
+  left free for the same reason: beside a browser tab it means reopen the closed one, and a
+  terminal on it would take that key from the desk for good. So the terminal sits on the control
+  key, beside the window's own `⌃⌘S` and `⌃⌘M`. Zoom keeps `⌘0`/`⌘+`/`⌘-`, so nothing else may
+  take them.
+- **The web tab's one field is an address bar and a search box, and the text decides which** — a
+  scheme, a slash or a dot makes it an address; anything else is a search. The files panel's field
+  splits its two jobs by *gesture* because one of them costs far more than the other and a person
+  has to choose; here both are one Return and one request and being wrong costs a back click, so
+  nothing is bought by making anyone choose. No public suffix list stands behind the rule — knowing
+  that `.swift` is not a real TLD is far more than this is worth — so `Model.swift` is tried as an
+  address, fails to resolve, and **the error page offers the search instead**. The engine is one
+  constant, not a preference: hukan has no settings window, and nothing separates the engines for
+  "the search you would otherwise have run in Safari".
+- **A failed load says so, and it says so as a page.** It used to show nothing at all: WKWebView
+  keeps the previous content — on a new tab, a white rectangle — and `didCommit` never fires, so
+  even the chrome stayed as it was and every wrong address read as "Return did nothing". Drawn as
+  a simulated response rather than as a banner over the page, which keeps the failed address as
+  the web view's own URL: the address bar stays right and the reload button goes on meaning "try
+  again" without hukan having to remember what it means. Its three offers are the whole of what
+  can be done next — retry, search for what was typed, open in Safari (the way out for a page
+  hukan cannot sign into, since passkeys and iCloud Keychain autofill need entitlements it has
+  not got). A cancelled navigation is not a failure and never reaches it: cancelling in
+  `decidePolicyFor` is *how* a `kolide://` handoff is handed over, so reporting one would put an
+  error page in the middle of the device-trust flow this browser exists to get through.
+- **A link in the transcript opens on the desk, not in the default browser.** The address an agent
+  writes is the task's — the PR it just opened, the issue it is working from — which is what a web
+  tab is for; ⌘ sends it out instead. Never automatic: hukan following an address out of the
+  transcript on its own would be the agent driving the browser, which is the line `approve` draws
+  too. Only `http(s)`, which is the narrow half of the scheme table the web view's own navigation
+  policy uses — a page already showing may carry on into `blob:`, but a click in another column
+  must not conjure a tab out of one. **A bare URL is a link at all only since then**: markdown
+  syntax is what an agent writes least, so `gh pr create`'s answer — the most useful address in
+  the transcript — was plain black text. The rule is an explicit `http(s)://` up to the first
+  space, with trailing sentence punctuation handed back, and no guessing at `www.` or at a bare
+  dot, which is what would start colouring `Model.swift` mid-sentence. Code spans and fenced
+  blocks are never touched, because code is quoted, not followed. A web tab has no preview slot,
+  unlike a file — the pages an agent hands you are context you want side by side — so
+  what keeps them from piling up is that an address already open is switched to rather than opened
+  twice.
+- **The web tab's chrome reads the view, and the tab does the host's half of WKWebView.** The
+  address, title and history buttons are KVO on the web view, not the navigation delegate:
+  `didCommit` fires for a document load and nothing else, and GitHub — the page this browser
+  exists for — moves between an issue and its PR without one, so a chrome synced there stayed on
+  the first page all day. The field is never written while it is being edited (the sync catches
+  up when editing ends), because now that it is a search box the half-written line is its usual
+  state. The rest is what a page assumes its browser provides and a bare WKWebView does not, each
+  of which failed silently: a popup that closes itself (`webViewDidClose`, how an SSO popup ends)
+  took its tab with it or left an empty one; `<input type=file>`, `alert`/`confirm`/`prompt`, a
+  download (into Downloads, the Dock stack bouncing — Safari's own signal and the whole of the UI
+  a download gets), a name-and-password challenge, a client certificate (looked up by the
+  issuers the server names, no chooser — this machine has one device certificate). Reload is Stop
+  while loading, with a progress line under the bar. ⌘F is a field in the pane's own row rather
+  than a bar dropping in over the page: WebKit's find is a step, not a list, so the label says only
+  that there was nothing to find. **A popup lands on the worktree of the page that opened it**, which is not necessarily the
+  one on screen: a sign-in finishing in a background worktree's tab must not swap the desk out
+  from under the rail's selection, so it joins that worktree's tabs and waits there — and a page
+  whose worktree is gone is declined, so WebKit drops the popup rather than loading it into a
+  view no one will see. A page retitles itself several times while loading; that relabels one
+  tab in place rather than rebuilding the strip. No process pool: it was set on the belief that it
+  shared the sign-in, and it never did — the persistent data store does, and WebKit has managed
+  its own processes since macOS 12.
+- **Web tabs come back after a relaunch; files do not.** A file is one click from the panel,
+  while a page reached through a sign-in and three redirects is not. What is
+  saved is WebKit's own `interactionState` — the back/forward list and where each entry was
+  scrolled — held opaque, plus the title and address so the tab can be named and found by address
+  before it loads. It rides the window's restorable state keyed by worktree, the terminals'
+  arrangement, passed in from the desk because the model has no view to read it off. **Nothing
+  loads until its tab is looked at**: a restored window may carry a dozen web tabs across its
+  worktrees, and loading them all at launch is what a browser's session restore is known for.
+  The saved title holds until the page reports its own, or every restored tab would rename itself
+  to a bare host name the moment it loads. A blank tab is not saved — it is one keystroke to make
+  again.
 - **A terminal's tab is named the way Terminal.app names one** — the command holding the pty
   while something is running, the working directory's last component when nothing is. The path
   relative to the worktree is the alternative, and the one thing it buys — two tabs in one
@@ -144,12 +224,14 @@ Workspace (one window)
 - **The rail navigates between tasks; the files panel navigates within one.** The rail lists
   worktrees, sessions and what is waiting (approvals) — bounded state, which is why one field
   searches it, under the same typing-filters / Return-searches rule as the panel's (titles are in
-  memory; transcripts are files, so reading them waits to be asked for). Finding a *file* is the
-  files panel's, docked on the desk's trailing edge, with its
-  own field. The tree once sat on the rail and made the rail's search have to span files and
-  transcripts at once; moving it out is what lets the two searches stay two fields with two
-  scopes. It was briefly a tab on the desk instead, which was worse: a tab needs an editor inside
-  it to show what it found, so the same file became editable in two places and wanted a
+  memory; transcripts are files, so reading them waits to be asked for). It listed the changed
+  files too, briefly, and that was redundant: the panel's changed scope already answers "which
+  files", next to the tabs where they open. Finding a *file* is the files panel's, docked on the
+  desk's trailing edge, with its own field. The tree once sat on the rail and made the rail's
+  search have to span files and transcripts at once; moving it out is what lets the two searches
+  stay two fields with two scopes. It was briefly a tab on the desk instead, which was worse: a
+  tab needs an editor inside it to show what it found, so the same file became editable in two
+  places and wanted a
   shared-buffer machine underneath. As a panel it is an index and nothing else — every pick opens
   a tab, so a file is read and edited in exactly one place, and the preview tab is the detail view
   the results list would otherwise have had to grow.
@@ -300,14 +382,13 @@ Workspace (one window)
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
-- **Browser: task-context tabs** — worktree = task = one issue, so the tab set belongs to a
-  Worktree: switch worktrees and the whole desk switches. Tabs sit in the right column over one
-  shared cookie store. Measured with a WKWebView harness (2026-08): SSO redirect chains and Kolide
-  device trust **work**; passkeys and iCloud Keychain autofill **do not** (browser-vendor
-  entitlements); sharing Safari's login state is officially impossible (plan B: inject
-  `Cookies.binarycookies`, needs Full Disk Access). The two pieces still needed were proven at
-  ~30 lines: `createWebViewWith` to open popups as real windows, `decidePolicyFor` to forward
-  custom schemes (`kolide://`) to `NSWorkspace.open`.
+- **Browser** — still open on the tab itself: `⌘L` for the address field and the page zoom the
+  reserved `⌘0`/`⌘+`/`⌘-` are held for (neither is wired — the reservation is a promise the menu
+  does not yet keep), a favicon in place of the one globe, and a snapshot of the chrome, which is
+  the one pane not pinned. Measured with a WKWebView harness (2026-08): SSO redirect chains and
+  Kolide device trust **work**; passkeys and iCloud Keychain autofill **do not** (browser-vendor
+  entitlements) — which is what the error page's Open in Safari is for; sharing Safari's login
+  state is officially impossible (plan B: inject `Cookies.binarycookies`, needs Full Disk Access).
 
 ---
 
