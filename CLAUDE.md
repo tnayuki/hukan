@@ -178,6 +178,25 @@ Workspace (one window)
   word twice, and it charged the file 36pt to say it. The one thing that header carried alone —
   the dot for an unsaved edit — moved onto the tab, beside the ✕ that would discard it, which is
   where the state and the act that destroys it belong together.
+- **The gutter is where the diff signal reaches line granularity** — change bars beside the
+  line numbers, never a second text mode. Stagedness is the bar's fill — solid working-tree,
+  hollow staged — because the color already carries the kind: green added, blue rewritten, a
+  red wedge for a deletion boundary. **The bars measure the buffer, not the file on disk.**
+  They hid while the buffer was dirty at first — the file on disk being what git can answer
+  about — and that is backwards: the lines you most want marked are the ones you are typing,
+  and the mark going out exactly when you touch it is the moment it was needed. What it costs
+  is holding the file's text at HEAD and in the index for as long as it is open, so an edit
+  re-diffs two strings rather than asking git per keystroke. **A change stays marked until it
+  is committed**, and staging only hollows it — which is a different question from "what is not
+  yet staged", and the answer to that one empties as you stage.
+  **Hovering a bar opens the block it belongs to** — the lines as they read at the base above
+  the lines that replaced them — because a bar says *that* something changed, and the only way
+  to see *what* was to leave for the PR. A block with nothing removed opens nothing: its added
+  lines are already on screen. The card never takes a click; reading is all it is for, and
+  acting on a hunk — stage, revert — is git's, per the worktree rule below.
+  The editor never wraps a line: a gutter row is one file line, and wrapping would split that
+  line across rows. Long lines scroll sideways, and wrapped reading stays the transcript's,
+  for prose.
 - **Highlighting is a rendering attribute, not text.** tree-sitter parses (vendored grammars,
   see the Build note) and the colors land as TextKit 2 rendering attributes — so the document,
   its undo stack and the dirty state never learn highlighting exists, and the buffer stays
@@ -578,7 +597,10 @@ Anything *assertable* belongs in `HukanAppTests` as a real test instead.
 pixel-compares against the reference PNGs in `Tests/HukanAppTests/Snapshots/`. When a change
 is intended, re-record with `TEST_RUNNER_HUKAN_RECORD=1 xcodebuild test …`, then eyeball the
 new PNGs before committing. The approval, question and task cards — real AppKit views, which the
-transcript's harness cannot reach — are pinned the same way by `CardSnapshotTests`.
+transcript's harness cannot reach — are pinned the same way by `CardSnapshotTests`, and the
+editor pane — highlighted source, gutter, every change-bar state — by `EditorSnapshotTests`
+(`editor.png`; eyeball it with `TEST_RUNNER_HUKAN_PREVIEW=editor`, which writes
+/tmp/hukan-preview-editor.png instead).
 
 ### Verifying the GUI: AppleScript, not coordinates
 

@@ -5,19 +5,26 @@ import AppKit
 /// a layout delegate that lays every paragraph out as a `BlockBackgroundFragment`, a click
 /// delegate that owns the `NSTextViewDelegate` slot to fold tool calls, and an `NSTextView`
 /// subclass that reads every double-click as a possible fold re-toggle. None of that means
-/// anything to a source file. Ten lines of duplicated AppKit boilerplate is the cheaper side
-/// of the trade.
+/// anything to a source file, and the fragment widens every line's rendering surface to the
+/// column's full width — which here, where nothing wraps, is the width of the longest line in
+/// the file. Ten lines of duplicated AppKit boilerplate is the cheaper side of the trade.
+///
+/// It never wraps: a gutter bar or number maps to exactly one file line, and wrapping would
+/// split that line across rows. Long lines scroll sideways, and wrapped reading stays the
+/// transcript's, for prose — which is what `EditorScrollView` is for.
 func makeEditorTextView() -> (NSScrollView, NSTextView) {
   let textView = NSTextView(usingTextLayoutManager: true)
-  let scrollView = NSScrollView()
+  let scrollView = EditorScrollView()
   scrollView.documentView = textView
   textView.minSize = .zero
   textView.maxSize = NSSize(
     width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
   textView.isVerticallyResizable = true
-  textView.isHorizontallyResizable = false
-  textView.autoresizingMask = [.width]
-  textView.textContainer?.widthTracksTextView = true
+  textView.isHorizontallyResizable = true
+  textView.autoresizingMask = []
+  textView.textContainer?.widthTracksTextView = false
+  textView.textContainer?.size = NSSize(
+    width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
   // Every paragraph is laid out as an `EmphasisFragment`, the one place a bold or an italic can
   // be drawn without touching the font (see `SyntaxHighlighting`). The layout manager holds its
   // delegate weakly, so the table lives as long as the view does, associated with it.
@@ -29,9 +36,14 @@ func makeEditorTextView() -> (NSScrollView, NSTextView) {
   textView.isEditable = false
   textView.isSelectable = true
   textView.drawsBackground = false
-  textView.textContainerInset = NSSize(width: 14, height: 12)
+  // Narrower on the leading edge than the transcript's 14: that one is prose with nothing to
+  // its left, so it needs the whole inset to keep off the window's edge, while here the gutter
+  // already sits there with a padding of its own. Stacked, the two put 18pt of nothing between
+  // a change bar and the line it marks.
+  textView.textContainerInset = NSSize(width: 4, height: 12)
   scrollView.drawsBackground = false
   scrollView.hasVerticalScroller = true
+  scrollView.hasHorizontalScroller = true
   return (scrollView, textView)
 }
 
@@ -42,11 +54,18 @@ private nonisolated(unsafe) var emphasisTableKey = 0
 final class FileContentViewController: NSViewController {
   private let scrollView: NSScrollView
   private let textView: NSTextView
+  private var gutter: EditorGutter?
   /// The open file's syntax highlighter, held for exactly as long as the file is showing —
   /// nil when no vendored grammar covers it, and the text renders plain.
   private var highlighter: SyntaxHighlighter?
   private var worktree: Worktree?
   private var path: String?
+  /// What the gutter diffs the buffer against — the file at HEAD and in the index. Read when
+  /// the file opens and again whenever git moves under it, so an edit re-diffs two strings in
+  /// process instead of re-opening the repository on every keystroke.
+  private var fileBase = Git.FileBase()
+  /// Coalesces the re-diff a burst of typing would otherwise ask for.
+  private var pendingDiff: DispatchWorkItem?
   /// The open file's bare name, for the one place it is still spoken aloud: the alert that asks
   /// about an unsaved edit. The pane itself never names the file — the tab does (see `loadView`).
   private var baseFileName = ""
@@ -95,6 +114,13 @@ final class FileContentViewController: NSViewController {
   override func loadView() {
     scrollView.translatesAutoresizingMaskIntoConstraints = false
 
+    let gutter = EditorGutter(scrollView: scrollView, textView: textView)
+    gutter.backgroundColor = .windowBackgroundColor
+    scrollView.verticalRulerView = gutter
+    scrollView.hasVerticalRuler = true
+    scrollView.rulersVisible = true
+    self.gutter = gutter
+
     let container = NSView()
     container.addSubview(scrollView)
     NSLayoutConstraint.activate([
@@ -141,6 +167,7 @@ final class FileContentViewController: NSViewController {
     let firstEdit = !isDirty
     if firstEdit { onEdited?() }
     isDirty = true
+    scheduleLineChanges()
   }
 
   /// Whether the open file has an unsaved edit, so the Save menu item can enable itself.
@@ -172,8 +199,10 @@ final class FileContentViewController: NSViewController {
     self.worktree = worktree
     self.path = path
     baseFileName = path.map { ($0 as NSString).lastPathComponent } ?? ""
-    // The new file starts over: the highlighter is per-language.
+    // The new file starts over: the highlighter is per-language, the gutter per-file.
     highlighter = path.flatMap { SyntaxHighlighter(textView: textView, path: $0) }
+    gutter?.lineChanges = Git.LineChanges()
+    fileBase = Git.FileBase()
     render()
   }
 
@@ -199,7 +228,7 @@ final class FileContentViewController: NSViewController {
       return
     }
     let url = worktree.url
-    let restoreY = preservingScroll ? scrollView.contentView.bounds.origin.y : nil
+    let restoreOrigin = preservingScroll ? scrollView.contentView.bounds.origin : nil
     DispatchQueue.global(qos: .userInitiated).async {
       let rendered = Self.renderSource(Git.fileContents(at: url, path: path) ?? "")
       DispatchQueue.main.async { [weak self] in
@@ -210,7 +239,15 @@ final class FileContentViewController: NSViewController {
         self.textView.typingAttributes = [.font: monospace, .foregroundColor: NSColor.labelColor]
         self.isDirty = false
         self.isLoaded = true
-        self.textView.scroll(restoreY.map { NSPoint(x: 0, y: $0) } ?? .zero)
+        self.loadFileBase()
+        // A refresh keeps the reader where they were, sideways included; an open starts at
+        // the leading edge — which is not x = 0 once a ruler is in the way, see the helper.
+        if let restoreOrigin {
+          self.scrollView.contentView.scroll(to: restoreOrigin)
+          self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
+        } else {
+          self.scrollView.scrollToLeadingEdge(y: 0)
+        }
         if let pending = self.pendingReveal {
           self.pendingReveal = nil
           self.reveal(line: pending.line, term: pending.term)
@@ -253,6 +290,56 @@ final class FileContentViewController: NSViewController {
   func performFind(_ sender: Any?) {
     view.window?.makeFirstResponder(textView)
     textView.performFindPanelAction(sender)
+  }
+
+  /// Re-read what the gutter diffs against — the file at HEAD and in the index — and re-diff
+  /// once it lands. Off the main thread, like every other git question; a stale answer for a
+  /// since-switched file is dropped.
+  private func loadFileBase() {
+    guard let worktree, let path else {
+      fileBase = Git.FileBase()
+      gutter?.lineChanges = Git.LineChanges()
+      return
+    }
+    let url = worktree.url
+    DispatchQueue.global(qos: .utility).async {
+      let base = Git.fileBase(at: url, path: path)
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.path == path else { return }
+        self.fileBase = base
+        self.updateLineChanges()
+      }
+    }
+  }
+
+  /// Re-diff after a short pause. Typing is a burst and each keystroke moves every line below
+  /// it, so the bars are recomputed once the burst stops rather than per character.
+  private func scheduleLineChanges() {
+    pendingDiff?.cancel()
+    let work = DispatchWorkItem { [weak self] in self?.updateLineChanges() }
+    pendingDiff = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+  }
+
+  /// Diff the *buffer* against the cached base, off the main thread. The bars therefore mark an
+  /// edit as it is typed, and go on marking it until it is committed — staging alone only
+  /// hollows them.
+  private func updateLineChanges() {
+    pendingDiff?.cancel()
+    pendingDiff = nil
+    guard let path, !fileBase.isEmpty else {
+      gutter?.lineChanges = Git.LineChanges()
+      return
+    }
+    let base = fileBase
+    let current = textView.string
+    DispatchQueue.global(qos: .utility).async {
+      let changes = Git.lineChanges(base: base, current: current)
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.path == path else { return }
+        self.gutter?.lineChanges = changes
+      }
+    }
   }
 
   private static func renderSource(_ raw: String) -> NSAttributedString {

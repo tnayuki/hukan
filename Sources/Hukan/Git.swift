@@ -106,6 +106,198 @@ enum Git {
     try? String(contentsOf: url.appendingPathComponent(path), encoding: .utf8)
   }
 
+  // MARK: - Line-level changes (the gutter's change bars)
+
+  /// One changed block between a base text and the current one, in both line spaces, carrying
+  /// the lines themselves so the gutter can show what was replaced without asking git again.
+  /// `oldLen == 0` is a pure addition (nothing removed to show); `newLen == 0` is a pure
+  /// deletion, and its `newStart` is the line the removed text sat above.
+  struct Hunk: Equatable {
+    /// 0-based, in the base text.
+    var oldStart = 0
+    var oldLen = 0
+    /// 0-based, in the current text.
+    var newStart = 0
+    var newLen = 0
+    /// What the block reads as at the base, and what it reads as now.
+    var oldLines: [String] = []
+    var newLines: [String] = []
+    /// Whether this exact change already sits in the index.
+    var staged = false
+  }
+
+  /// What a file's gutter diffs against: its content at HEAD, and in the index. Read once per
+  /// file (and again when git moves under it), so an edit re-diffs without touching the
+  /// repository.
+  struct FileBase: Equatable {
+    var head: String?
+    var index: String?
+
+    var isEmpty: Bool { head == nil && index == nil }
+  }
+
+  /// One file's changes, line by line, for the gutter to draw.
+  struct LineChanges: Equatable {
+    enum Kind: Equatable {
+      case added, modified
+    }
+    struct Bar: Equatable {
+      var kind: Kind
+      var staged: Bool
+    }
+    /// 1-based line → its change bar.
+    var bars: [Int: Bar] = [:]
+    /// Lines were deleted just below this 1-based line (0 = above the first) → whether that
+    /// deletion is staged.
+    var deletions: [Int: Bool] = [:]
+    /// The blocks the bars came from, so a hover can show one.
+    var hunks: [Hunk] = []
+  }
+
+  /// A file's base texts. `HEAD:<path>` for the committed side; the index entry's blob for the
+  /// staged one. A file with no commit yet has neither, and the gutter stays empty rather than
+  /// marking every line of a new file as added.
+  static func fileBase(at url: URL, path: String) -> FileBase {
+    guard let repo = openRepository(at: url) else { return FileBase() }
+    defer { git_repository_free(repo) }
+    return FileBase(head: headBlob(repo, path: path), index: indexBlob(repo, path: path))
+  }
+
+  private static func headBlob(_ repo: OpaquePointer, path: String) -> String? {
+    var object: OpaquePointer?
+    guard git_revparse_single(&object, repo, "HEAD:\(path)") == 0, let object else { return nil }
+    defer { git_object_free(object) }
+    guard git_object_type(object) == GIT_OBJECT_BLOB else { return nil }
+    return blobText(object)
+  }
+
+  private static func indexBlob(_ repo: OpaquePointer, path: String) -> String? {
+    var index: OpaquePointer?
+    guard git_repository_index(&index, repo) == 0, let index else { return nil }
+    defer { git_index_free(index) }
+    guard var entry = git_index_get_bypath(index, path, 0)?.pointee else { return nil }
+    var blob: OpaquePointer?
+    guard git_blob_lookup(&blob, repo, &entry.id) == 0, let blob else { return nil }
+    defer { git_blob_free(blob) }
+    return blobText(blob)
+  }
+
+  private static func blobText(_ blob: OpaquePointer) -> String? {
+    guard git_blob_is_binary(blob) == 0, let content = git_blob_rawcontent(blob) else {
+      return nil
+    }
+    let size = Int(git_blob_rawsize(blob))
+    return String(
+      data: Data(bytes: content, count: size), encoding: .utf8)
+  }
+
+  /// The changed blocks between two texts, straight from libgit2 — `git_diff_buffers` diffs two
+  /// strings with no repository behind them, which is what lets the gutter re-diff the *buffer*
+  /// on every edit instead of only the file on disk.
+  static func hunks(base: String, current: String) -> [Hunk] {
+    guard base != current else { return [] }
+    var collected: [Hunk] = []
+    let old = Array(base.utf8)
+    let new = Array(current.utf8)
+    old.withUnsafeBufferPointer { oldBuffer in
+      new.withUnsafeBufferPointer { newBuffer in
+        var options = git_diff_options()
+        git_diff_options_init(&options, UInt32(GIT_DIFF_OPTIONS_VERSION))
+        // No context. git's default of three lines merges two changes that happen to sit near
+        // each other into one hunk, and the gutter's unit is the change, not the neighbourhood:
+        // merged, a staged edit and an unstaged one four lines apart would read as one block and
+        // take one another's fill.
+        options.context_lines = 0
+        // Discarded deliberately: the closure's value is `git_diff_buffers`'s return code, and
+        // there is nothing to do with a failure here — a diff that will not run leaves the
+        // blocks empty, which is the same answer as a file with nothing changed in it.
+        _ = withUnsafeMutablePointer(to: &collected) { payload in
+          git_diff_buffers(
+            oldBuffer.baseAddress, oldBuffer.count, nil,
+            newBuffer.baseAddress, newBuffer.count, nil,
+            &options, nil, nil,
+            { _, header, payload in
+              guard let header, let payload else { return 0 }
+              // Seed the new-side anchor from the hunk header. For a block with nothing added
+              // that is the whole answer: git numbers a pure deletion `+N,0`, meaning it sat
+              // after line N — which is both the 1-based line above the gap and the 0-based
+              // index of the line now below it, the same integer either way.
+              payload.assumingMemoryBound(to: [Hunk].self).pointee.append(
+                Hunk(newStart: Int(header.pointee.new_start)))
+              return 0
+            },
+            { _, _, line, payload in
+              guard let line, let payload else { return 0 }
+              let hunks = payload.assumingMemoryBound(to: [Hunk].self)
+              guard var hunk = hunks.pointee.last, let content = line.pointee.content else {
+                return 0
+              }
+              let text =
+                String(
+                  data: Data(bytes: content, count: line.pointee.content_len), encoding: .utf8)?
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\r\n")) ?? ""
+              switch UInt8(bitPattern: line.pointee.origin) {
+              case UInt8(ascii: "-"):
+                if hunk.oldLines.isEmpty { hunk.oldStart = Int(line.pointee.old_lineno) - 1 }
+                hunk.oldLines.append(text)
+                hunk.oldLen += 1
+              case UInt8(ascii: "+"):
+                if hunk.newLines.isEmpty { hunk.newStart = Int(line.pointee.new_lineno) - 1 }
+                hunk.newLines.append(text)
+                hunk.newLen += 1
+              default:
+                return 0
+              }
+              hunks.pointee[hunks.pointee.count - 1] = hunk
+              return 0
+            }, payload)
+        }
+      }
+    }
+    return collected.filter { $0.oldLen > 0 || $0.newLen > 0 }
+  }
+
+  /// Which of `current`'s blocks are already staged: the change has to sit in the index
+  /// *exactly* — same place in the base, same replacement text — or it is still working-tree
+  /// only. A block staged and then edited again therefore reads unstaged, which is what it is.
+  static func markStaged(_ current: [Hunk], against index: [Hunk]) -> [Hunk] {
+    current.map { hunk in
+      var hunk = hunk
+      hunk.staged = index.contains {
+        $0.oldStart == hunk.oldStart && $0.oldLen == hunk.oldLen && $0.newLines == hunk.newLines
+      }
+      return hunk
+    }
+  }
+
+  /// The per-line bars a set of blocks draws as. A replaced run marks its whole new span as
+  /// modified (any surplus removed lines fold into it, the way VS Code reads it), a block with
+  /// nothing removed is an addition, and a block with nothing added is a deletion sitting on
+  /// the boundary above the line that now follows it.
+  static func lineChanges(from hunks: [Hunk]) -> LineChanges {
+    var changes = LineChanges(hunks: hunks)
+    for hunk in hunks {
+      guard hunk.newLen > 0 else {
+        changes.deletions[hunk.newStart] = hunk.staged
+        continue
+      }
+      let kind: LineChanges.Kind = hunk.oldLen > 0 ? .modified : .added
+      for line in hunk.newStart..<(hunk.newStart + hunk.newLen) {
+        changes.bars[line + 1] = LineChanges.Bar(kind: kind, staged: hunk.staged)
+      }
+    }
+    return changes
+  }
+
+  /// The gutter's whole reading for one file: the buffer against HEAD for what changed, the
+  /// index against HEAD for what of it is staged.
+  static func lineChanges(base: FileBase, current: String) -> LineChanges {
+    guard let head = base.head else { return LineChanges() }
+    let current = hunks(base: head, current: current)
+    let staged = base.index.map { hunks(base: head, current: $0) } ?? []
+    return lineChanges(from: markStaged(current, against: staged))
+  }
+
   static func currentBranch(at url: URL) -> String? {
     guard let repo = openRepository(at: url) else { return nil }
     defer { git_repository_free(repo) }
@@ -188,6 +380,16 @@ enum Git {
     git_diff_options_init(&options, UInt32(GIT_DIFF_OPTIONS_VERSION))
     var diff: OpaquePointer?
     guard git_diff_tree_to_workdir_with_index(&diff, repo, tree, &options) == 0 else { return nil }
+    return diff
+  }
+
+  /// The index against the working tree — the unstaged half of a file's changes. The caller
+  /// frees it with `git_diff_free`.
+  private static func indexToWorkdirDiff(_ repo: OpaquePointer) -> OpaquePointer? {
+    var options = git_diff_options()
+    git_diff_options_init(&options, UInt32(GIT_DIFF_OPTIONS_VERSION))
+    var diff: OpaquePointer?
+    guard git_diff_index_to_workdir(&diff, repo, nil, &options) == 0 else { return nil }
     return diff
   }
 

@@ -67,9 +67,8 @@ takes its session with it, and leaving it (`ExitWorktree`) brings the session ba
 it was started from. Dragging a repository's heading puts it somewhere else in the rail, worktrees
 and all — the insertion line falls only between repositories, never inside one.
 
-**Change review.** Branch and a diffstat, from git, measured against `HEAD` — uncommitted work
-only, every worktree the same. The size is in the toolbar for the selected worktree; the files
-themselves are the panel's changed scope (below). Reading the diff belongs to the PR.
+**Change review.** Branch and diffstat against `HEAD` in the toolbar, the changed files in the
+panel's ± scope, the changed lines in the open file's gutter. Reading the diff belongs to the PR.
 
 **The desk.** The selected worktree's tabs, with the files panel as the trailing column, hidden
 by the toggle at the toolbar's far end. One field over the tree runs two jobs, told apart by
@@ -113,12 +112,12 @@ Right-clicking a tab offers the four ways to close from there (this one, the oth
 its right, all of them, each stopping at a Cancel on an unsaved file), Keep Open while it is
 still a preview, and that same maximize.
 
-Nothing above the text names the file — the tab does that, with the full path in its tooltip — and
-a file's tab wears a dot in front of the name while the buffer holds an unsaved edit.
-
-A file tab renders its source syntax-highlighted — Swift, TypeScript, TSX, JavaScript,
-Python, Ruby, Rust, Go, C, C++, C#, shell, JSON, YAML and Markdown — through vendored tree-sitter
-grammars. The colors are a rendering attribute, so the buffer stays exactly what a save writes.
+A file tab is syntax-highlighted — Swift, TypeScript, TSX, JavaScript, Python, Ruby, Rust, Go,
+C, C++, C#, shell, JSON, YAML and Markdown, a fenced block in the language its info string names and
+its emphasis drawn bold and italic — with a gutter carrying its changes against
+`HEAD`: green added, blue rewritten, a red wedge where lines were deleted, hollow once staged and
+solid while not. The bars measure the buffer, so an edit is marked as it is typed; hover one for
+the lines it replaced. Lines never wrap.
 
 **Cost & usage.** A per-session cost estimate in the conversation header (the "if it were
 API-metered" figure), the account-wide plan usage in the toolbar, and beside it the CPU and
