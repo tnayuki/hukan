@@ -10,9 +10,13 @@
 		AC000000000000000000000E /* hukan.sdef in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000000D /* hukan.sdef */; };
 		AC000000000000000000001B /* hukan.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001A /* hukan.icns */; };
 		AC000000000000000000001F /* hukan-dev.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001E /* hukan-dev.icns */; };
+		AC000000000000000000001D /* TreeSitter in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001C /* TreeSitter */; };
 		AD00000000000000000000C2 /* Clibgit2.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD00000000000000000000C1 /* Clibgit2.xcframework */; };
+		AD00000000000000000000C4 /* CtreesitterParsers.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD00000000000000000000C3 /* CtreesitterParsers.xcframework */; };
 		AD00000000000000000000D2 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000D1 /* SwiftTerm */; };
 		AD00000000000000000000D4 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000D3 /* SwiftTerm */; };
+		AD00000000000000000000F2 /* SwiftTreeSitter in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000F1 /* SwiftTreeSitter */; };
+		AD00000000000000000000F4 /* SwiftTreeSitter in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000F3 /* SwiftTreeSitter */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,8 +35,10 @@
 		AC000000000000000000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AC000000000000000000001A /* hukan.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = hukan.icns; sourceTree = "<group>"; };
 		AC000000000000000000001E /* hukan-dev.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = "hukan-dev.icns"; sourceTree = "<group>"; };
+		AC000000000000000000001C /* TreeSitter */ = {isa = PBXFileReference; lastKnownFileType = folder; path = TreeSitter; sourceTree = "<group>"; };
 		AF0000000000000000000003 /* HukanAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HukanAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AD00000000000000000000C1 /* Clibgit2.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/Clibgit2.xcframework; sourceTree = "<group>"; };
+		AD00000000000000000000C3 /* CtreesitterParsers.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/CtreesitterParsers.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -48,7 +54,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				AD00000000000000000000C2 /* Clibgit2.xcframework in Frameworks */,
+				AD00000000000000000000C4 /* CtreesitterParsers.xcframework in Frameworks */,
 				AD00000000000000000000D2 /* SwiftTerm in Frameworks */,
+				AD00000000000000000000F2 /* SwiftTreeSitter in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -57,6 +65,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AD00000000000000000000D4 /* SwiftTerm in Frameworks */,
+				AD00000000000000000000F4 /* SwiftTreeSitter in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -80,6 +89,7 @@
 			isa = PBXGroup;
 			children = (
 				AD00000000000000000000C1 /* Clibgit2.xcframework */,
+				AD00000000000000000000C3 /* CtreesitterParsers.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -100,6 +110,7 @@
 				AC000000000000000000000D /* hukan.sdef */,
 				AC000000000000000000001A /* hukan.icns */,
 				AC000000000000000000001E /* hukan-dev.icns */,
+				AC000000000000000000001C /* TreeSitter */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -127,6 +138,7 @@
 			name = Hukan;
 			packageProductDependencies = (
 				AD00000000000000000000D1 /* SwiftTerm */,
+				AD00000000000000000000F1 /* SwiftTreeSitter */,
 			);
 			productName = Hukan;
 			productReference = AC0000000000000000000003 /* Hukan.app */;
@@ -151,6 +163,7 @@
 			name = HukanAppTests;
 			packageProductDependencies = (
 				AD00000000000000000000D3 /* SwiftTerm */,
+				AD00000000000000000000F3 /* SwiftTreeSitter */,
 			);
 			productName = HukanAppTests;
 			productReference = AF0000000000000000000003 /* HukanAppTests.xctest */;
@@ -185,6 +198,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AD00000000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+				AD00000000000000000000F0 /* XCRemoteSwiftPackageReference "SwiftTreeSitter" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA0000000000000000000003 /* Products */;
@@ -205,6 +219,7 @@
 				AC000000000000000000000E /* hukan.sdef in Resources */,
 				AC000000000000000000001B /* hukan.icns in Resources */,
 				AC000000000000000000001F /* hukan-dev.icns in Resources */,
+				AC000000000000000000001D /* TreeSitter in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -290,6 +305,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.tnayuki.Hukan.dev";
 				PRODUCT_MODULE_NAME = Hukan;
 				PRODUCT_NAME = "Hukan Dev";
+				SWIFT_INCLUDE_PATHS = "$(BUILT_PRODUCTS_DIR)/include/CtreesitterParsers";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 			};
 			name = Debug;
@@ -306,6 +322,7 @@
 				ICON_FILE = hukan;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tnayuki.Hukan;
 				PRODUCT_MODULE_NAME = Hukan;
+				SWIFT_INCLUDE_PATHS = "$(BUILT_PRODUCTS_DIR)/include/CtreesitterParsers";
 				PRODUCT_NAME = Hukan;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 			};
@@ -376,6 +393,14 @@
 				version = 1.20.0;
 			};
 		};
+		AD00000000000000000000F0 /* XCRemoteSwiftPackageReference "SwiftTreeSitter" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ChimeHQ/SwiftTreeSitter.git";
+			requirement = {
+				kind = branch;
+				branch = main;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -388,6 +413,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AD00000000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
+		};
+		AD00000000000000000000F1 /* SwiftTreeSitter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD00000000000000000000F0 /* XCRemoteSwiftPackageReference "SwiftTreeSitter" */;
+			productName = SwiftTreeSitter;
+		};
+		AD00000000000000000000F3 /* SwiftTreeSitter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD00000000000000000000F0 /* XCRemoteSwiftPackageReference "SwiftTreeSitter" */;
+			productName = SwiftTreeSitter;
 		};
 /* End XCSwiftPackageProductDependency section */
 

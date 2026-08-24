@@ -18,10 +18,11 @@ git, Claude Code, macOS — because that is what I use. Each of those is what bu
 
 No LSP, no debugger, no multiple cursors, no plugin API. External tools do those better, and
 leaving them out is what keeps hukan small enough for one person to hold in their head. What is
-here instead is an editable source viewer: fixing the file an agent just wrote should not mean
-leaving the window.
+here instead is an editable, syntax-highlighted source viewer: fixing the file an agent just
+wrote should not mean leaving the window.
 
-Swift 5, AppKit; macOS 15 and up, built against the current SDK. SwiftTerm is the only package dependency.
+Swift 5, AppKit; macOS 15 and up, built against the current SDK. git and tree-sitter are
+vendored static libraries; SwiftTerm and SwiftTreeSitter are the only package dependencies.
 
 ---
 
@@ -114,6 +115,10 @@ still a preview, and that same maximize.
 
 Nothing above the text names the file — the tab does that, with the full path in its tooltip — and
 a file's tab wears a dot in front of the name while the buffer holds an unsaved edit.
+
+A file tab renders its source syntax-highlighted — Swift, TypeScript, TSX, JavaScript,
+Python, Ruby, Rust, Go, C, C++, C#, shell, JSON, YAML and Markdown — through vendored tree-sitter
+grammars. The colors are a rendering attribute, so the buffer stays exactly what a save writes.
 
 **Cost & usage.** A per-session cost estimate in the conversation header (the "if it were
 API-metered" figure), the account-wide plan usage in the toolbar, and beside it the CPU and

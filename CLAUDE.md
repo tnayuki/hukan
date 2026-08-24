@@ -178,6 +178,28 @@ Workspace (one window)
   word twice, and it charged the file 36pt to say it. The one thing that header carried alone —
   the dot for an unsaved edit — moved onto the tab, beside the ✕ that would discard it, which is
   where the state and the act that destroys it belong together.
+- **Highlighting is a rendering attribute, not text.** tree-sitter parses (vendored grammars,
+  see the Build note) and the colors land as TextKit 2 rendering attributes — so the document,
+  its undo stack and the dirty state never learn highlighting exists, and the buffer stays
+  exactly what a save writes. The whole file is re-parsed rather than incrementally: a parse
+  costs less than a person types, and a whole-file one cannot fall out of step with the buffer,
+  which an incremental one drifting by a unit at a time very much can. Past a size no one edits
+  by hand the file is left plain.
+  **A file is often more than one language**, so a grammar's own account of which of its ranges
+  belong to somebody else is followed rather than ignored: a fenced block in Markdown is
+  coloured as the language it names, and Markdown's emphasis is a second grammar again. A
+  language named but not vendored is left plain.
+  **Bold and italic are drawn, not set.** A rendering attribute cannot carry a font — the
+  advances were measured before it arrived — and putting the font in the storage instead would
+  be the end of the document not knowing about highlighting. So emphasis is drawn over the
+  glyphs the layout already placed, by thickening and shearing them where they stand. Synthetic
+  rather than the font's own bold, but the file is monospace prose being checked, not typeset,
+  and it keeps the buffer exactly what `⌘S` writes.
+  **Plain is a style, not the absence of one.** A grammar's captures are written to correct
+  each other — one paints a range and the next says part of it belongs to nobody — so a theme
+  that answers "nothing to say" for the second leaves the first standing. Being deliberately
+  plain and never having heard of the name are different answers, and the theme gives different
+  ones.
 - **Linked worktrees are children of the repository heading, not top-level rows beside it.** The
   heading is still the main worktree (the common dir's parent), naming its branch after the
   project name, with main's sessions straight under it; the linked worktrees sit beneath as rows
@@ -367,12 +389,14 @@ Workspace (one window)
 
 ## TODO
 
-- **Syntax highlighting** — the source pane renders as plain monospace. It is editable
-  (Cmd+S writes back atomically, leaving a file with an unsaved edit asks first — Save / Don't
-  Save / Cancel — and a dirty buffer is never clobbered by an agent's on-disk refresh), but the
-  text is flat.
-  Highlighting is the missing half — still not an editor (see the README): you correct what an
-  agent wrote, you do not live in it; no LSP or multiple cursors (see the intro).
+- **Code folding** — the remaining editor piece, and the heavy one: collapsing a function or
+  block means teaching TextKit 2's content storage to skip ranges, which is documented thinly.
+  The fold ranges themselves are free — the vendored grammar ships a `folds.scm` the build
+  script currently leaves out (see `QUERIES` in `Vendor/build-tree-sitter.sh`), and the same
+  parse that colors the file would answer them. Still not an editor (see the README): no LSP
+  or multiple cursors (see the intro). A new *language*, by contrast, is cheap: one line in
+  the build script's grammar list, one entry in `SyntaxHighlighting.grammars`, rerun the
+  script.
 - **GitHub / GitHub Enterprise integration** — in the UI, not a `gh` shell-out: hukan talks
   to the GitHub API itself (Enterprise is the same API under a different base URL). A
   worktree's PR belongs next to the work it holds: its state on the rail extends "find what
@@ -422,18 +446,22 @@ xcodebuild test  -project hukan.xcodeproj -scheme Hukan -derivedDataPath .build/
 `-skipPackagePluginValidation` is there for one dependency: SwiftTerm (the terminal emulator, see
 the model) ships a build-tool plugin that stamps its version in, and Xcode blocks an unvalidated
 plugin — the flag pre-trusts it, since plugin trust is stored per-user (`~/Library/org.swift.swiftpm`)
-and so cannot be committed. SwiftTerm is the one exception to the vendoring rule: it is pulled as
-an Xcode-managed package dependency (pinned to an exact version in `project.pbxproj`, its graph
-locked in the tracked `Package.resolved`), *not* a committed binary like `Clibgit2.xcframework`.
+and so cannot be committed. SwiftTerm and SwiftTreeSitter are the exceptions to the
+vendoring rule: pulled as Xcode-managed package dependencies (pinned in `project.pbxproj`, the
+whole graph locked in the tracked `Package.resolved`), *not* committed binaries like
+`Clibgit2.xcframework`. SwiftTerm pins an exact version; SwiftTreeSitter rides its `main`
+branch, because that is how ChimeHQ ships it, so `Package.resolved` is what actually holds it
+still.
 That does not resurrect the rejected "SwiftPM as the build system" — the build is still
-`xcodebuild`, hukan still has no `Package.swift`; it is a pure-Swift library with a build plugin,
-which a hand-built static `xcframework` fights (the plugin breaks a universal `swift build`), so
-letting Xcode resolve it is the path of least resistance where libgit2's network-less custom C
+`xcodebuild`, hukan still has no `Package.swift`; they are pure-Swift libraries, which a
+hand-built static `xcframework` fights (SwiftTerm's plugin breaks a universal `swift build`), so
+letting Xcode resolve them is the path of least resistance where libgit2's network-less custom C
 build was not.
 
 The project is hand-authored and tracked — edit `project.pbxproj` directly. Folder groups are
-file-system-synchronized, so a new file under `Sources/` just appears. `Resources/hukan.icns`
-and `Vendor/Clibgit2.xcframework` are committed static assets; regenerating either is a manual
+file-system-synchronized, so a new file under `Sources/` just appears. `Resources/hukan.icns`,
+`Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework` and the query files
+under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
 step, not part of the build.
 
 `Clibgit2.xcframework` is the git engine: libgit2, linked in-process so hukan spawns no `git`
@@ -444,6 +472,30 @@ which also drops the OpenSSL and libssh2 dependencies, leaving one self-containe
 archive linked with `-liconv`. Rebuild it — to bump the libgit2 version — with
 `Vendor/build-libgit2.sh`; it is not SPM, just an `xcframework` in "Link Binary With Libraries".
 
+`CtreesitterParsers.xcframework` is the same idea for syntax highlighting: the tree-sitter
+*grammars*, compiled from pinned tag archives by `Vendor/build-tree-sitter.sh`, which also
+refreshes the query files under `Resources/TreeSitter/`.
+The tree-sitter *runtime* is deliberately not in there — SwiftTreeSitter brings it, and a
+grammar's generated `parser.c` calls nothing in the runtime, so the two link cleanly from their
+two directions (the xcframework's headers sit one directory down, `Headers/CtreesitterParsers/`,
+so its module map cannot collide with Clibgit2's in the shared products `include/`; the target's
+`SWIFT_INCLUDE_PATHS` points into that subdirectory). Adding a language is one line in the
+script's grammar list, one entry in `SyntaxHighlighting.grammars`, and a rerun.
+
+Sixteen parsers for fifteen languages — Swift, TypeScript, TSX, JavaScript, Python, Ruby, Rust,
+Go, C, C++, C#, shell, JSON, YAML and Markdown, the last of which is two grammars. **There is no
+one place that has them all**, which is the fact that shapes the script: most come from the
+tree-sitter organization, YAML and Markdown from the community `tree-sitter-grammars` one that
+has what the first never had, and Swift from alex-pinkus — the official Swift grammar was
+archived in 2022 and stopped at roughly Swift 5.5, so the live grammar is a community one and
+every editor that highlights Swift uses it. Swift is also the only one whose generated parser
+ships in a *release* rather than in the repository. Nobody's set is all from one place — Zed
+pulls eight of its twenty-two from outside the official one, two of them its own forks — so
+the script takes a source per grammar rather than a rule.
+
+**The committed archive is 43 MB.** C# and C++ are the two largest grammars, bigger even than
+Swift, and those three are half of it; JSON is 8 KB. That is the price of the decision, paid
+once: a grammar is a table, so it never changes between version bumps.
 
 **The Debug build is a separate app from the Release one.** Debug carries its own bundle id,
 name and icon (`Hukan Dev.app`, amber DEV ribbon); Release keeps the identity that ships.

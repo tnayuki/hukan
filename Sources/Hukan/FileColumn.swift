@@ -18,6 +18,12 @@ func makeEditorTextView() -> (NSScrollView, NSTextView) {
   textView.isHorizontallyResizable = false
   textView.autoresizingMask = [.width]
   textView.textContainer?.widthTracksTextView = true
+  // Every paragraph is laid out as an `EmphasisFragment`, the one place a bold or an italic can
+  // be drawn without touching the font (see `SyntaxHighlighting`). The layout manager holds its
+  // delegate weakly, so the table lives as long as the view does, associated with it.
+  let emphasis = EmphasisTable()
+  objc_setAssociatedObject(textView, &emphasisTableKey, emphasis, .OBJC_ASSOCIATION_RETAIN)
+  textView.textLayoutManager?.delegate = emphasis
   // Nothing is open yet; the load path turns editing on once a file's text has landed, and off
   // again while the next one is being read.
   textView.isEditable = false
@@ -29,11 +35,16 @@ func makeEditorTextView() -> (NSScrollView, NSTextView) {
   return (scrollView, textView)
 }
 
+private nonisolated(unsafe) var emphasisTableKey = 0
+
 // MARK: - Right: files (the editable source)
 
 final class FileContentViewController: NSViewController {
   private let scrollView: NSScrollView
   private let textView: NSTextView
+  /// The open file's syntax highlighter, held for exactly as long as the file is showing —
+  /// nil when no vendored grammar covers it, and the text renders plain.
+  private var highlighter: SyntaxHighlighter?
   private var worktree: Worktree?
   private var path: String?
   /// The open file's bare name, for the one place it is still spoken aloud: the alert that asks
@@ -161,6 +172,8 @@ final class FileContentViewController: NSViewController {
     self.worktree = worktree
     self.path = path
     baseFileName = path.map { ($0 as NSString).lastPathComponent } ?? ""
+    // The new file starts over: the highlighter is per-language.
+    highlighter = path.flatMap { SyntaxHighlighter(textView: textView, path: $0) }
     render()
   }
 
