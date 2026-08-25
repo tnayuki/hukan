@@ -95,6 +95,14 @@ final class Worktree {
   /// Working tree changes. The diffstat belongs to the worktree, not to a session.
   var changedFiles: [ChangedFile] = []
   var trackedFiles: [String] = []
+  /// What this worktree has committed past its base branch — the History section's list. Read on
+  /// the same tick as the changed files, since the commit that empties one fills the other.
+  var history = Git.History()
+  /// How far back the History section has been scrolled, in commits. It lives here rather than in
+  /// the panel because every re-read goes through the worktree — a commit landing, a branch
+  /// moving — and each of those has to return what has already been paged in rather than the
+  /// first page.
+  var historyLimit = Git.historyPage
   /// Whether the file list has ever been read, which is what gates *drawing* the tree — so it is
   /// set once and never cleared. Wanting a re-read is `needsFileReload`, deliberately a second
   /// flag: clearing this one to force a refresh blanked the rail's file tree until the query came

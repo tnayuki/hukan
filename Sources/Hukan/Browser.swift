@@ -258,8 +258,8 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
     address.action = #selector(submitAddress)
     address.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-    // The find bar is a field in the pane's own row that steps on Return, rather than a bar of
-    // its own dropping in over the page. Hidden until ⌘F asks for it.
+    // The find bar is the commit tab's: a field in the pane's own row that steps on Return,
+    // rather than a bar of its own dropping in over the page. Hidden until ⌘F asks for it.
     findField.placeholderString = "Find"
     findField.controlSize = .small
     findField.font = .systemFont(ofSize: 11)
@@ -451,8 +451,8 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
   }
 
   /// WebKit's find is a step, not a list: it selects the next match from the current one and
-  /// says whether there was any. A count is not on offer, so the label says only the thing worth
-  /// saying — that there was nothing to find.
+  /// says whether there was any. The count the commit tab shows is not on offer, so the label
+  /// says only the thing worth saying — that there was nothing to find.
   private func step(backwards: Bool) {
     let term = findField.stringValue
     guard !term.isEmpty else {

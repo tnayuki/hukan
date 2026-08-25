@@ -77,10 +77,24 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
 
   private let filterField = GestureSearchField()
   /// Says what ⏎ escalates to, while the field is focused. See `showSearchHint`.
+  private let splitController = NSSplitViewController()
+  private var historyItem: NSSplitViewItem!
+  /// A restored height that arrived before the panel had a size to place the divider in.
+  private var pendingHistoryHeight: CGFloat?
+  /// Whether the section was folded away *by hand*, kept apart from whether it is showing: a
+  /// worktree with nothing committed collapses the section too, and coming to one that has
+  /// commits must bring back the section a person never folded.
+  private var isHistoryFoldedByHand = false
+  /// True while the panel folds the section itself, so its own collapse does not read as a
+  /// person having closed it.
+  private var isAdjustingHistory = false
   private let hintLabel = NSTextField(labelWithString: "")
   private lazy var hintHeight = hintLabel.heightAnchor.constraint(equalToConstant: 0)
   private let outline = FilesOutlineView()
   private let listScroll = NSScrollView()
+  /// The panel's second half: what this worktree has committed. Its own controller, since the
+  /// tree and the history answer different questions and only share a column.
+  let history = HistoryPanelViewController()
   private let emptyLabel = NSTextField(labelWithString: "")
   private(set) var worktree: Worktree?
 
@@ -209,7 +223,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     hintLabel.isHidden = true
     hintLabel.translatesAutoresizingMaskIntoConstraints = false
 
+    let tree = NSViewController()
     let container = NSView()
+    tree.view = container
     container.addSubview(hintLabel)
     container.addSubview(listScroll)
     container.addSubview(emptyLabel)
@@ -228,8 +244,109 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       emptyLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
       emptyLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
     ])
-    view = container
+
+    // The two halves are a split, so the line between them can be dragged: the tree gave the
+    // section a fixed seven rows before, and seven rows is not a reading of a log. The divider
+    // is the controller's, never hand-built — adding constraints to an NSSplitView by hand
+    // collides with its autoresizing-derived ones and sends Auto Layout into infinite recursion
+    // (see the note on FileColumns).
+    splitController.splitView.isVertical = false
+    splitController.splitView.dividerStyle = .thin
+    let treeItem = NSSplitViewItem(viewController: tree)
+    treeItem.minimumThickness = 80
+    // The tree gives way: dragging the divider is a request for more history, and the panel's
+    // own width is what the tree is really short of.
+    treeItem.holdingPriority = .init(250)
+    splitController.addSplitViewItem(treeItem)
+
+    historyItem = NSSplitViewItem(viewController: history)
+    historyItem.minimumThickness = HistoryPanelViewController.minimumHeight
+    historyItem.canCollapse = true
+    historyItem.holdingPriority = .init(251)
+    splitController.addSplitViewItem(historyItem)
+
+    addChild(splitController)
+    view = splitController.view
     onScopeChanged?()
+  }
+
+  /// Put the section back where it was left. Called once the panel has a height to place a
+  /// divider in — before that, `setPosition` lands on nothing.
+  override func viewDidLayout() {
+    super.viewDidLayout()
+    guard let pending = pendingHistoryHeight, view.bounds.height > 0 else { return }
+    pendingHistoryHeight = nil
+    splitController.splitView.setPosition(view.bounds.height - pending, ofDividerAt: 0)
+  }
+
+  /// The toolbar's History glyph and ⌘⇧L. Folding is the split item's, which is how the panel's
+  /// own collapse works one level up — the section no longer measures itself.
+  func toggleHistory() {
+    loadViewIfNeeded()
+    isHistoryFoldedByHand = !historyItem.isCollapsed
+    isAdjustingHistory = true
+    historyItem.animator().isCollapsed = isHistoryFoldedByHand
+    isAdjustingHistory = false
+  }
+
+  /// Unfold without folding — what revealing the panel from the toolbar does, so the glyph never
+  /// opens a column onto a section that is still shut.
+  func expandHistory() {
+    loadViewIfNeeded()
+    isHistoryFoldedByHand = false
+    updateHistoryVisibility()
+  }
+
+  var isHistoryVisible: Bool { isViewLoaded && !historyItem.isCollapsed }
+
+  /// The section's height, recorded with the column widths so it survives a relaunch. Collapsed
+  /// reads as zero, which the recorder skips, so a folded section does not overwrite the height
+  /// it will reopen at.
+  var historyHeight: CGFloat {
+    get {
+      guard isViewLoaded, !historyItem.isCollapsed else { return 0 }
+      let height = history.view.frame.height
+      return height < HistoryPanelViewController.minimumHeight ? 0 : height
+    }
+    set {
+      guard newValue > 0 else { return }
+      loadViewIfNeeded()
+      // Place it now when the panel already has a height, and wait for one when it does not: a
+      // restored height arrives before the window has laid out, where `setPosition` lands on
+      // nothing.
+      guard view.bounds.height > 0 else {
+        pendingHistoryHeight = newValue
+        view.needsLayout = true
+        return
+      }
+      splitController.splitView.setPosition(view.bounds.height - newValue, ofDividerAt: 0)
+    }
+  }
+
+  /// A section with nothing in it is not a stub — it is gone, and the panel is all tree. Which is
+  /// also what the toolbar's glyph promises: it is showing the section or it is not.
+  private func updateHistoryVisibility() {
+    guard isViewLoaded else { return }
+    isAdjustingHistory = true
+    defer { isAdjustingHistory = false }
+    if !history.hasAnythingToShow {
+      historyItem.isCollapsed = true
+    } else if !isHistoryFoldedByHand {
+      historyItem.isCollapsed = false
+    }
+  }
+
+  /// The section's divider, so the window can record where it is left. Dragging it shut is the
+  /// same act as the toolbar's glyph, so it is remembered the same way — otherwise the next
+  /// worktree with commits would push a section back open that was deliberately closed.
+  var splitView: NSSplitView {
+    loadViewIfNeeded()
+    return splitController.splitView
+  }
+
+  func dividerMoved() {
+    guard isViewLoaded, !isAdjustingHistory else { return }
+    isHistoryFoldedByHand = historyItem.isCollapsed
   }
 
   func focusFilter() {
@@ -265,6 +382,8 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   /// query and the results; the same one just refreshes.
   func show(worktree: Worktree?) {
     loadViewIfNeeded()
+    history.show(history: worktree?.history ?? Git.History())
+    updateHistoryVisibility()
     if worktree !== self.worktree {
       self.worktree = worktree
       filterField.stringValue = ""
@@ -288,6 +407,10 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   /// line just fixed must leave the list).
   func filesChangedOnDisk() {
     guard isViewLoaded else { return }
+    // The same tick carries both halves: the commit that empties the tree's changed scope is the
+    // one that adds a row down here.
+    history.show(history: worktree?.history ?? Git.History())
+    updateHistoryVisibility()
     if isShowingResults { runSearch() } else { refresh() }
     onScopeChanged?()
   }

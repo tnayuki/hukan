@@ -30,6 +30,7 @@
             </property>
             <property name="name" code="pnam" type="text" access="r" description="Branch name, or the directory name"/>
             <property name="branch" code="Brnc" type="text" access="r" description="Checked-out branch, if any"/>
+            <property name="history" code="Hist" type="text" access="r" description="This worktree's branch log, newest first — one line each: marker, short hash, summary"/>
             <element type="session">
                 <cocoa key="sessions"/>
             </element>
@@ -242,6 +243,18 @@
             </parameter>
             <parameter name="searching" code="Srch" type="text" optional="yes" description="type this into the field and press Return, searching every file's contents">
                 <cocoa key="searching"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
+        <command name="commit" code="HuknCmit" hidden="yes" description="Open a commit on the selected worktree's desk, or report and drive the tab already showing one, for automated checks">
+            <cocoa class="CommitTabCommand"/>
+            <direct-parameter type="text" optional="yes" description="the oid to open; omit to report the tab already showing"/>
+            <parameter name="toggling" code="Togl" type="integer" optional="yes" description="fold or unfold the card at this 1-based index">
+                <cocoa key="toggling"/>
+            </parameter>
+            <parameter name="finding" code="Find" type="text" optional="yes" description="search every open card for this and report how many matches">
+                <cocoa key="finding"/>
             </parameter>
             <result type="text"/>
         </command>

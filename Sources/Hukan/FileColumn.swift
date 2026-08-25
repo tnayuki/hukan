@@ -386,6 +386,11 @@ final class FileColumns {
     panel.onSelect = { [weak self] path, line in self?.openFromPanel(path, line: line, pin: false) }
     panel.onActivate = { [weak self] path, line in self?.openFromPanel(path, line: line, pin: true)
     }
+    // The History section is the panel's other half and opens tabs the same way — the index is
+    // here, the reading is on the desk.
+    panel.history.onSelect = { [weak self] oid in self?.openCommitFromPanel(oid, pin: false) }
+    panel.history.onActivate = { [weak self] oid in self?.openCommitFromPanel(oid, pin: true) }
+    panel.history.onLoadMore = { [weak self] in self?.loadMoreHistory() }
   }
 
   private func openFromPanel(_ path: String, line: Int?, pin: Bool) {
@@ -396,11 +401,46 @@ final class FileColumns {
       worktree: worktree, path: path, preview: !pin, reveal: line.map { ($0, panel.query) })
   }
 
+  /// The History section reached the end of what has been read. The limit lives on the worktree,
+  /// so every other reason to re-read git — a commit landing, a branch moving — hands back what
+  /// has been paged in rather than the first page again.
+  private func loadMoreHistory() {
+    guard let workspace, let worktreeID = workspace.selectedWorktreeID else { return }
+    // Not `needsFileReload`: that asks for the whole worktree again — the tracked list and the
+    // working-tree diff along with the log — and the section asks for a page every time it is
+    // scrolled to the end.
+    workspace.loadMoreHistory(worktreeID: worktreeID) { [weak self] in
+      self?.onNeedsReload?()
+    }
+  }
+
+  private func openCommitFromPanel(_ oid: String, pin: Bool) {
+    guard let workspace,
+      let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
+    else { return }
+    desk.openCommit(worktree: worktree, oid: oid, preview: !pin)
+  }
+
   /// ⌘P: the panel's filter, focused and ready to type. The window has already made sure the
   /// panel is showing.
   func focusFilter() {
     panel.focusFilter()
   }
+
+  /// The toolbar's History glyph and ⌘⇧L: fold the History section away, or bring it back.
+  func toggleHistorySection() {
+    panel.toggleHistory()
+  }
+
+  /// Unfold it without folding it — what revealing the panel from the toolbar's glyph does.
+  func expandHistorySection() {
+    panel.expandHistory()
+  }
+
+  /// Whether the section has commits to show — nothing to fold on a checkout that has committed
+  /// nothing of its own, so the menu item goes grey rather than toggling an invisible thing.
+  var hasHistory: Bool { panel.history.hasAnythingToShow }
+  var isHistoryVisible: Bool { panel.isHistoryVisible }
 
   /// ⌘⇧F: the same field, with what is already typed searched for in the files rather than
   /// filtered by — the two keys differ in which operation they run, not in where they land.

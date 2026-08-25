@@ -70,6 +70,28 @@ and all — the insertion line falls only between repositories, never inside one
 **Change review.** Branch and diffstat against `HEAD` in the toolbar, the changed files in the
 panel's ± scope, the changed lines in the open file's gutter. Reading the diff belongs to the PR.
 
+**History.** The branch's log at the foot of the files panel, newest first, folded away from the
+toolbar's glyph beside the ±. It is read a page at a time: scrolling past the last row walks
+further back. Each row is a short hash and summary, with a dot where the upstream has not caught
+up, and a rule across the list names what the branch was cut from — `origin`'s default branch, or
+a local `main`/`master` — with this worktree's own commits above it and the history it inherited
+below. The line above it is a divider, so the section can be dragged as tall as the log you are
+reading — or shut, which is the same act as the toolbar's glyph, and is remembered either way.
+
+While git has something underway in the worktree — a rebase stopped on a conflict, a merge waiting
+to be committed, a bisect — a line above the rows says so, naming the branch and, where git counts
+them, which step of how many. It has to: a rebase replays onto a detached HEAD, so the branch's own
+commits leave the list until they are re-applied one at a time, and on a checkout in sync with its
+remote the list empties outright — with the files full of conflict markers and nothing else on
+screen saying why. The branch keeps its name on the rail and in the top bar for the same reason.
+
+A pick opens the commit on the desk as a read-only tab: the message, then a foldable card per
+file — status, path, diffstat, and that file's diff, read only once the card opens. The diff
+reads as source rather than patch text: no plumbing lines and no `+`/`-` column (a full-width
+band and a two-column gutter say it instead), with the editor's own tree-sitter colors. The
+tab's own search field marks every occurrence in every open card at once, and Return steps
+through them.
+
 **The desk.** The selected worktree's tabs, with the files panel as the trailing column, hidden
 by the toggle at the toolbar's far end. One field over the tree runs two jobs, told apart by
 gesture: typing filters by path, Return searches contents and the panel becomes a result list
@@ -77,19 +99,15 @@ until Escape. Either can be walked away from: the scan says it is searching, and
 over it drops the one still reading rather than queueing behind it. The ± scopes both to the
 changed files, and every row carries its own diffstat.
 
-Tabs are files (always editable source), web tabs (over one shared cookie store, passing as this
-machine's Safari so a sign-in flow does not balk at the agent) and terminals (a shell in the
-worktree), the last two also from the strip's `+`. The plain new-tab key opens a browser rather
-than a terminal, because the shell work here is the agent's — the terminal you open by hand is
-the occasional one, while a task's issue, PR and docs breed tabs by being read.
-A terminal's tab is named as Terminal.app names one: the command running in it, or its working
-directory when nothing is running.
-The strip is walked, numbered, closed and reordered the way a browser's is — a new tab opens at
-the end, a drag puts one wherever it is dropped, and closing the active one lands on its
-right-hand neighbour, and find works within the
-active tab. Past the point where the tabs stop fitting it scrolls sideways instead of squeezing
+Tabs are files (always editable source), commits (read-only), web tabs (one shared cookie store,
+passing as this machine's Safari) and terminals (named as Terminal.app names one). The plain
+new-tab key opens a browser rather than a terminal — the shell work here is the agent's — and
+the strip walks, numbers, closes and reorders the way a browser's does: a new tab opens at the
+end, a drag puts one wherever it is dropped, and closing the active one lands on its right-hand
+neighbour. Past the point where the tabs stop fitting, it scrolls sideways instead of squeezing
 every label at once, and whichever tab is picked is scrolled back into sight; `+` keeps the
-trailing edge, outside the scroll.
+trailing edge, outside the scroll. A click previews and a double-click promotes: a preview
+becomes lasting, and a lasting tab takes the whole window.
 
 A web tab's field is an address bar and a search box at once, and the text decides which: a
 scheme, a slash or a dot makes it an address, anything else is a search. A load that fails says
@@ -102,15 +120,6 @@ password or client-certificate challenge all get the system's panels, a swipe go
 finds in the page. Web tabs come back after a relaunch, on their worktrees, with their history —
 in the order they and the terminals stood on the strip —
 each loading only once it is looked at.
-
-A single click from the panel previews, a double-click or Return pins. A double-click on the tab
-itself promotes it as far as it will go: a preview becomes a lasting tab, and a tab that is
-already lasting takes the whole window — the rail, the transcript and the files panel fold away
-(the tab's menu does the same, and either puts them back). Being sent to a session — by key, or
-by a tapped notification — restores them, since that is where what is waiting on you lives.
-Right-clicking a tab offers the four ways to close from there (this one, the others, the ones to
-its right, all of them, each stopping at a Cancel on an unsaved file), Keep Open while it is
-still a preview, and that same maximize.
 
 A file tab is syntax-highlighted — Swift, TypeScript, TSX, JavaScript, Python, Ruby, Rust, Go,
 C, C++, C#, shell, JSON, YAML and Markdown, a fenced block in the language its info string names and

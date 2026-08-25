@@ -220,7 +220,7 @@ final class FilesPanelCommand: NSScriptCommand {
 /// `browser "<address>"` opens or focuses a web tab on the selected worktree's desk, taking the
 /// address bar's own reading of the text — so a script exercises the same address-or-search rule a
 /// person does. With nothing to open it reports the worktree's web tabs, one line each. Hidden,
-/// like `fold` and `files`, and for the same reason: a web tab has no text to read back, so
+/// like `commit`, `fold` and `files`, and for the same reason: a web tab has no text to read back, so
 /// checking where a click or a typed line landed would otherwise mean clicking at coordinates.
 @objc(BrowserCommand)
 final class BrowserCommand: NSScriptCommand {
@@ -242,6 +242,34 @@ final class BrowserCommand: NSScriptCommand {
       desk.selectedBrowserPane?.load(text)
     }
     return "loading \(text)"
+  }
+}
+
+/// `commit "<oid>"` opens one on the selected worktree's desk; with no oid it reports the tab
+/// already showing, and `toggling`/`finding` drive its cards. Hidden, like `fold`: it exists so
+/// the tab can be checked without System Events clicking at coordinates.
+@objc(CommitTabCommand)
+final class CommitTabCommand: NSScriptCommand {
+  override func performDefaultImplementation() -> Any? {
+    guard let controller = frontController() else { return fail("no window") }
+    let desk = controller.deskForScripting
+    if let oid = directParameter as? String, !oid.isEmpty {
+      let workspace = controller.workspace
+      guard let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
+      else { return fail("no selected worktree") }
+      desk.openCommit(worktree: worktree, oid: oid, preview: false)
+      return "opened \(oid)"
+    }
+    guard let tab = desk.selectedCommitTab else { return fail("no commit tab is showing") }
+    if let index = argument("toggling", as: NSNumber.self) {
+      tab.toggleSection(at: index.intValue - 1)
+      return "toggled card \(index.intValue)"
+    }
+    if let term = argument("finding", as: String.self) {
+      tab.find(term)
+      return "\(tab.findState.count) matches"
+    }
+    return tab.report
   }
 }
 

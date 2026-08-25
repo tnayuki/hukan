@@ -6,6 +6,13 @@ import XCTest
 /// The user agent is the one thing a plain WKWebView gets wrong for what this browser is for:
 /// an SSO or device-trust flow reads it before it lets a sign-in through. Assert the string the
 /// page actually sees, not the property it was set from.
+///
+/// Keep this suite off any host that spawns subprocesses. Loading WebKit into the test host makes
+/// every `Foundation.Process` spawn in it cost about 7× for the rest of the run — `GitTests` goes
+/// 0.36s → 2.65s and `GitHistoryTests` 2.30s → 16.08s behind it, while pure-CPU work and the
+/// terminal's `forkpty` are untouched. Nothing here leaks: the panes are locals and are long gone
+/// by then, so what does the damage is WebKit being loaded at all. Parallel testing is what
+/// contains it (see the CLAUDE.md note) — it confines the slow host to one worker.
 final class BrowserTests: XCTestCase {
   private func userAgent(of pane: BrowserPaneViewController) -> String {
     let loaded = expectation(description: "load")

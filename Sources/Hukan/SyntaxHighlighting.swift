@@ -206,6 +206,10 @@ enum SyntaxHighlighting {
   /// The parsed grammar and its queries, built once per language and kept — compiling
   /// highlights.scm is the expensive part, and it does not vary by file.
   private static var configurations: [String: LanguageConfiguration?] = [:]
+  /// The cache is reached from more than one background queue — every open file has a highlighter
+  /// with a queue of its own, and a commit tab colours its diff on another — so the dictionary
+  /// needs a lock even though what it holds is immutable once built.
+  private static let configurationLock = NSLock()
 
   private static func languageConfiguration(forPath path: String) -> LanguageConfiguration? {
     grammars[(path as NSString).pathExtension.lowercased()].flatMap(configuration(for:))
@@ -228,6 +232,8 @@ enum SyntaxHighlighting {
   private static func configuration(for grammar: (name: String, language: OpaquePointer))
     -> LanguageConfiguration?
   {
+    configurationLock.lock()
+    defer { configurationLock.unlock() }
     if let cached = configurations[grammar.name] { return cached }
     let queries = Bundle.main.resourceURL?
       .appendingPathComponent("TreeSitter/\(grammar.name)/queries")

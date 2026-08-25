@@ -254,6 +254,22 @@ final class WorktreeDeskViewController: NSViewController {
     init(pane: BrowserPaneViewController) { self.pane = pane }
   }
 
+  /// One open commit: its own read-only pane, kept per worktree like the rest of the desk. The
+  /// oid is the identity — a commit is an object of the repository, not of the worktree, so the
+  /// same one opened from two worktrees is the same text; what is per-worktree is which commits
+  /// this task has been reading.
+  private final class CommitTab {
+    let id = UUID()
+    var oid: String
+    /// The preview slot, single-clicked from the History section — the file tabs' rule, kept.
+    var isPreview: Bool
+    let content = CommitContentViewController()
+    init(oid: String, isPreview: Bool) {
+      self.oid = oid
+      self.isPreview = isPreview
+    }
+  }
+
   private let tabBar = TabStrip()
   /// The strip's clip. Tabs keep their natural width and run off the edge rather than being
   /// squeezed into slivers, so a desk with a dozen of them is walked rather than read at a
@@ -268,6 +284,7 @@ final class WorktreeDeskViewController: NSViewController {
   private var worktreeID: UUID?
   private var fileTabsByWorktree: [UUID: [FileTab]] = [:]
   private var browserTabsByWorktree: [UUID: [BrowserTab]] = [:]
+  private var commitTabsByWorktree: [UUID: [CommitTab]] = [:]
   private var terminals: [TerminalSession] = []
   /// The strip's order per worktree: the order the tabs were opened in, then whatever dragging
   /// has made of it. Written back on every rebuild, so a tab it has not met — one just opened —
@@ -281,6 +298,7 @@ final class WorktreeDeskViewController: NSViewController {
     case file(UUID)
     case browser(UUID)
     case terminal(UUID)
+    case commit(UUID)
   }
   private var surface: Surface = .none
   /// The strip's label per surface, so a title that changes on its own — a page loading — can be
@@ -291,6 +309,15 @@ final class WorktreeDeskViewController: NSViewController {
 
   private var fileTabs: [FileTab] { worktreeID.flatMap { fileTabsByWorktree[$0] } ?? [] }
   private var browserTabs: [BrowserTab] { worktreeID.flatMap { browserTabsByWorktree[$0] } ?? [] }
+  private var commitTabs: [CommitTab] { worktreeID.flatMap { commitTabsByWorktree[$0] } ?? [] }
+
+  /// The commit tab showing right now, when the desk is on one. The scripting surface's handle on
+  /// it: a commit tab has no specifier of its own, and checking one by clicking at coordinates is
+  /// exactly what the dictionary exists to avoid.
+  var selectedCommitTab: CommitContentViewController? {
+    guard case .commit(let id) = surface else { return nil }
+    return commitTabs.first { $0.id == id }?.content
+  }
 
   /// The file content of the active tab, or nil when a terminal (or nothing) is showing. The
   /// column drives save / diff-toggle / refresh through this.
@@ -335,6 +362,8 @@ final class WorktreeDeskViewController: NSViewController {
       terminal.view.performFindPanelAction(sender)
     case .file(let id):
       fileTabs.first { $0.id == id }?.content.performFind(sender)
+    case .commit(let id):
+      commitTabs.first { $0.id == id }?.content.performFind(sender)
     case .browser(let id):
       browserTabs.first { $0.id == id }?.pane.performFind(sender)
     case .none:
@@ -343,7 +372,9 @@ final class WorktreeDeskViewController: NSViewController {
   }
 
   /// How many tabs the desk holds — ⌃⇥ tab-cycling validates on more than one.
-  var tabCount: Int { fileTabs.count + browserTabs.count + terminals.count }
+  var tabCount: Int {
+    fileTabs.count + browserTabs.count + commitTabs.count + terminals.count
+  }
 
   /// The tabs in strip order, so ⌃⇥ / ⌃⇧⇥ walk them the way they read: the order kept in
   /// `tabOrderByWorktree`, then any tab it does not know yet.
@@ -356,6 +387,7 @@ final class WorktreeDeskViewController: NSViewController {
   private func orderedSurfaces(in worktreeID: UUID, terminals: [TerminalSession]) -> [Surface] {
     let present =
       (fileTabsByWorktree[worktreeID] ?? []).map { Surface.file($0.id) }
+      + (commitTabsByWorktree[worktreeID] ?? []).map { .commit($0.id) }
       + (browserTabsByWorktree[worktreeID] ?? []).map { .browser($0.id) }
       + terminals.map { .terminal($0.id) }
     let known = (tabOrderByWorktree[worktreeID] ?? []).filter(present.contains)
@@ -377,7 +409,7 @@ final class WorktreeDeskViewController: NSViewController {
           switch surface {
           case .browser: return .init(worktreeID: worktree.id, kind: .browser)
           case .terminal: return .init(worktreeID: worktree.id, kind: .terminal)
-          case .file, .none: return nil
+          case .file, .commit, .none: return nil
           }
         }
     }
@@ -457,7 +489,7 @@ final class WorktreeDeskViewController: NSViewController {
       view.window?.makeFirstResponder(terminals.first { $0.id == id }?.view)
     case .browser(let id):
       view.window?.makeFirstResponder(browserTabs.first { $0.id == id }?.pane.webView)
-    case .file, .none:
+    case .file, .commit, .none:
       break
     }
   }
@@ -605,9 +637,42 @@ final class WorktreeDeskViewController: NSViewController {
       guard let tab = fileTabs.first(where: { $0.id == id }), tab.isPreview else { return false }
       tab.isPreview = false
       return true
+    case .commit(let id):
+      guard let tab = commitTabs.first(where: { $0.id == id }), tab.isPreview else { return false }
+      tab.isPreview = false
+      return true
     case .browser, .terminal, .none:
       return false
     }
+  }
+
+  /// Open `oid` in a tab, or focus the tab already showing it. Single-clicking the History
+  /// section previews (one reused slot); a double-click or Return pins — the files panel's
+  /// gesture, since it is the same kind of move: an index picking what the desk shows.
+  func openCommit(worktree: Worktree, oid: String, preview: Bool) {
+    loadViewIfNeeded()
+    self.worktreeID = worktree.id
+    var tabs = commitTabsByWorktree[worktree.id] ?? []
+    let tab: CommitTab
+    if let existing = tabs.first(where: { $0.oid == oid }) {
+      tab = existing
+      if !preview { tab.isPreview = false }
+    } else if preview, let slot = tabs.first(where: { $0.isPreview }) {
+      tab = slot
+      tab.oid = oid
+      tab.content.show(worktree: worktree, oid: oid)
+    } else {
+      let fresh = CommitTab(oid: oid, isPreview: preview)
+      addChild(fresh.content)
+      fresh.content.show(worktree: worktree, oid: oid)
+      tabs.append(fresh)
+      commitTabsByWorktree[worktree.id] = tabs
+      tab = fresh
+    }
+    surface = .commit(tab.id)
+    terminals = workspace?.terminals(inWorktree: worktree.id) ?? []
+    rebuildTabBar()
+    applySurface()
   }
 
   /// Open a new web tab in this worktree, address field focused and ready to type. A popup opens
@@ -615,7 +680,7 @@ final class WorktreeDeskViewController: NSViewController {
   /// address instead — a link followed from the transcript — and lands on the tab already showing
   /// it rather than stacking a second copy, which is the rule a file tab follows.
   ///
-  /// A web tab has no preview slot, unlike a file: the two or three pages an agent
+  /// A web tab has no preview slot, unlike a file or a commit: the two or three pages an agent
   /// hands you are context you want side by side, so they are lasting from the first click, and
   /// the reuse above is what keeps that from piling up.
   func openBrowser(worktree: Worktree, webView: WKWebView? = nil, url: URL? = nil) {
@@ -654,8 +719,8 @@ final class WorktreeDeskViewController: NSViewController {
   }
 
   /// Every web tab worth saving, across every worktree — the desk's contribution to the window's
-  /// restorable state. Files are not here on purpose: a file is one click from the panel, while
-  /// a page reached through a sign-in and three redirects is not.
+  /// restorable state. Files and commits are not here on purpose: either is one click from the
+  /// panel, while a page reached through a sign-in and three redirects is not.
   var restorableBrowserTabs: [BrowserTabState] {
     browserTabsByWorktree.flatMap { worktreeID, tabs in
       // In strip order rather than the order they were opened, since `restoreBrowserTabs` puts
@@ -711,8 +776,8 @@ final class WorktreeDeskViewController: NSViewController {
     addChild(tab.pane)
     let id = tab.id
     // A page retitles itself several times while it loads. That relabels one tab in place
-    // rather than rebuilding the strip, and marks the window's state stale, since the address
-    // moved too.
+    // rather than rebuilding the strip — the commit tab's stance, that what is on screen is
+    // what gets built — and marks the window's state stale, since the address moved too.
     tab.pane.onTitleChange = { [weak self] in
       guard let self else { return }
       if let button = self.tabButtons[.browser(id)] {
@@ -798,6 +863,15 @@ final class WorktreeDeskViewController: NSViewController {
       tabs.remove(at: index)
       fileTabsByWorktree[worktreeID] = tabs
       return true
+    case .commit(let id):
+      guard let worktreeID, var tabs = commitTabsByWorktree[worktreeID],
+        let index = tabs.firstIndex(where: { $0.id == id })
+      else { return true }
+      // Nothing to save: a commit is finished, so it just goes.
+      tabs[index].content.removeFromParent()
+      tabs.remove(at: index)
+      commitTabsByWorktree[worktreeID] = tabs
+      return true
     case .browser(let id):
       guard let worktreeID, var tabs = browserTabsByWorktree[worktreeID],
         let index = tabs.firstIndex(where: { $0.id == id })
@@ -854,6 +928,10 @@ final class WorktreeDeskViewController: NSViewController {
       for tab in browserTabsByWorktree[key] ?? [] { tab.pane.removeFromParent() }
       browserTabsByWorktree[key] = nil
     }
+    for key in commitTabsByWorktree.keys where !live.contains(key) {
+      for tab in commitTabsByWorktree[key] ?? [] { tab.content.removeFromParent() }
+      commitTabsByWorktree[key] = nil
+    }
     for key in tabOrderByWorktree.keys where !live.contains(key) { tabOrderByWorktree[key] = nil }
   }
 
@@ -867,11 +945,12 @@ final class WorktreeDeskViewController: NSViewController {
     tabButtons = [:]
     selectedTabView = nil
     let files = fileTabs
+    let commits = commitTabs
     let browsers = browserTabs
     // Show the strip whenever anything is open, a lone file included — making a single tab the one
     // case that hides its own tab (and the `+` with it) was the odd exception. Only nothing open
     // collapses it.
-    let total = files.count + browsers.count + terminals.count
+    let total = files.count + commits.count + browsers.count + terminals.count
     guard total > 0 else {
       tabScroll.isHidden = true
       plusButton.isHidden = true
@@ -885,7 +964,7 @@ final class WorktreeDeskViewController: NSViewController {
     tabBarHeight.constant = 30
 
     var tabs: [NSView] = []
-    // One running index across the three kinds. A tab's identity in the strip is its position in
+    // One running index across the four kinds. A tab's identity in the strip is its position in
     // `orderedSurfaces`, which is what ⌃⇥, ⌘1…⌘9, a drag and the tab menu's "Close to the Right"
     // all count in — so every control on a tab carries that number and nothing else.
     let order = orderedSurfaces
@@ -902,6 +981,16 @@ final class WorktreeDeskViewController: NSViewController {
           index: index, title: (file.content.hasUnsavedEdit ? "• " : "") + name, image: nil,
           selected: surface == item, preview: file.isPreview)
         tab.toolTip = file.path
+        tabs.append(tab)
+      case .commit(let id):
+        guard let commit = commits.first(where: { $0.id == id }) else { continue }
+        let tab = makeTab(
+          index: index, title: commit.content.tabTitle,
+          image: NSImage(
+            systemSymbolName: "point.3.filled.connected.trianglepath.dotted",
+            accessibilityDescription: nil),
+          selected: surface == item, preview: commit.isPreview)
+        tab.toolTip = commit.oid
         tabs.append(tab)
       case .browser(let id):
         guard let browser = browsers.first(where: { $0.id == id }) else { continue }
@@ -1170,6 +1259,12 @@ final class WorktreeDeskViewController: NSViewController {
     case .browser(let id):
       if let tab = browserTabs.first(where: { $0.id == id }) {
         setSurfaceView(tab.pane.view)
+      } else {
+        setSurfaceView(placeholder)
+      }
+    case .commit(let id):
+      if let tab = commitTabs.first(where: { $0.id == id }) {
+        setSurfaceView(tab.content.view)
       } else {
         setSurfaceView(placeholder)
       }

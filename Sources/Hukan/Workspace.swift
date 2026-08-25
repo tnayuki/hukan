@@ -50,9 +50,12 @@ final class Workspace {
   /// queued rerun per worktree — see `refreshFiles`. Touched only on the main thread.
   var refreshInFlight: Set<UUID> = []
   var refreshPending: Set<UUID> = []
-  /// The same pair for `loadFiles`, which had none — see the note there.
+  /// The same pair for `loadFiles`, which had none — see the note there. And a third for the
+  /// history's own paging, which reads nothing else and so needs no queued rerun: a page asked
+  /// for while one is in flight is simply the next scroll's page.
   var loadInFlight: Set<UUID> = []
   var loadPending: Set<UUID> = []
+  var historyInFlight: Set<UUID> = []
   /// What moved while a query was in flight, so the rerun reports the union rather than only
   /// the batch that happened to arrive last. nil for a worktree whose changes could not be
   /// placed — the wholesale case, which cannot be narrowed by anything arriving after it.
@@ -188,6 +191,10 @@ final class Workspace {
   /// so a second window could not hold a different arrangement, and the widths would drift
   /// away from the frame and Space that AppKit restores alongside them.
   var columnWidths: [Double] = []
+
+  /// How tall the files panel's History section was left. Stored beside the widths, and for the
+  /// same reason: it is the arrangement of one window, not a global setting.
+  var historyHeight: Double = 0
 
   /// Per-session composer choices: the permission mode and reasoning effort the engine does not
   /// remember across --resume, plus the model — which the engine does remember, so it is kept
@@ -554,6 +561,7 @@ final class Workspace {
     static let selectedWorktreeID = "selectedWorktreeID"
     static let selectedSessionID = "selectedSessionID"
     static let columnWidths = "columnWidths"
+    static let historyHeight = "historyHeight"
     static let collapsedRepositories = "rail.collapsedRepositories"
     static let collapsedWorktrees = "rail.collapsedWorktrees"
     static let expandedArchives = "rail.expandedArchives"
@@ -626,6 +634,7 @@ final class Workspace {
     // longer resolves after a restart falls back to the most recently active session.
     coder.encode(selectedSessionID?.uuidString ?? "", forKey: Key.selectedSessionID)
     coder.encode(columnWidths.map(NSNumber.init(value:)) as NSArray, forKey: Key.columnWidths)
+    coder.encode(historyHeight, forKey: Key.historyHeight)
     coder.encode(Array(collapsedRepositories) as NSArray, forKey: Key.collapsedRepositories)
     coder.encode(Array(collapsedWorktrees) as NSArray, forKey: Key.collapsedWorktrees)
     coder.encode(Array(expandedArchives) as NSArray, forKey: Key.expandedArchives)
@@ -751,6 +760,7 @@ final class Workspace {
     {
       selectedSessionID = id
     }
+    historyHeight = coder.decodeDouble(forKey: Key.historyHeight)
     columnWidths =
       (coder.decodeArrayOfObjects(ofClass: NSNumber.self, forKey: Key.columnWidths) ?? [])
       .map(\.doubleValue)

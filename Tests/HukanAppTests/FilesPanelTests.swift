@@ -57,6 +57,63 @@ final class FilesPanelTests: XCTestCase {
     return nil
   }
 
+  /// The line between the tree and the History section is a split's divider, so it can be
+  /// dragged: the section used to be pinned at seven rows, and seven rows is not a reading of a
+  /// log. Being a split item is also what makes folding it the same act as folding the panel.
+  @MainActor
+  func testTheHistorySectionCanBeGivenMoreRoom() throws {
+    let worktree = try makeWorktree(files: ["a.swift"])
+    worktree.history = Git.History(
+      commits: (0..<40).map {
+        Git.Commit(oid: String(format: "%040x", $0 + 1), summary: "Step \($0)", isPushed: false)
+      }, base: "origin/main", forkIndex: 40)
+    let panel = FilesPanelViewController()
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 280, height: 600), styleMask: [.titled],
+      backing: .buffered, defer: false)
+    window.contentView = panel.view
+    window.displayIfNeeded()
+    panel.show(worktree: worktree)
+    window.displayIfNeeded()
+
+    XCTAssertGreaterThan(panel.view.bounds.height, 0, "the panel has a height to divide")
+    XCTAssertGreaterThan(panel.historyHeight, 0, "commits, so the section is showing")
+
+    panel.historyHeight = 320
+    window.displayIfNeeded()
+    XCTAssertEqual(panel.historyHeight, 320, accuracy: 2, "past the old seven-row ceiling")
+  }
+
+  /// A worktree with nothing committed folds the section away, and coming back to one that has
+  /// commits brings it back — unless it was folded by hand, which outlives the switch.
+  @MainActor
+  func testTheSectionFollowsWhetherThereIsAnythingToShow() throws {
+    let empty = try makeWorktree(files: ["a.swift"])
+    let committed = try makeWorktree(files: ["b.swift"])
+    committed.history = Git.History(
+      commits: [
+        Git.Commit(oid: String(repeating: "a", count: 40), summary: "One", isPushed: false)
+      ],
+      base: "origin/main", forkIndex: 1)
+    let panel = FilesPanelViewController()
+    let window = host(panel)
+
+    panel.show(worktree: empty)
+    window.layoutIfNeeded()
+    XCTAssertFalse(panel.isHistoryVisible, "nothing committed: the panel is all tree")
+
+    panel.show(worktree: committed)
+    window.layoutIfNeeded()
+    XCTAssertTrue(panel.isHistoryVisible)
+
+    panel.toggleHistory()
+    XCTAssertFalse(panel.isHistoryVisible)
+    panel.show(worktree: empty)
+    panel.show(worktree: committed)
+    window.layoutIfNeeded()
+    XCTAssertFalse(panel.isHistoryVisible, "folded by hand stays folded across the switch")
+  }
+
   /// A refresh that shrinks the tree — a branch move, the scope narrowed to the changed files —
   /// rebuilds `roots` under rows the view still holds, and the disclosure state is read back off
   /// those rows.

@@ -6,6 +6,7 @@ extension NSToolbarItem.Identifier {
   static let systemUsage = NSToolbarItem.Identifier("systemUsage")
   static let usage = NSToolbarItem.Identifier("usage")
   static let toggleFiles = NSToolbarItem.Identifier("toggleFiles")
+  static let toggleHistory = NSToolbarItem.Identifier("toggleHistory")
   static let filesFilter = NSToolbarItem.Identifier("filesFilter")
   static let filesScope = NSToolbarItem.Identifier("filesScope")
   static let filesSeparator = NSToolbarItem.Identifier("filesSeparator")
@@ -66,8 +67,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// The files panel, for the scripting surface — the panel is rows, which the object model does
   /// not address.
   var filesPanelForScripting: FilesPanelViewController { files.panel }
-  /// The desk, for the scripting surface — `browser` drives a tab the object model does not
-  /// address.
+  /// The desk, for the scripting surface — `browser` and `commit` both drive a tab the object
+  /// model does not address.
   var deskForScripting: WorktreeDeskViewController { files.desk }
   /// The panel's own column, owned here because it is a top-level item now.
   private var filesPanelItem: NSSplitViewItem!
@@ -129,10 +130,14 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     _ = Self.tabCyclingMonitor
 
     window.delegate = self
-    // The four columns' own minimums (rail 280, transcript and desk 640 between them, panel 260)
-    // — narrower than this and the split view starts taking it out of one of them, and both edge
-    // columns carry a toolbar row that stops fitting.
-    window.minSize = NSSize(width: 1180, height: 520)
+    // The columns' own minimums added up — narrower than this and the split view starts taking
+    // it out of one of them, and both edge columns carry a toolbar row that stops fitting. Two
+    // of the three terms are the display mode's, so this is re-read whenever it moves
+    // (`applyToolbarDisplayMode`) rather than being a number written down once.
+    window.minSize = NSSize(
+      width: Self.railMinimumWidth(labelled: false) + Self.columnsMinimumWidth
+        + Self.filesPanelMinimumWidth(labelled: false),
+      height: Self.windowMinimumHeight)
     window.title = "Hukan"
 
     // The three pieces that hand window creation to AppKit's restoration machinery — what
@@ -155,8 +160,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // Wide enough to keep the toolbar's session filter: the traffic lights and the sidebar
     // toggle spend the section's first ~160pt, and an item that no longer fits is not shrunk but
     // moved to the overflow menu — the field vanishes and a ≫ appears at the far end of the bar.
-    // Measured: the filter survives from 280pt down to 272, and drops below that.
-    railItem.minimumThickness = 280
+    // Measured: the filter survives from 280pt down to 272, and drops below that. The number
+    // is the display mode's — see `railMinimumWidth`.
+    railItem.minimumThickness = Self.railMinimumWidth(labelled: false)
     // The rail carries session titles, which run long — cap it high enough to read one at a
     // glance without truncation, not just to hold the dot and a few characters.
     railItem.maximumThickness = 480
@@ -173,12 +179,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
     deskItem = NSSplitViewItem(viewController: files.desk)
     // The desk alone now — the panel used to be inside it, and its 420 covered the pair.
-    deskItem.minimumThickness = 320
+    deskItem.minimumThickness = Self.deskMinimumWidth
     // Collapsible for the same reason the transcript beside it is: a maximized session has to
     // fold it away. Nothing else collapses it, and there is no toggle for it — the way back is
     // the same ⌃⌘M either column's maximize is undone with.
     deskItem.canCollapse = true
-    deskItem.holdingPriority = .init(260)
+    deskItem.holdingPriority = Self.deskHoldingPriority
 
     columnsController.addSplitViewItem(runningItem)
     columnsController.addSplitViewItem(deskItem)
@@ -197,11 +203,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // divider view is as tall as the window).
     filesPanelItem = NSSplitViewItem(sidebarWithViewController: files.panel)
     filesPanelItem.allowsFullHeightLayout = true
-    // Wide enough to hold its own row of the toolbar — the filter, the ± and the toggle — with
-    // room to spare. Narrower and the filter runs out past the panel's leading edge into the
-    // content section, which reads as a field belonging to nothing. Measured: the row clears at
-    // 242pt with the field at 130, so this leaves ~18pt for a wider font to grow into.
-    filesPanelItem.minimumThickness = 260
+    // Wide enough to hold its own row of the toolbar — the filter, the ±, the History fold and the
+    // toggle. Narrower and the filter runs out past the panel's leading edge into the content
+    // section, which reads as a field belonging to nothing. Measured with the field at 130: the
+    // row clears at 280pt and spills by 7 at 271, where the three-item row cleared at 242. So the
+    // number moves whenever an item joins the row, and `ToolbarRowFitsTests` is what says so —
+    // the next button to arrive fails there rather than quietly pushing the field out.
+    filesPanelItem.minimumThickness = Self.filesPanelMinimumWidth(labelled: false)
     filesPanelItem.canCollapse = true
     filesPanelItem.holdingPriority = .init(270)
 
@@ -226,6 +234,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     window.titleVisibility = .hidden
     window.titlebarSeparatorStyle = .line
     window.toolbar = toolbar
+    // `.iconOnly` above is where the bar starts, not where it stays: the toolbar's own
+    // right-click menu offers `Icon and Text`, there is no supported way to decline it, and the
+    // captions it adds are wider than the columns the sections were measured against. So the
+    // mode is followed rather than fought — the property is documented key-value observable,
+    // and every floor the row sets is re-read from it.
+    displayModeObservation = toolbar.observe(\.displayMode, options: [.initial]) {
+      [weak self] _, _ in
+      MainActor.assumeIsolated { self?.applyToolbarDisplayMode() }
+    }
 
     rail.workspace = workspace
     running.workspace = workspace
@@ -328,12 +345,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       self?.arrangeColumnsIfNeeded()
     }
 
-    for splitView in [splitController.splitView, columnsController.splitView] {
+    for splitView in [
+      splitController.splitView, columnsController.splitView, files.panel.splitView,
+    ] {
       observers.append(
         NotificationCenter.default.addObserver(
           forName: NSSplitView.didResizeSubviewsNotification,
           object: splitView, queue: .main
         ) { [weak self] _ in
+          self?.files.panel.dividerMoved()
           self?.recordColumnWidths()
           // The panel also collapses without the toggle — dragged shut, or squeezed out when the
           // column runs short — so the button's state follows the divider, not just the click.
@@ -425,6 +445,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // Two dividers, one per split now that the columns are nested: the rail's is the outer
     // split's, the transcript/desk one the inner split's — and the inner one is measured from
     // the columns' own leading edge, not the window's, so the rail's width is not added in.
+    if workspace.historyHeight > 0 {
+      files.panel.historyHeight = CGFloat(workspace.historyHeight)
+    }
     let widths = workspace.columnWidths
     if widths.count == 3, widths[0] > 0, widths[1] > 0 {
       splitView.setPosition(widths[0], ofDividerAt: 0)
@@ -436,14 +459,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
 
     // Give the desk — the review surface — the most width, but start the rail wide enough to
-    // read a session title, not just its first few characters, and the panel wide enough that a
-    // path reads without truncating at the first directory.
+    // read a session title, not just its first few characters.
     let rail: CGFloat = 300
     // Both defaults give way before the desk and the transcript are squeezed below what they
     // need: ask for all three on a narrow screen and the split view honours the minimums by
     // taking it out of the rail, which lands it on 200 with its filter dropped from the toolbar.
     let available = splitView.bounds.width
-    let panel = max(180, min(280, available - rail - Self.columnsMinimumWidth))
+    let panel = filesPanelItem.minimumThickness
     let running = max(420, (available - rail - panel) * 0.42)
     splitView.setPosition(rail, ofDividerAt: 0)
     splitView.setPosition(available - panel, ofDividerAt: 1)
@@ -452,6 +474,67 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
   /// The transcript and the desk together, as their own items ask for them.
   private static let columnsMinimumWidth: CGFloat = 640
+
+  /// Two rows of the transcript, a composer and a tab strip — the height below which the window
+  /// is no longer a window anyone works in. Unlike the widths, nothing in the toolbar moves it.
+  private static let windowMinimumHeight: CGFloat = 520
+
+  /// What the panel's row of the toolbar needs — see where it is set for the measurement. The
+  /// panel opens at this too: the row defines both, so there is one number rather than a default
+  /// that can drift below the floor it is clamped to.
+  ///
+  /// Two numbers, because the row's width is the display mode's. `Icon and Text` — which the
+  /// bar's own right-click menu offers, and which nothing here can refuse — writes a caption
+  /// under every glyph, and the ± alone goes from 44pt to the width of "Changed Files Only".
+  /// The floor follows the row rather than the row being forbidden its captions: the panel is
+  /// pushed as wide as the mode needs, and the desk pays for a choice its owner made. Measured
+  /// the way the 280 was, and by the same test: the captioned row clears at 366, so 372 carries
+  /// the few points of slack the other number does. `ToolbarRowFitsTests` measures both.
+  static func filesPanelMinimumWidth(labelled: Bool) -> CGFloat { labelled ? 372 : 280 }
+
+  /// The rail's floor, on the same rule. What the captions cost here is the sidebar toggle
+  /// AppKit itself draws — 44pt becomes 58 with "Sidebar" under it — and the section's own
+  /// filter is what runs out of room: a toolbar item that no longer fits is not shrunk but
+  /// moved to the overflow menu, so the field does not narrow, it vanishes. Measured: captioned,
+  /// the filter survives down to 281, which is the one point above the uncaptioned floor that
+  /// makes this a second number at all.
+  static func railMinimumWidth(labelled: Bool) -> CGFloat { labelled ? 288 : 280 }
+
+  /// What the desk is allowed to ask for, and how hard it holds it. A tab whose content resists
+  /// compression harder than this does not get a wider desk — it wins the argument, moves the
+  /// divider and takes the width out of the transcript column beside it, which is what opening a
+  /// commit tab used to do. `CommitTabTests` sets the two against each other and is where the next
+  /// stubborn label fails.
+  static let deskMinimumWidth: CGFloat = 320
+  static let deskHoldingPriority = NSLayoutConstraint.Priority(260)
+
+  /// Held for as long as the window is: dropping it stops the floors following the mode.
+  private var displayModeObservation: NSKeyValueObservation?
+
+  /// The floors the toolbar's row imposes on the columns under it, re-read whenever the display
+  /// mode moves. Captions make every section wider, and a section that outgrows its column is
+  /// what puts the panel's filter out over the desk and drops the rail's into the overflow menu.
+  ///
+  /// The window's own minimum goes up with them, or the split view is asked to honour floors
+  /// that do not fit inside it and takes the difference out of one of the columns — which is
+  /// the spill this exists to prevent, arrived at by another route.
+  /// Whether the captions' floors are what the columns are sitting on — see `recordColumnWidths`.
+  private var isDisplayModeHoldingTheColumns: Bool {
+    filesPanelItem.minimumThickness > Self.filesPanelMinimumWidth(labelled: false)
+  }
+
+  func applyToolbarDisplayMode() {
+    let labelled = window?.toolbar?.displayMode != .iconOnly
+    let panel = Self.filesPanelMinimumWidth(labelled: labelled)
+    let rail = Self.railMinimumWidth(labelled: labelled)
+    guard filesPanelItem.minimumThickness != panel || railItem.minimumThickness != rail else {
+      return
+    }
+    filesPanelItem.minimumThickness = panel
+    railItem.minimumThickness = rail
+    window?.minSize = NSSize(
+      width: rail + Self.columnsMinimumWidth + panel, height: Self.windowMinimumHeight)
+  }
 
   private var isArrangingColumns = true
   private var hasArrangedColumns = false
@@ -462,11 +545,17 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
   private func recordColumnWidths() {
     guard !isArrangingColumns else { return }
-    // Nothing measured while one column has the window is saved: those widths belong to a mode
-    // that is not saved either, and the arrangement to go back to is the one it was entered
-    // from. The zero guard below does not cover it — a maximized desk folds both of the columns
-    // this reads, so they measure nothing and it catches them, but a maximized session leaves
-    // the transcript standing at the full width of the window.
+    // Nothing measured under the captions is saved, because the captions are not: a restored
+    // window's bar starts at icons, and `Icon and Text` pushes the panel out to a width nobody
+    // dragged it to — which the transcript beside it pays for, so the drift is not the panel's
+    // alone. The whole arrangement belongs to a mode that will not be there next time, and the
+    // widths from before it are the ones that will still mean something.
+    guard !isDisplayModeHoldingTheColumns else { return }
+    // Nor anything measured while one column has the window: those widths belong to a mode that
+    // is not saved either, and the arrangement to go back to is the one it was entered from. The
+    // zero guard below does not cover it — a maximized desk folds both of the columns this
+    // reads, so they measure nothing and it catches them, but a maximized session leaves the
+    // transcript standing at the full width of the window.
     guard maximized == nil else { return }
     // The wrapper each split view puts around an item's view, not the item's view itself: a
     // sidebar item insets its content, so recording the inner width and feeding it back to
@@ -484,7 +573,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       filesPanelItem.isCollapsed
       ? (workspace.columnWidths.count == 3 ? workspace.columnWidths[2] : 0) : Double(panelWidth)
     let widths = [Double(railWidth), Double(runningWidth), panel]
-    guard widths.allSatisfy({ $0 > 0 }), widths != workspace.columnWidths else { return }
+    // Zero while the section is folded, which the same rule covers: keep the height it will
+    // reopen at rather than recording the fold as a height of nothing.
+    let history = files.panel.historyHeight > 0 ? Double(files.panel.historyHeight) : nil
+    let historyChanged = history.map { $0 != workspace.historyHeight } ?? false
+    if let history, historyChanged { workspace.historyHeight = history }
+    guard widths.allSatisfy({ $0 > 0 }) else { return }
+    guard widths != workspace.columnWidths || historyChanged else { return }
     workspace.columnWidths = widths
     window?.invalidateRestorableState()
   }
@@ -524,7 +619,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     [
       .sessionFilter, .flexibleSpace, .toggleSidebar, .sidebarTrackingSeparator, .status,
       .flexibleSpace, .usage, .systemUsage, .filesSeparator, .filesFilter, .flexibleSpace,
-      .filesScope, .toggleFiles,
+      .filesScope, .toggleHistory, .toggleFiles,
     ]
   }
 
@@ -591,6 +686,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       item.target = self
       item.action = #selector(toggleFilesScope(_:))
       filesScopeToolbarItem = item
+      updateFilesToolbarItem()
+      return item
+    case .toggleHistory:
+      let item = NSToolbarItem(itemIdentifier: identifier)
+      item.label = "History"
+      // The panel's other half, folded from the same row as the ± beside it — and accented the
+      // same way while it is open, rather than filling a pill.
+      item.image = Self.historyImage(on: false)
+      item.isBordered = false
+      item.target = self
+      item.action = #selector(toggleHistorySection(_:))
+      historyToolbarItem = item
       updateFilesToolbarItem()
       return item
     case .filesSeparator:
@@ -673,8 +780,29 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       // handed back through `view`, so the scope says it is on by wearing the accent colour.
       filesScopeToolbarItem.image = Self.scopeImage(on: files.panel.isChangedOnlyScope)
     }
+    if let historyToolbarItem {
+      historyToolbarItem.isHidden = !shown
+      // Nothing committed in this worktree means nothing to fold — the glyph goes grey rather
+      // than toggling a section that is not drawn, the same way the ± does with nothing changed.
+      historyToolbarItem.isEnabled = files.hasHistory
+      historyToolbarItem.toolTip =
+        files.hasHistory
+        ? (files.isHistoryVisible ? "Hide History" : "Show History")
+        : "Nothing committed in this worktree"
+      historyToolbarItem.image = Self.historyImage(on: files.isHistoryVisible)
+    }
     guard let filesToolbarItem else { return }
     filesToolbarItem.toolTip = shown ? "Hide Files" : "Show Files"
+  }
+
+  /// The History glyph, accented while the section is open — the ± convention, next to it.
+  ///
+  /// A region, not a clock: the button shows and hides the bottom band of this column, which is
+  /// what the glyph draws, and it rhymes with the `sidebar.trailing` of the panel toggle beside
+  /// it. A clock read as the heaviest thing in the bar next to the ±'s thin strokes, and the word
+  /// "History" is already carried by the tooltip and the View menu.
+  private static func historyImage(on: Bool) -> NSImage? {
+    barGlyph("rectangle.bottomthird.inset.filled", description: "History", accented: on)
   }
 
   /// A glyph for the panel's row, sized to sit beside the sidebar toggle AppKit draws at the
@@ -696,6 +824,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     barGlyph("plus.forwardslash.minus", description: "Changed files only", accented: on)
   }
 
+  private weak var historyToolbarItem: NSToolbarItem?
   private weak var statusToolbarItem: NSToolbarItem?
   private var isStatusToolbarItemVisible = true
   private weak var usageToolbarItem: NSToolbarItem?
@@ -1633,6 +1762,21 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     setFilesPanelCollapsed(!filesPanelItem.isCollapsed)
   }
 
+  /// View ▸ History (⌘⇧L). Fold the panel's History section away, or bring it back — revealing
+  /// the panel first if it is hidden, since a fold inside a hidden column would do nothing
+  /// visible.
+  @objc func toggleHistorySection(_ sender: Any?) {
+    // Asked for from a hidden panel, this is a request to see the history — reveal the column and
+    // unfold the section, rather than folding something nobody can see.
+    if filesPanelItem.isCollapsed {
+      files.expandHistorySection()
+      setFilesPanelCollapsed(false)
+    } else {
+      files.toggleHistorySection()
+    }
+    updateFilesToolbarItem()
+  }
+
   /// Collapse or reveal the panel, repainting its toolbar row as the column settles rather than
   /// as the click lands (see `updateFilesToolbarItem`). The completion handler is the backstop:
   /// the divider notifications that drive the row stop arriving once the slide ends, and the
@@ -1932,6 +2076,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     case #selector(toggleFilesPanel(_:)):
       menuItem.title = isFilesPanelVisible ? "Hide Files" : "Show Files"
       return true
+    case #selector(toggleHistorySection(_:)):
+      menuItem.title = files.isHistoryVisible ? "Hide History" : "Show History"
+      return files.hasHistory
     default:
       return true
     }

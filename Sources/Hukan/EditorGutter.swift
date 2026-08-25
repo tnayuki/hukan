@@ -14,7 +14,33 @@ import AppKit
 /// width and overlaps the ruler, so scrolling sideways slides the line under it. An opaque ruler
 /// covers that, which is why the behaviour is rarely seen — and why this one paints, alone among
 /// the desk's views, in the colour that would otherwise show through it.
-final class EditorScrollView: NSScrollView {}
+final class EditorScrollView: NSScrollView {
+  /// A wheel this view cannot act on belongs to whatever encloses it.
+  ///
+  /// The commit tab puts one of these inside every card, where the scrolling that matters is the
+  /// tab's: a card's diff is exactly as tall as its own rows, so it has no vertical range to
+  /// spend — and an inner scroll view that can move horizontally is handed the gesture first and,
+  /// with elasticity off, clamps it and swallows it rather than passing it on. Over a diff,
+  /// nothing scrolled at all. Horizontal scrolling stays here, which is what a long line needs.
+  ///
+  /// The source pane is unaffected: a file long enough to scroll never takes this branch, and one
+  /// short enough to take it has nothing enclosing it to scroll either.
+  ///
+  /// What is handed on has to be a wheel with vertical intent and nothing else — not merely one
+  /// whose vertical delta is the larger of the two. A trackpad gesture opens and closes with
+  /// events carrying no delta at all, and `0 >= 0` handed those away too: the scroll view saw the
+  /// middle of a sideways gesture but never its end, so the rubber band it had stretched was
+  /// never let go and the text stayed parked off the side of its own content.
+  override func scrollWheel(with event: NSEvent) {
+    let canScrollVertically = (documentView?.frame.height ?? 0) > contentView.bounds.height + 0.5
+    let verticalOnly = event.scrollingDeltaX == 0 && event.scrollingDeltaY != 0
+    if !canScrollVertically, verticalOnly {
+      nextResponder?.scrollWheel(with: event)
+      return
+    }
+    super.scrollWheel(with: event)
+  }
+}
 
 extension NSScrollView {
   /// Scroll to the document's leading edge, at `y`. Not to x = 0: under AppKit's ruler layout
@@ -65,10 +91,7 @@ final class EditorGutter: NSRulerView {
 
   private let numberFont = NSFont.monospacedDigitSystemFont(
     ofSize: NSFont.smallSystemFontSize, weight: .regular)
-  /// UTF-16 offsets of every line's first character, rebuilt lazily after the text changes —
-  /// the map from a layout fragment back to the 1-based line number it starts.
-  private var lineStarts: [Int] = [0]
-  private var lineStartsAreStale = true
+  private var lines = LineIndex()
 
   private let barWidth: CGFloat = 3
   private let padding: CGFloat = 4
@@ -118,7 +141,7 @@ final class EditorGutter: NSRulerView {
   }
 
   @objc private func textStorageDidChange() {
-    lineStartsAreStale = true
+    lines.invalidate()
     // The storage is mid-edit here; thickness and redraw wait for the pass to end.
     DispatchQueue.main.async { [weak self] in
       self?.updateThickness()
@@ -127,32 +150,13 @@ final class EditorGutter: NSRulerView {
   }
 
   private func rebuildLineStartsIfNeeded() {
-    guard lineStartsAreStale, let text = textView?.string else { return }
-    lineStartsAreStale = false
-    let string = text as NSString
-    var starts = [0]
-    var location = 0
-    while location < string.length {
-      location = NSMaxRange(string.lineRange(for: NSRange(location: location, length: 0)))
-      if location < string.length { starts.append(location) }
-    }
-    lineStarts = starts
-  }
-
-  private func lineNumber(forOffset offset: Int) -> Int {
-    // The rightmost line start at or before the offset; starts are sorted, so binary search.
-    var low = 0
-    var high = lineStarts.count - 1
-    while low < high {
-      let mid = (low + high + 1) / 2
-      if lineStarts[mid] <= offset { low = mid } else { high = mid - 1 }
-    }
-    return low + 1
+    guard let text = textView?.string else { return }
+    lines.rebuildIfNeeded(from: text as NSString)
   }
 
   private func updateThickness() {
     rebuildLineStartsIfNeeded()
-    let digits = max(2, String(lineStarts.count).count)
+    let digits = max(2, String(lines.count).count)
     let digitWidth = ("8" as NSString).size(withAttributes: [.font: numberFont]).width
     let thickness = ceil(padding + CGFloat(digits) * digitWidth + 6 + barWidth + padding)
     guard abs(thickness - ruleThickness) > 0.5 else { return }
@@ -189,7 +193,7 @@ final class EditorGutter: NSRulerView {
       if frame.minY + inset.height > visible.maxY { return false }
       let offset = contentManager.offset(
         from: contentManager.documentRange.location, to: fragment.rangeInElement.location)
-      let line = lineNumber(forOffset: offset)
+      let line = lines.line(at: offset)
       let firstLineHeight = fragment.textLineFragments.first?.typographicBounds.height
       self.rows.append((line, top, frame.height))
       draw(
@@ -379,5 +383,45 @@ final class DiffPeekView: NSView {
     }
     NSColor.separatorColor.setStroke()
     card.stroke()
+  }
+}
+
+/// A text view's line starts: the map from a layout fragment's offset back to the line number it
+/// begins on. Both of the desk's rulers need it — the editor's, whose rows are the file's lines,
+/// and the commit tab's, whose rows are the diff's — and both rebuild it lazily, after the text
+/// has changed and before the next draw.
+struct LineIndex {
+  private var starts: [Int] = [0]
+  private var isStale = true
+
+  /// How many lines the text has.
+  var count: Int { starts.count }
+
+  mutating func invalidate() { isStale = true }
+
+  mutating func rebuildIfNeeded(from string: NSString) {
+    guard isStale else { return }
+    isStale = false
+    var result = [0]
+    var location = 0
+    while location < string.length {
+      location = NSMaxRange(string.lineRange(for: NSRange(location: location, length: 0)))
+      if location < string.length { result.append(location) }
+    }
+    starts = result
+  }
+
+  /// Where a 1-based line begins.
+  func start(of line: Int) -> Int { starts[max(0, min(starts.count - 1, line - 1))] }
+
+  /// The 1-based line an offset falls on — the rightmost start at or before it, by binary search.
+  func line(at offset: Int) -> Int {
+    var low = 0
+    var high = starts.count - 1
+    while low < high {
+      let mid = (low + high + 1) / 2
+      if starts[mid] <= offset { low = mid } else { high = mid - 1 }
+    }
+    return low + 1
   }
 }

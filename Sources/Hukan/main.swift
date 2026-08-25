@@ -274,6 +274,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     viewMenu.addItem(
       withTitle: "Hide Files",
       action: #selector(WorkspaceWindowController.toggleFilesPanel(_:)), keyEquivalent: "E")
+    // The panel's other half, folded away or brought back. ⌘⇧L, next to ⌘⇧E for its neighbour.
+    viewMenu.addItem(
+      withTitle: "Hide History",
+      action: #selector(WorkspaceWindowController.toggleHistorySection(_:)), keyEquivalent: "L")
     viewMenu.addItem(.separator())
     let sidebar = viewMenu.addItem(
       withTitle: "Hide Sidebar",

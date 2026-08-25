@@ -199,14 +199,6 @@ extension Workspace {
   /// every tracked file, and the third walks the log; bundling all three meant the tree waited on
   /// the diff, so a worktree opened to an empty panel for as long as the slowest of the three
   /// took. Each hop calls `completion`, so the window redraws with what has arrived.
-  /// A worktree's first read, in two hops rather than one: which files there are, and then what
-  /// has moved in them.
-  ///
-  /// The panel cannot draw anything until the first of those lands, and it is much the cheaper —
-  /// the index, already sorted. The second measures the working tree against HEAD, which stats
-  /// every tracked file; bundling the two meant the tree waited on the diff, so a worktree opened
-  /// to an empty panel for as long as the slower of them took. Each hop calls `completion`, so
-  /// the window redraws with what has arrived.
   func loadFiles(worktreeID: UUID, completion: @escaping () -> Void) {
     guard let worktree = worktree(id: worktreeID) else { return completion() }
     // The same guard `refreshFiles` has, and for the same reason — one read at a time per
@@ -224,6 +216,7 @@ extension Workspace {
     }
     loadInFlight.insert(worktreeID)
     let url = worktree.url
+    let limit = worktree.historyLimit
     DispatchQueue.global(qos: .userInitiated).async {
       let tracked = Git.trackedFiles(at: url)
       DispatchQueue.main.async {
@@ -238,8 +231,10 @@ extension Workspace {
       // Uncommitted work only: measured against HEAD, the same for the main checkout and a
       // linked worktree. "Changed" is what has not been committed yet, not the whole branch.
       let changed = Git.changedFiles(at: url, since: "HEAD")
+      let history = Git.history(at: url, limit: limit)
       DispatchQueue.main.async { [weak self] in
         worktree.changedFiles = changed
+        worktree.history = history
         completion()
         guard let self else { return }
         self.loadInFlight.remove(worktreeID)
@@ -248,6 +243,32 @@ extension Workspace {
         if self.loadPending.remove(worktreeID) != nil {
           self.loadFiles(worktreeID: worktreeID, completion: completion)
         }
+      }
+    }
+  }
+
+  /// One more page of the log, and *only* that: the section's paging used to go through
+  /// `loadFiles`, which re-read the tracked files and re-measured the working tree against HEAD
+  /// every time — the most expensive read of the three, and the one with nothing to do with the
+  /// history. Scrolling a large repository therefore cost a full working-tree diff per page.
+  func loadMoreHistory(worktreeID: UUID, completion: @escaping () -> Void) {
+    guard let worktree = worktree(id: worktreeID), worktree.history.truncated else {
+      return completion()
+    }
+    guard !historyInFlight.contains(worktreeID) else { return completion() }
+    historyInFlight.insert(worktreeID)
+    let url = worktree.url
+    worktree.historyLimit += Git.historyPage
+    let limit = worktree.historyLimit
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let history = Git.history(at: url, limit: limit)
+      DispatchQueue.main.async {
+        self?.historyInFlight.remove(worktreeID)
+        guard let worktree = self?.worktree(id: worktreeID), worktree.history != history else {
+          return completion()
+        }
+        worktree.history = history
+        completion()
       }
     }
   }
@@ -342,18 +363,26 @@ extension Workspace {
       return
     }
     guard let url = worktree(id: worktreeID)?.url else { return }
+    let limit = worktree(id: worktreeID)?.historyLimit ?? Git.historyPage
     refreshInFlight.insert(worktreeID)
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let changed = Git.changedFiles(at: url, since: "HEAD")
       let tracked = Git.trackedFiles(at: url)
+      // The commit that clears the changed set is the one that adds a row to the History
+      // section, so the two are read together and compared together — a commit moves only the
+      // second, and the equality test has to see that as a change or the section would keep
+      // drawing the list from before it.
+      let history = Git.history(at: url, limit: limit)
       DispatchQueue.main.async {
         guard let self else { return }
         self.refreshInFlight.remove(worktreeID)
         if let worktree = self.worktree(id: worktreeID),
           worktree.changedFiles != changed || worktree.trackedFiles != tracked
+            || worktree.history != history
         {
           worktree.changedFiles = changed
           worktree.trackedFiles = tracked
+          worktree.history = history
           worktree.hasLoadedFiles = true
           self.onWorktreeFilesChanged?(worktreeID, moved)
         }

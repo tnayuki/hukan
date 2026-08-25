@@ -173,8 +173,8 @@ final class WorktreeSyncTests: XCTestCase {
   }
 
   /// The first read lands in two hops so the panel can draw a tree before the working-tree diff
-  /// is in: the tree only needs the index, which is the cheaper of the two.
-  func testTheFileListArrivesBeforeTheDiff() throws {
+  /// and the log are in: the tree only needs the index, which is the cheapest of the three.
+  func testTheFileListArrivesBeforeTheDiffAndTheLog() throws {
     let (main, _) = try makeRepositoryWithWorktree()
     try "edited\n".write(
       to: main.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
@@ -182,11 +182,12 @@ final class WorktreeSyncTests: XCTestCase {
     workspace.addWorktree(main)
     let worktree = try XCTUnwrap(workspace.worktree(atPath: main.path))
 
-    var seen: [(tracked: Int, changed: Int)] = []
+    var seen: [(tracked: Int, changed: Int, commits: Int)] = []
     let read = expectation(description: "both hops")
     read.expectedFulfillmentCount = 2
     workspace.loadFiles(worktreeID: worktree.id) {
-      seen.append((worktree.trackedFiles.count, worktree.changedFiles.count))
+      seen.append(
+        (worktree.trackedFiles.count, worktree.changedFiles.count, worktree.history.commits.count))
       read.fulfill()
     }
     waitForExpectations(timeout: 10)
@@ -194,8 +195,10 @@ final class WorktreeSyncTests: XCTestCase {
     XCTAssertEqual(seen.count, 2, "the window is told twice, so it draws what has arrived")
     XCTAssertEqual(seen[0].tracked, 1, "the file list is the first hop")
     XCTAssertEqual(seen[0].changed, 0)
+    XCTAssertEqual(seen[0].commits, 0)
     XCTAssertTrue(worktree.hasLoadedFiles, "and the panel is told to stop saying it is reading")
     XCTAssertEqual(seen[1].changed, 1, "what moved is the second")
+    XCTAssertEqual(seen[1].commits, 1)
   }
 
   /// The completion is the window's redraw, and a redraw asks the panel for its files again — so
