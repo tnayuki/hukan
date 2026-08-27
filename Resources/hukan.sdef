@@ -247,6 +247,20 @@
             <result type="text"/>
         </command>
 
+        <command name="completions" code="HuknCplt" hidden="yes" description="Report the composer's slash-command list, or drive it, for automated checks">
+            <cocoa class="CompletionsCommand"/>
+            <parameter name="typing" code="Typg" type="text" optional="yes" description="replace the composer's text with this, as typing would">
+                <cocoa key="typing"/>
+            </parameter>
+            <parameter name="moving" code="Movg" type="integer" optional="yes" description="walk the selection by this many rows, negative for up">
+                <cocoa key="moving"/>
+            </parameter>
+            <parameter name="accepting" code="Acpt" type="boolean" optional="yes" description="take the selected row, as Return would; returns the composer's text">
+                <cocoa key="accepting"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
         <command name="commit" code="HuknCmit" hidden="yes" description="Open a commit on the selected worktree's desk, or report and drive the tab already showing one, for automated checks">
             <cocoa class="CommitTabCommand"/>
             <direct-parameter type="text" optional="yes" description="the oid to open; omit to report the tab already showing"/>

@@ -71,6 +71,29 @@ struct ClaudeModel {
   }
 }
 
+/// One slash command the engine advertises in its initialize reply — its own built-ins (`clear`,
+/// `compact`, `model`) alongside every skill and user command it found on disk, in one list.
+/// Reading it from the engine is the same stance as the model roster: the set of commands is the
+/// engine's to know, and a table here would be a second copy that goes stale the moment a skill
+/// is added.
+struct ClaudeCommand {
+  let name: String
+  let description: String
+  /// The engine's own hint at what follows the name (`<model>`, `[interval] [prompt]`), shown
+  /// beside the completion. Empty for a command that takes no argument.
+  let argumentHint: String
+  /// Alternate names that resolve to the same command (`/cost` and `/stats` both reach `/usage`).
+  /// Matched by the completion, but never listed on their own — an alias is a second way to say
+  /// one thing, not a second thing.
+  let aliases: [String]
+
+  /// Whether this belongs in a completion list at all. The engine's list carries a few entries
+  /// that exist for a host it is embedded in rather than for a person to type — a leading `__`
+  /// marks them — and hukan's own interception of `/login` and `/logout` means those two are
+  /// added by hand rather than read from here.
+  var isTypeable: Bool { !name.hasPrefix("__") }
+}
+
 /// Keeps `claude -p` resident and talks to it both ways over stream-json.
 ///
 /// No PTY. stream-json is a pipe protocol, and the CLI itself treats a non-TTY stdout
@@ -111,6 +134,8 @@ final class ClaudeSession {
   var onExit: ((Int32) -> Void)?
   /// The model roster carried by the initialize reply. Fires once, on the main thread.
   var onModels: (([ClaudeModel]) -> Void)?
+  /// The slash-command list carried by the same reply. Fires once, on the main thread.
+  var onCommands: (([ClaudeCommand]) -> Void)?
   /// The `initialize` reply came back an error, so the engine never became ready — most often
   /// because the account is signed out (the OAuth token expired or `/logout` was run elsewhere).
   /// Carries the engine's message. Fires on the main thread; the session is dead after this.
@@ -666,6 +691,23 @@ final class ClaudeSession {
       }
       if !models.isEmpty {
         DispatchQueue.main.async { [weak self] in self?.onModels?(models) }
+      }
+    }
+    // The slash-command list rides in the same reply, beside the roster. Built-ins and skills
+    // arrive together and undistinguished, which is exactly what a completion list wants.
+    if let inner = response["response"] as? [String: Any],
+      let raw = inner["commands"] as? [[String: Any]]
+    {
+      let commands = raw.compactMap { entry -> ClaudeCommand? in
+        guard let name = entry["name"] as? String else { return nil }
+        return ClaudeCommand(
+          name: name,
+          description: entry["description"] as? String ?? "",
+          argumentHint: entry["argumentHint"] as? String ?? "",
+          aliases: entry["aliases"] as? [String] ?? [])
+      }
+      if !commands.isEmpty {
+        DispatchQueue.main.async { [weak self] in self?.onCommands?(commands) }
       }
     }
     writeQueue.async { [weak self] in

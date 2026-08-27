@@ -138,6 +138,10 @@ Claude Code's own titles. A session not yet reattached is marked `detached` and 
 selection; one another process already holds shows greyed and cannot be started, but still reads
 and searches, and returns the moment that process exits.
 
+**Slash commands.** A `/` at the head of the composer opens the engine's own command list — its
+built-ins beside every skill and user command it found — filtered as you type, taken with `⏎` or
+`⇥`. A skill added on disk shows up once an engine has restarted; nothing here keeps a copy.
+
 **Markdown.** Rendered on both sides of the conversation, with what you typed tinted and indented.
 
 **Search.** One field for the rail, with the same two gestures as the panel's: typing filters the

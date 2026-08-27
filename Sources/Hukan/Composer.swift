@@ -10,11 +10,19 @@ final class ComposerTextView: NSTextView {
   /// Esc pressed in the field. Returns true if it was consumed (a turn was running, so Esc
   /// interrupted it like the stop button); false lets the text view do its normal Esc handling.
   var onCancel: (() -> Bool)?
+  /// The completion list's first refusal on the keys it needs — the arrows to walk it, Return
+  /// and Tab to take a row, Esc to put it away. Returns true when it used the key. Every one of
+  /// these already means something in the composer, so the list only ever borrows them while it
+  /// is open, and gives each back the moment it closes.
+  var onCompletionKey: ((CompletionKey) -> Bool)?
 
   /// Esc is the keyboard twin of the in-field stop button: while a turn runs it interrupts it,
   /// so you never reach for the mouse to stop an agent. With nothing running it falls through to
-  /// NSTextView's own behaviour (dismiss completion, etc.).
+  /// NSTextView's own behaviour (dismiss completion, etc.). An open completion list comes first:
+  /// Esc there means "put this away", and interrupting the turn as well would be two things at
+  /// once from one press.
   override func cancelOperation(_ sender: Any?) {
+    if onCompletionKey?(.dismiss) == true { return }
     if onCancel?() == true { return }
     super.cancelOperation(sender)
   }
@@ -23,9 +31,26 @@ final class ComposerTextView: NSTextView {
     let mods = NSApp.currentEvent?.modifierFlags ?? []
     if mods.contains(.shift) || mods.contains(.option) {
       super.insertNewline(sender)
-    } else {
-      onSend?()
+      return
     }
+    // A list on screen is what Return is answering; sending would post a half-typed command name.
+    if onCompletionKey?(.accept) == true { return }
+    onSend?()
+  }
+
+  override func insertTab(_ sender: Any?) {
+    if onCompletionKey?(.accept) == true { return }
+    super.insertTab(sender)
+  }
+
+  override func moveUp(_ sender: Any?) {
+    if onCompletionKey?(.up) == true { return }
+    super.moveUp(sender)
+  }
+
+  override func moveDown(_ sender: Any?) {
+    if onCompletionKey?(.down) == true { return }
+    super.moveDown(sender)
   }
 
   override func didChangeText() {
@@ -156,6 +181,15 @@ final class ComposerInput: NSView {
   /// AppKit focuses the text view itself, not this wrapper.
   var focusTarget: NSView { textView }
 
+  /// What a `/` in this field completes against. Set from the session on screen; empty until
+  /// some engine in the window has reported its list, and a field with an empty list simply
+  /// never opens one.
+  var commands: [ClaudeCommand] = [] {
+    didSet { updateCompletion() }
+  }
+
+  private let completionPanel = CommandCompletionPanel()
+
   /// While a turn is in flight the stop button rides in the field's right edge; otherwise it is
   /// hidden and the field reads as a plain compose box. The thinking indicator is not here — it
   /// floats at the foot of the transcript (see `RunningColumnViewController`), where it reads as
@@ -189,6 +223,9 @@ final class ComposerInput: NSView {
     set {
       textView.string = newValue
       recomputeHeight()
+      // Set from outside — a session switched, a queued line reopened — so whatever the list was
+      // showing belonged to the text that just left.
+      completionPanel.dismiss()
     }
   }
 
@@ -214,8 +251,25 @@ final class ComposerInput: NSView {
     textView.onSend = { [weak self] in self?.commit() }
     textView.onChange = { [weak self] in
       self?.recomputeHeight()
+      self?.updateCompletion()
       self?.onChange?()
     }
+    textView.onCompletionKey = { [weak self] key in
+      guard let self, self.completionPanel.isVisible else { return false }
+      switch key {
+      case .up:
+        self.completionPanel.move(-1)
+      case .down:
+        self.completionPanel.move(1)
+      case .dismiss:
+        self.completionPanel.dismiss()
+      case .accept:
+        guard let command = self.completionPanel.selected else { return false }
+        self.take(command)
+      }
+      return true
+    }
+    completionPanel.onPick = { [weak self] command in self?.take(command) }
     textView.onAttach = { [weak self] paths in self?.attach(paths) }
     // Esc mirrors the stop button, but only while a turn is in flight — otherwise let the text
     // view keep Esc for its own use (and never swallow it into a silent no-op).
@@ -303,7 +357,67 @@ final class ComposerInput: NSView {
     recomputeHeight()
   }
 
+  // MARK: - Slash-command completion
+
+  /// Open, refilter or close the list to match what is in the field. Driven by every keystroke,
+  /// which is affordable because the list is in memory and the match is a substring — the same
+  /// reasoning as the files panel's filter.
+  private func updateCompletion() {
+    guard isEnabled, !commands.isEmpty,
+      let query = CommandCompletion.query(in: textView.string)
+    else {
+      completionPanel.dismiss()
+      return
+    }
+    completionPanel.present(CommandCompletion.matches(query, in: commands), below: self)
+  }
+
+  /// Put a picked command in the field, caret at the end. Written through the text view's own
+  /// edit path rather than by assigning `string`, so ⌘Z takes it back the way it takes back
+  /// anything else typed here.
+  private func take(_ command: ClaudeCommand) {
+    let all = NSRange(location: 0, length: (textView.string as NSString).length)
+    let replacement = CommandCompletion.completion(for: command)
+    if textView.shouldChangeText(in: all, replacementString: replacement) {
+      textView.replaceCharacters(in: all, with: replacement)
+      textView.didChangeText()
+    }
+    textView.setSelectedRange(NSRange(location: (replacement as NSString).length, length: 0))
+    // After the edit, not before: `didChangeText` re-runs the filter, and a name with no argument
+    // still matches itself — the list would reopen on the row just taken.
+    completionPanel.dismiss()
+  }
+
+  /// Scripting seam: put text in the field the way a keystroke does — through the text view's
+  /// own change path, so the list opens, filters and closes exactly as it would for a person
+  /// rather than through a shortcut only a script can take.
+  func typeForScripting(_ text: String) {
+    let all = NSRange(location: 0, length: (textView.string as NSString).length)
+    guard textView.shouldChangeText(in: all, replacementString: text) else { return }
+    textView.replaceCharacters(in: all, with: text)
+    textView.didChangeText()
+    textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+  }
+
+  /// Drive the open list from a script, the way the arrow keys and Return do.
+  @discardableResult
+  func completionKeyForScripting(_ key: CompletionKey) -> Bool {
+    textView.onCompletionKey?(key) ?? false
+  }
+
+  /// What the list is showing, one row a line, with `▸` on the selected one.
+  var completionReportForScripting: String { completionPanel.report }
+
+  /// The list must not outlive the field it belongs to: it is a panel over the window, so a
+  /// column that goes away, a session switched, or the window losing key would otherwise leave
+  /// it floating with nothing behind it.
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    if window == nil { completionPanel.dismiss() }
+  }
+
   private func commit() {
+    completionPanel.dismiss()
     let text = textView.string
     // A message may be attachments alone (a screenshot with no words), so empty text is not a
     // bar to sending when something is attached.

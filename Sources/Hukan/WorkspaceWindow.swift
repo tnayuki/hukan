@@ -70,6 +70,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// The desk, for the scripting surface — `browser` and `commit` both drive a tab the object
   /// model does not address.
   var deskForScripting: WorktreeDeskViewController { files.desk }
+  /// The composer, for the scripting surface — the completion list is rows over a floating
+  /// panel, so `completions` is the only way to read one back without clicking at coordinates.
+  var composerForScripting: ComposerInput { running.composerForScripting }
   /// The panel's own column, owned here because it is a top-level item now.
   private var filesPanelItem: NSSplitViewItem!
   /// The other three columns, held for the same reason: whichever column is being given the
@@ -845,6 +848,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// state change, so a single turn calls `refreshUsage` dozens of times — while the figures only
   /// move when the API answers. The interval collapses that burst; it is no longer paying for a
   /// process, which is what the old `/usage` probe's 45 seconds were for.
+  /// The slash commands the last engine to start reported. See `attach` for why it is one list
+  /// per window and why it is never saved.
+  private var commandRoster: [ClaudeCommand] = []
+
   private var usageInFlight = false
   private var lastUsageRead: Date?
   private static let usageInterval: TimeInterval = 5
@@ -1449,6 +1456,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     // Held changes must reach the rail even for a session created before any discovery pass wires
     // it (`discoverSessions` wires the rest). Reload is enough — the row's grey rides on `heldByPID`.
+    // One list for the window. The commands are the engine's, and every session in a window is
+    // talking to the same install of it, so the first engine up answers for the rest — which is
+    // what makes a `/` typed into a session that has never started complete anything at all.
+    // Not saved with the window: a list read at launch would be a stale answer for as long as the
+    // window lived, and a completion offering a skill that has since been removed is worse than
+    // no completion. It costs one session's initialize to be right again.
+    session.onCommands = { [weak self] commands in
+      guard let self else { return }
+      self.commandRoster = commands
+      for other in self.workspace.sessions { other.seedCommands(commands) }
+    }
+    session.seedCommands(commandRoster)
     session.onHeldChange = { [weak self] in self?.reload() }
     session.onEnterWorktree = { [weak self] url in self?.moveSession(session, to: url) }
     session.onExitWorktree = { [weak self] url in self?.returnSession(session, to: url) }

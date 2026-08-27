@@ -217,6 +217,33 @@ final class FilesPanelCommand: NSScriptCommand {
   }
 }
 
+/// `completions` reports the composer's slash-command list, and `typing`/`moving`/`accepting`
+/// drive it. Hidden, like `files` and `commit`, and for the same reason: the list is rows on a
+/// floating panel, so checking that a `/` opened it — and that Return took the right row — would
+/// otherwise mean clicking at coordinates.
+@objc(CompletionsCommand)
+final class CompletionsCommand: NSScriptCommand {
+  override func performDefaultImplementation() -> Any? {
+    guard let controller = frontController() else { return fail("no window") }
+    let composer = controller.composerForScripting
+    if let text = argument("typing", as: String.self) {
+      composer.typeForScripting(text)
+      return composer.completionReportForScripting
+    }
+    if let delta = argument("moving", as: Int.self) {
+      for _ in 0..<abs(delta) {
+        composer.completionKeyForScripting(delta < 0 ? .up : .down)
+      }
+      return composer.completionReportForScripting
+    }
+    if argument("accepting", as: Bool.self) == true {
+      guard composer.completionKeyForScripting(.accept) else { return fail("no list open") }
+      return composer.stringValue
+    }
+    return composer.completionReportForScripting
+  }
+}
+
 /// `browser "<address>"` opens or focuses a web tab on the selected worktree's desk, taking the
 /// address bar's own reading of the text — so a script exercises the same address-or-search rule a
 /// person does. With nothing to open it reports the worktree's web tabs, one line each. Hidden,

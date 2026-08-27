@@ -15,6 +15,8 @@ final class RunningColumnViewController: NSViewController {
   private let textView: TranscriptTextView
   private let input = ComposerInput()
   var inputField: NSView { input.focusTarget }
+  /// The composer itself, for the `completions` scripting verb.
+  var composerForScripting: ComposerInput { input }
   private let bottomArea = NSView()
   private let body = NSView()
   /// Pins the top of the composer stack; swapped to sit below the approval card when one shows.
@@ -758,6 +760,12 @@ final class RunningColumnViewController: NSViewController {
     // A held session is viewable but not sendable — another process owns its engine, so a send
     // would only be refused. Disable the field (the row is still selectable for reading/searching).
     input.isEnabled = attached != nil && attached?.heldByPID == nil
+    // The engine's list, plus the two commands hukan runs itself and so is never told about. The
+    // engine's half is empty until some engine in this window has answered — which is what the
+    // seeded roster on a not-yet-started session is for — while hukan's own two are always
+    // offered, because the session that has no engine list is exactly the signed-out one, where
+    // `/login` is the only command that would help.
+    input.commands = (attached?.availableCommands ?? []) + CommandCompletion.intercepted
     titleLabel.stringValue =
       attached?.title
       ?? (workspace.selectedSession == nil

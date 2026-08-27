@@ -495,6 +495,23 @@ Workspace (one window)
   outliving its turn is the signal that the work stopped half-done** — and that signal is free,
   where a rail badge for it would not be: the rail's one signal is the dot, and an agent with
   unfinished tasks is already the pulsing row.
+- **A `/` at the head of the composer completes, and the list is the engine's.** Its built-ins
+  and every skill and user command it found arrive together in the startup reply, undistinguished
+  — which is exactly what a completion list wants, since the person typing `/` is not asking
+  where a command came from. So there is no table of commands here and no directory to scan, and
+  a skill added on disk is offered the moment an engine has restarted. Typing filters, Return or
+  Tab takes the row, Escape puts it away — each of those already means something in the composer,
+  so the list only borrows them while it is open, and Escape reaches it before it reaches the
+  turn it would otherwise interrupt. A slash command is the whole message or it is nothing: the
+  name runs to the first space, after which what is being typed is the argument and the list has
+  nothing left to say, and a `/` anywhere but the first character is a path. **One list per
+  window, never saved.** Every session in a window talks to the same install, so the first engine
+  up answers for the rest — which is what makes a `/` typed into a session that has never started
+  complete anything at all — while a list read at launch would be a stale answer for as long as
+  the window lived, and offering a skill that has since been removed is worse than offering
+  nothing. `/login` and `/logout` are the exception hukan supplies itself: the engine lists only
+  commands it would run, and those two it hands back to be run in a terminal, so the one command
+  a signed-out session needs is the one its engine could never have named.
 - **A conversation forks or goes back; it is not edited.** Every message you sent carries a quiet
   `…` once there is something above it, and the two things behind it are the two ways to undo an
   exchange. **Fork** opens a sibling session in the same worktree holding everything above that
@@ -777,6 +794,7 @@ because that is where a summary truncates, and the commit tab by `CommitSnapshot
 standing behind them. Both draw through `displayIgnoringOpacity` into their own context rather
 than `cacheDisplay`, which fills an opaque background and drops layer-backed subviews (it returned
 the History rows under a blank strip where the header's title should have been).
+The command list is pinned by `CompletionSnapshotTests` (`completions.png`, `…PREVIEW=completions`).
 
 ### Verifying the GUI: AppleScript, not coordinates
 
@@ -791,6 +809,7 @@ osascript -e 'tell application "Hukan Dev" to send "..." to (selected session of
 osascript -e 'tell application "Hukan Dev" to get transcript of (selected session of window 1)'
 osascript -e 'tell application "Hukan Dev" to get history of worktree "main" of repository 1 of window 1'
 osascript -e 'tell application "Hukan Dev" to commit "<full oid>"'   # then: commit / commit toggling 3 / commit finding "…"'
+osascript -e 'tell application "Hukan Dev" to completions typing "/co"'   # then: completions moving 1 / completions accepting true
 ```
 
 The session verbs address the session as the receiver — `stop session X`, or `tell session X to
@@ -807,7 +826,11 @@ for a human decision — `approve`/`deny` a pending tool call (`approve session 
 only under `HUKAN_SCRIPTING_GUARDED=1`, since a session's own agent can reach `osascript` and would
 otherwise approve its own calls. The files panel has a hidden verb for the same reason the tabs
 do — it is rows and not text, so `files` reports what the panel is showing and which of the two
-gestures put it there, and `filtering`/`searching` run them. `selected sessions` is another
-of that kind, and it reads *and writes*: a multi-selection is rows on a list with nothing to read
-back, and a property that could only be read would leave the half worth checking — that a batch
-survives the reload every FSEvents batch triggers — reachable only by ⌘-clicking at coordinates.
+gestures put it there, and `filtering`/`searching` run them. `completions` is the third of that
+kind: the command list is rows on a panel floating over the window, so checking that a `/` opened
+it — and that `⏎` took the row the arrows had reached — is otherwise a click at coordinates.
+`typing` goes through the text view's own edit path rather than a shortcut only a script can
+take, so what it exercises is the list a person would get. `selected sessions` is the fourth, and
+it reads *and writes*: a multi-selection is rows on a list with nothing to read back, and a
+property that could only be read would leave the half worth checking — that a batch survives the
+reload every FSEvents batch triggers — reachable only by ⌘-clicking at coordinates.

@@ -222,6 +222,12 @@ final class AgentSession {
   /// the session has connected; the picker falls back to a small fixed list until then.
   private(set) var availableModels: [ClaudeModel] = []
 
+  /// The slash commands the engine advertised for this session, from the same reply — its
+  /// built-ins and every skill and user command it found, in one list. Empty until the session
+  /// has connected, which is why the window keeps the last one it saw and seeds it in: the moment
+  /// a completion is most wanted is the first `/` typed into a session that has not started yet.
+  private(set) var availableCommands: [ClaudeCommand] = []
+
   /// Type-ahead held while the agent is mid-turn. Writing a `user` message into a turn the
   /// engine is still working would race it; instead these queue and flush one at a time as
   /// each turn ends. Shown above the composer so a queued line is never invisible.
@@ -288,6 +294,10 @@ final class AgentSession {
   /// real TTY for their OAuth/browser flow and cannot run over stream-json, so the window runs
   /// them in a terminal and reconnects the session afterwards.
   var onLoginRequested: ((String) -> Void)?
+  /// The engine reported its slash commands. The window keeps them so every other session —
+  /// including one that has never started — can complete against the same list.
+  var onCommands: (([ClaudeCommand]) -> Void)?
+
   /// This session wants to send but has no live process — a new session never started, or a
   /// restored one only ever looked at. The window resolves the worktree and spawns `claude`.
   /// Start is deferred to here (the first send), so creating or selecting a session never spawns
@@ -551,6 +561,11 @@ final class AgentSession {
     session.onEvent = { [weak self] event in self?.apply(event) }
     session.onModels = { [weak self] models in
       self?.availableModels = models
+      self?.onStateChange?()
+    }
+    session.onCommands = { [weak self] commands in
+      self?.availableCommands = commands
+      self?.onCommands?(commands)
       self?.onStateChange?()
     }
     session.onInitializeFailed = { [weak self] _ in self?.handleSignedOut() }
@@ -947,6 +962,14 @@ final class AgentSession {
   func seedModels(_ models: [ClaudeModel]) {
     guard availableModels.isEmpty, !models.isEmpty else { return }
     availableModels = models
+  }
+
+  /// Show a command list this session has not been told yet — the one the window last heard from
+  /// any of its sessions. Same rule as the roster: never overwrite a live list, because the
+  /// engine's own answer is about *this* worktree and a seeded one is only a good guess.
+  func seedCommands(_ commands: [ClaudeCommand]) {
+    guard availableCommands.isEmpty, !commands.isEmpty else { return }
+    availableCommands = commands
   }
 
   /// Answer the approval on screen. Denying ends the agent's turn rather than the session.
