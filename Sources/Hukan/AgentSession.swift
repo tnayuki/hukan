@@ -651,6 +651,12 @@ final class AgentSession {
       isDetached = false
       if !holdIdle { state = .running }
       onStateChange?()
+      // Asked here rather than off the engine's `system/init`, which is a *turn* starting and so
+      // never arrives for a session that is up but has not been spoken to. The request queues
+      // behind the initialize handshake on its own, so this is simply "as soon as there is
+      // anyone to ask" — and there already is something to report, since the window is most of
+      // the way full of system prompt and tool schemas before a word is typed.
+      refreshContextUsage()
     } catch {
       append(Transcript.error("Could not launch claude: \(error.localizedDescription)"))
       onStateChange?()
@@ -840,6 +846,8 @@ final class AgentSession {
     }
     onReload?()
     onStateChange?()
+    // The conversation just got shorter, which is the other thing that moves the context figure.
+    refreshContextUsage()
   }
 
   /// Show the conversation a branch inherits, before its engine has written a line of it.
@@ -931,6 +939,31 @@ final class AgentSession {
     }
     runner.requestUsage { completion($0.flatMap(ClaudeUsage.parse)) }
   }
+
+  /// The context reading as of the last time it was asked for, so a reselect or a reload shows
+  /// the last figure rather than blanking while a fresh one is on its way. Nil until the session
+  /// has connected and answered once.
+  private(set) var contextUsage: ContextUsage?
+
+  /// Re-read what this session's context window is spent on. A no-op while one is in flight and
+  /// while the engine is down — with nothing to ask, the last reading stands.
+  ///
+  /// Driven from the end of a turn rather than by a timer: the conversation is the only thing
+  /// that moves the figure, and a turn ending is exactly when it has moved. The engine answers
+  /// locally, so this costs a line on a stream that is already open.
+  func refreshContextUsage() {
+    guard let runner, runner.isRunning, !isContextUsageInFlight else { return }
+    isContextUsageInFlight = true
+    runner.requestContextUsage { [weak self] payload in
+      guard let self else { return }
+      self.isContextUsageInFlight = false
+      guard let usage = payload.flatMap(ContextUsage.init(payload:)) else { return }
+      self.contextUsage = usage
+      self.onStateChange?()
+    }
+  }
+
+  private var isContextUsageInFlight = false
 
   /// Change how much reaches the approval card. Live when running, remembered for next launch.
   func setPermissionMode(_ mode: PermissionMode) {
@@ -1393,6 +1426,7 @@ final class AgentSession {
       onStateChange?()
       refreshCostEstimate()
       refreshTitle()
+      refreshContextUsage()
 
     case "system" where event.subtype == "init":
       // The starting point, before any worktree the agent may create. Moves are detected separately.

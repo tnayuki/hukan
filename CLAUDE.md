@@ -461,10 +461,10 @@ Workspace (one window)
   same second and so reshuffled the day's rows on every restart. Stored stamp wins; mtime is only
   the seed for a session this window has never seen.
 - **What the engine knows, the engine is asked — over the stream, and never by sending it a
-  message.** The model roster and the account's plan usage are the engine's own facts, so neither
-  is a table here or a file to scan: the roster rides in on its startup reply, and the usage is
-  asked for on the open stream, the same channel a model switch goes down. **A probe must not be
-  a turn.** The plan usage was
+  message.** The model roster, the slash commands, the account's plan usage and how full the
+  context window is are all the engine's own facts, so none of them is a table here or a file to
+  scan. Two of them ride in on its startup reply; the other two are asked for on the open stream,
+  the same channel a model switch goes down. **A probe must not be a turn.** The plan usage was
   read by spawning `claude -p "/usage"` in a scratch directory, and because a slash command is a
   user message, every poll left a session transcript behind — 2400 files over six days, from a
   poll that only runs while the window is up — while the figures themselves had to be recovered
@@ -495,6 +495,19 @@ Workspace (one window)
   outliving its turn is the signal that the work stopped half-done** — and that signal is free,
   where a rail badge for it would not be: the rail's one signal is the dot, and an agent with
   unfinished tasks is already the pulsing row.
+- **Scope decides where a reading goes.** The toolbar's trailing edge carries the account's plan
+  usage and the app's own footprint, because both are true of the whole window; **how full a
+  session's context window is goes in that session's header, beside its cost estimate**, because
+  both are that one conversation's consumption and would be a lie anywhere the selection can
+  change under them. It lands next to the model picker, which is also what you reach for when the
+  window is filling up. A dial and a percentage, no words — the same icon-and-digits idiom the
+  toolbar uses for the other budget being spent, with the breakdown in the tooltip. **Amber past
+  three quarters, red past nine tenths**, because this is not a limit you are warned about and
+  then stopped at: the window compacts, and a compaction is the agent forgetting the middle of
+  the conversation, so the colour's job is to be noticed while compacting on your own terms, a
+  fork, or a fresh session are still choices. It is re-read when a turn ends, when the engine
+  starts and when a rollback shortens the conversation — the three things that move it — rather
+  than on a timer.
 - **A `/` at the head of the composer completes, and the list is the engine's.** Its built-ins
   and every skill and user command it found arrive together in the startup reply, undistinguished
   — which is exactly what a completion list wants, since the person typing `/` is not asking

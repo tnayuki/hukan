@@ -404,6 +404,18 @@ final class SDSession: NSObject {
       }
       .joined(separator: "\n")
   }
+  /// What the header's gauge is showing, as text a script can read: the percentage, then the
+  /// breakdown a line each. Empty until the engine has answered once. A property rather than a
+  /// hidden verb, because unlike the completion list or a commit's cards this is a value on an
+  /// object the model already addresses.
+  @objc var context: String {
+    guard let usage = agentSession?.contextUsage else { return "" }
+    var lines = ["\(usage.percentage)% · \(usage.totalTokens) of \(usage.maxTokens) tokens"]
+    for category in usage.spent {
+      lines.append("  \(category.name): \(category.tokens)")
+    }
+    return lines.joined(separator: "\n")
+  }
   @objc var running: Bool { agentSession?.isRunning ?? false }
   @objc var detached: Bool { agentSession?.isDetached ?? false }
   /// Another live process owns this session's engine; hukan will not start it until that process

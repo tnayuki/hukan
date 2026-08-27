@@ -129,9 +129,11 @@ solid while not. The bars measure the buffer, so an edit is marked as it is type
 the lines it replaced. Lines never wrap.
 
 **Cost & usage.** A per-session cost estimate in the conversation header (the "if it were
-API-metered" figure), the account-wide plan usage in the toolbar, and beside it the CPU and
-memory of hukan and every process it spawned, split in the tooltip between hukan itself, the
-Claude Code engines and what those spawned, with a process count for each.
+API-metered" figure) and, beside it, how full that session's context window is — amber past three
+quarters, red past nine tenths, with the breakdown by category in the tooltip. The account-wide
+plan usage sits in the toolbar instead, since it is true of the whole window, and beside it the
+CPU and memory of hukan and every process it spawned, split in the tooltip between hukan itself,
+the Claude Code engines, what those spawned and the terminals, with a process count for each.
 
 **Sessions.** A restored session reads its conversation back rather than opening empty. Names are
 Claude Code's own titles. A session not yet reattached is marked `detached` and resumes on

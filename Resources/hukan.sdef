@@ -69,6 +69,9 @@
             <property name="tasks" code="pTsk" type="text" access="r" description="The agent's task list, one line a task ([x] done, [~] in flight, [ ] still to do)">
                 <cocoa key="tasks"/>
             </property>
+            <property name="context" code="pCtx" type="text" access="r" description="How much of the session's context window is spent: a percentage line, then the breakdown by category">
+                <cocoa key="context"/>
+            </property>
             <property name="running" code="bRun" type="boolean" access="r" description="Whether the session's process is live">
                 <cocoa key="running"/>
             </property>

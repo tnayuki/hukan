@@ -11,6 +11,9 @@ final class RunningColumnViewController: NSViewController {
   /// bills no dollars, so this is the "if it were API-metered" figure (see `AgentSession.costUSD`).
   /// Empty (and so invisible) until a session with priceable usage is on screen.
   private let costLabel = NSTextField(labelWithString: "")
+  /// How much of this session's context window is gone. Hidden until the engine has answered
+  /// once — a session that has never connected has no window to be a fraction of.
+  private let contextLabel = NSTextField(labelWithString: "")
   private let scrollView: NSScrollView
   private let textView: TranscriptTextView
   private let input = ComposerInput()
@@ -298,8 +301,15 @@ final class RunningColumnViewController: NSViewController {
     costLabel.font = .systemFont(ofSize: 11, weight: .regular)
     costLabel.textColor = .secondaryLabelColor
     costLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+    contextLabel.font = .systemFont(ofSize: 11, weight: .regular)
+    contextLabel.textColor = .secondaryLabelColor
+    contextLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+    // Beside the cost, not in the toolbar: both are this session's own consumption, while the
+    // toolbar's two readings are the account's plan and the app's footprint. And it lands next
+    // to the model picker, which is what you reach for when the window is filling up.
     let header = HeaderBar(
-      views: [titleLabel], trailing: [costLabel, modelPicker, modePicker, effortPicker])
+      views: [titleLabel],
+      trailing: [contextLabel, costLabel, modelPicker, modePicker, effortPicker])
     // The header is to this column what the tab strip is to the desk: it names what is showing,
     // it survives the fold, and so it is where the maximize gesture goes. A conversation has no
     // preview state to leave, so the first double-click is already the maximize.
@@ -660,6 +670,64 @@ final class RunningColumnViewController: NSViewController {
   /// The header's cost figure: `$1.23`, `<$0.01` for a nonzero sub-cent estimate, empty (hidden)
   /// when there is no estimate (no session, unknown model, nothing sent yet). A `~` prefix marks
   /// an approximate total — one where a message on a model we can't price was omitted.
+  /// The context gauge: a dial glyph and the percentage, the same icon-and-digits idiom the
+  /// toolbar's plan usage uses for the other budget being spent. No words — what it means is in
+  /// the tooltip, which is where the toolbar puts its own.
+  ///
+  /// Amber past three quarters and red past nine tenths. The window is not a limit you are
+  /// warned about and then stopped at — it compacts, and a compaction is the agent forgetting
+  /// the middle of the conversation — so the point of the colour is to be noticed while
+  /// `/compact` on your own terms, a fork, or a fresh session are still choices.
+  private func applyContextUsage(_ usage: ContextUsage?) {
+    guard let usage else {
+      contextLabel.attributedStringValue = NSAttributedString()
+      contextLabel.toolTip = nil
+      return
+    }
+    let color: NSColor =
+      switch usage.percentage {
+      case ..<75: .secondaryLabelColor
+      case ..<90: .systemOrange
+      default: .systemRed
+      }
+    let line = NSMutableAttributedString()
+    if let icon = Self.contextIcon(color) {
+      let attachment = NSTextAttachment()
+      attachment.image = icon
+      let font = contextLabel.font ?? .systemFont(ofSize: 11)
+      attachment.bounds = CGRect(
+        x: 0, y: (font.capHeight - icon.size.height) / 2,
+        width: icon.size.width, height: icon.size.height)
+      line.append(NSAttributedString(attachment: attachment))
+    }
+    line.append(
+      NSAttributedString(
+        string: " \(usage.percentage)%",
+        attributes: [
+          .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+          .foregroundColor: color,
+        ]))
+    contextLabel.attributedStringValue = line
+
+    var lines = ["Context: \(tokens(usage.totalTokens)) of \(tokens(usage.maxTokens)) tokens"]
+    for category in usage.spent {
+      lines.append("  \(category.name): \(tokens(category.tokens))")
+    }
+    contextLabel.toolTip = lines.joined(separator: "\n")
+  }
+
+  private func tokens(_ count: Int) -> String {
+    Self.tokenFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
+  }
+
+  /// The dial, tinted to match the digits beside it.
+  private static func contextIcon(_ color: NSColor) -> NSImage? {
+    let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+      .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+    return NSImage(systemSymbolName: "gauge.with.needle", accessibilityDescription: nil)?
+      .withSymbolConfiguration(configuration)
+  }
+
   private static func formatCost(_ cost: Double?, approximate: Bool) -> String {
     guard let cost, cost > 0 else { return "" }
     let prefix = approximate ? "~" : ""
@@ -776,6 +844,7 @@ final class RunningColumnViewController: NSViewController {
       byModel: attached?.costTokensByModel ?? [:],
       total: attached?.costTokens,
       models: attached?.availableModels ?? [])
+    applyContextUsage(attached?.contextUsage)
     refreshComposerAccessories()
 
     // Only the session on screen, since the cards sit above its own composer. Decisions

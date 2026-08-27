@@ -459,6 +459,12 @@ final class ClaudeSession {
     ask("get_usage", completion: completion)
   }
 
+  /// What this session's context window is spent on: the `/context` breakdown by category, with
+  /// the window's size and how much of it is gone. Answered locally — no model turn, no API call.
+  func requestContextUsage(completion: @escaping ([String: Any]?) -> Void) {
+    ask("get_context_usage", completion: completion)
+  }
+
   /// Cut the live conversation back to just before one of its user messages.
   ///
   /// `lastSeen` is the newest user message the caller has actually shown. The engine refuses a
