@@ -680,8 +680,8 @@ the script takes a source per grammar rather than a rule.
 Swift, and those three are half of it; JSON is 8 KB. That is the price of the decision, paid
 once: a grammar is a table, so it never changes between version bumps.
 
-**The Debug build is a separate app from the Release one.** Debug carries its own bundle id,
-name and icon (`Hukan Dev.app`, amber DEV ribbon); Release keeps the identity that ships.
+**The Debug build is a separate app from the one CI ships.** Debug carries its own bundle id,
+name and icon (`Hukan Dev.app`, amber DEV ribbon); Release keeps the identity the cask installs.
 Sharing one identity meant the two builds shared everything macOS keys on it — saved window
 state, TCC grants, notification permission, and which one `open` and AppleScript actually reach —
 so a copy of the released app could not sit next to the one being built without one of them
@@ -745,18 +745,30 @@ are pinned). Fix a whole tree with:
 xcrun swift-format format -i -p -r Sources Tests
 ```
 
-Enforcement is a tracked hook, `.githooks/pre-commit` — there is no CI, so the commit is the only
-format gate, the way the snapshot tests gate the look. It lints the *staged* blob of
-each `.swift` with `--strict` and blocks on any finding, so what is judged is exactly what the
-commit records. Activate it once per clone (`core.hooksPath` is not itself tracked):
+Enforcement is the Release workflow, which lints the whole tree with `--strict` on every push
+and every tag — the same gate the tests are, and the snapshot tests are for the look — and a
+tracked hook, `.githooks/pre-commit`, which is that gate at the commit: it lints the *staged*
+blob of each `.swift` and blocks on any finding, so what is judged is exactly what the commit
+records, and a finding is caught before it costs a runner. Activate it once per clone
+(`core.hooksPath` is not itself tracked):
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
-A handful of rules are lint-only —
-`format` will not rewrite them: `.forEach { … }` over a for-in loop, an end-of-line comment past
-the column, a non-`lowerCamelCase` name. The tree is clean of them today; fix any new one by hand.
+A handful of rules are lint-only — `format` will not rewrite them: `.forEach { … }` over a for-in
+loop, an end-of-line comment past the column, a non-`lowerCamelCase` name. The tree is clean of
+them today; fix any new one by hand.
+
+### Release: a tag, and a cask entry by hand
+
+A release is a tag. Bump `CFBundleShortVersionString` in `Resources/Info.plist`, commit, tag it
+`vX.Y.Z` and push the tag: the Release workflow (`.github/workflows/release.yml`) lints, runs the
+tests and builds the ad-hoc-signed app on the runner whose SDK the app should be linked against,
+and publishes the zip as that tag's GitHub Release. The cask in `tnayuki/homebrew-hukan` names the
+version and the zip's sha256, and is updated by hand once the Release exists — no bot commits
+anywhere. Every push to main runs the same lint, tests and build without publishing, so a tree that
+would not ship is caught before it is tagged.
 
 ### One module, one convention
 
@@ -808,6 +820,16 @@ standing behind them. Both draw through `displayIgnoringOpacity` into their own 
 than `cacheDisplay`, which fills an opaque background and drops layer-backed subviews (it returned
 the History rows under a blank strip where the header's title should have been).
 The command list is pinned by `CompletionSnapshotTests` (`completions.png`, `…PREVIEW=completions`).
+
+**CI runs everything but these.** The runner draws on a 1× 1024×768 virtual display where this
+machine is 2×, and its twelve modes are all non-HiDPI — a resolution can be raised, a backing
+scale factor cannot — so a reference recorded here comes back half size. Scale is not the whole
+of it: the suites that already build their own 2× bitmap come back the right size and still
+differ, an eighth of the commit tab's pixels and nearly all of the command list's, because the
+runner's text rendering is not this machine's. A tolerance is the one answer this comparison
+refuses, so the workflow skips the pixel-pinned tests by name — the snapshot suites, the two
+emphasis tests that measure the same drawing, and the reader test that wants a window taller than
+the runner's screen. CI is the gate on the logic; the look stays the gate this machine keeps.
 
 ### Verifying the GUI: AppleScript, not coordinates
 

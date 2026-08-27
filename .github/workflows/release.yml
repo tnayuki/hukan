@@ -1,0 +1,87 @@
+name: Release
+
+# A push of a `v*` tag builds the ad-hoc-signed app and publishes it as that tag's GitHub
+# Release. Every push to main lints, tests and builds the same way and publishes nothing, so a
+# tree that would not ship is caught before anything is tagged. The cask in tnayuki/homebrew-hukan names the
+# version and the archive's sha256 and is updated by hand once the Release exists — no bot
+# commits anywhere.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # The runner is pinned to the macOS 26 image for its SDK: AppKit gives a window the
+    # appearance and behaviour the SDK it was linked against knows, so a build against the 15
+    # SDK wears the old toolbar, sidebar and controls on a macOS 26 desk. README's "macOS 15"
+    # is the deployment target — the floor the app runs on — not the SDK it is built with;
+    # pinning the runner to that was the mistake.
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Lint
+        # The same gate as the pre-commit hook, over the whole tree rather than the staged blobs;
+        # swift-format is Xcode's own, so nothing is installed.
+        run: xcrun swift-format lint --strict -p -r Sources Tests
+
+      - name: Test
+        # Everything but the tests that pin pixels: the runner draws on a 1x virtual display
+        # where this machine is 2x, and its modes are all non-HiDPI, so the references come back
+        # half size — and the suites that pin their own 2x bitmap come back the right size and
+        # still differ, because the runner's text rendering is not this machine's. See the
+        # snapshot note in CLAUDE.md; a tolerance is the one answer that comparison refuses.
+        #
+        # The suite runs parallel (see CLAUDE.md), so a failure's file, line and message are in
+        # the .xcresult and not on stdout; the summary below is what reads them back.
+        run: |
+          set +e
+          xcodebuild test -project hukan.xcodeproj -scheme Hukan \
+            -derivedDataPath .build/DerivedData -skipPackagePluginValidation \
+            -skip-testing:HukanAppTests/SnapshotTests \
+            -skip-testing:HukanAppTests/CardSnapshotTests \
+            -skip-testing:HukanAppTests/EditorSnapshotTests \
+            -skip-testing:HukanAppTests/CommitSnapshotTests \
+            -skip-testing:HukanAppTests/HistorySnapshotTests \
+            -skip-testing:HukanAppTests/CompletionSnapshotTests \
+            -skip-testing:HukanAppTests/EmphasisTests/testEmphasisIsDrawnOnTheWordAndOnlyTheWord \
+            -skip-testing:HukanAppTests/EmphasisTests/testItalicSlantsTheWordWithoutMovingIt \
+            -skip-testing:HukanAppTests/TranscriptReaderTests/testTheBottomStaysTheBottomAcrossAMaximize \
+            > xcodebuild-test.log 2>&1
+          status=$?
+          R=$(ls -td .build/DerivedData/Logs/Test/*.xcresult 2>/dev/null | head -1)
+          if [ -n "$R" ]; then
+            xcrun xcresulttool get test-results summary --path "$R" | jq -r \
+              '"\(.result): \(.passedTests) passed, \(.failedTests) failed", (.testFailures[]? | "  \(.testIdentifierString)\n    \(.failureText)")'
+          else
+            tail -40 xcodebuild-test.log
+          fi
+          exit $status
+
+      - name: Build .app
+        # hukan.xcodeproj is the only build system; signing is ad-hoc (`-`). Gatekeeper
+        # quarantine is stripped by the cask's postflight on the user's machine.
+        # -skipPackagePluginValidation pre-trusts SwiftTerm's build-tool plugin (see the Build
+        # note): plugin trust is per-user and uncommittable, so a headless runner must skip it or
+        # the build fails at plug-in validation.
+        run: |
+          xcodebuild build -project hukan.xcodeproj -scheme Hukan -configuration Release \
+            -derivedDataPath .build/DerivedData -skipPackagePluginValidation
+
+      - name: Zip the bundle
+        run: |
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
+            ".build/DerivedData/Build/Products/Release/Hukan.app" \
+            "Hukan.zip"
+
+      - name: Publish the tag's Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: Hukan.zip

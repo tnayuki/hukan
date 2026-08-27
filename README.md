@@ -174,8 +174,19 @@ worktree's rows leave when git stops listing it, or when its repository is close
 
 ## Install
 
-Build it — one `xcodebuild`, see [CLAUDE.md](CLAUDE.md). hukan spawns the Claude Code CLI
-(`claude`) per session, so [install that separately](https://docs.anthropic.com/en/docs/claude-code).
+Homebrew:
+
+```sh
+brew tap tnayuki/hukan
+brew install --cask hukan
+```
+
+The cask installs a prebuilt, ad-hoc-signed `Hukan.app` from the tagged GitHub Release and strips
+the Gatekeeper quarantine so it launches; `brew upgrade` follows new versions. hukan spawns the
+Claude Code CLI (`claude`) per session, so
+[install that separately](https://docs.anthropic.com/en/docs/claude-code).
+
+Building from source instead is one `xcodebuild` — see [CLAUDE.md](CLAUDE.md).
 
 ---
 
