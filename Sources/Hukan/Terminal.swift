@@ -99,10 +99,30 @@ final class TerminalSession: LocalProcessTerminalViewDelegate {
     return terminal
   }
 
-  /// Send the shell packing — SIGHUP-style teardown through SwiftTerm, then let the view go.
+  /// Hang the shell up, the way closing a Terminal.app window does — one SIGHUP, no escalation.
+  ///
+  /// SwiftTerm's own teardown cannot do it: it sends SIGTERM, which an interactive zsh ignores
+  /// outright, and its `io.close()` is a *graceful* DispatchIO close, which waits on the
+  /// outstanding read — a 128 KB stream read that no idle shell will ever finish — so the
+  /// cleanup handler that closes the pty master never runs either, and the kernel's own hangup
+  /// never arrives. A closed tab therefore left its shell, and everything running in it, alive
+  /// until the app quit and the exiting process finally dropped the fd. SIGHUP is both what a
+  /// terminal is defined to send when the line drops and the one signal that shell does not
+  /// ignore; zsh's own handling takes its jobs down with it, which is the point of sending it.
+  ///
+  /// Then reap: `LocalProcess.terminate()` cancels the exit monitor that would have waited on
+  /// the child, so without this the shell trades being alive for being a zombie for as long as
+  /// the app runs. The wait blocks, hence the queue — and it is a wait for a process that has
+  /// just been hung up.
   func terminate() {
     guard let spawned, spawned.process.running else { return }
+    let pid = spawned.process.shellPid
+    kill(pid, SIGHUP)
     spawned.process.terminate()
+    DispatchQueue.global(qos: .utility).async {
+      var status: Int32 = 0
+      waitpid(pid, &status, 0)
+    }
   }
 
   /// ⌘K, Terminal.app's "Clear to Start": lift the current line to the top and drop everything

@@ -68,6 +68,37 @@ final class TerminalSessionTests: XCTestCase {
       }), "the directory comes back when the command ends")
   }
 
+  /// Closing a terminal has to end the shell and whatever was running in it. SwiftTerm's own
+  /// teardown does not: SIGTERM is what it sends and an interactive zsh ignores it, so every
+  /// close hukan has — the tab's, the worktree's, the repository's — used to leave the shell
+  /// alive and invisible until the app quit. Both halves are pinned here: the command, which is
+  /// not our child and so is reaped by launchd once its shell hangs up, and the shell itself,
+  /// which is ours and would otherwise linger as a zombie.
+  func testTerminateHangsUpTheShellAndTheCommandItWasRunning() {
+    let terminal = TerminalSession(worktreeID: UUID(), cwd: URL(fileURLWithPath: "/tmp"))
+    let view = terminal.view
+    XCTAssertTrue(
+      spin(untilTrue: {
+        !terminal.scrollbackText().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      }),
+      "the shell never reached a prompt")
+
+    view.send(txt: "sleep 600\n")
+    XCTAssertTrue(
+      spin(untilTrue: {
+        terminal.refreshForegroundProcess()
+        return terminal.title == "sleep"
+      }), "the command never took the pty")
+    let shell = view.process.shellPid
+    let command = tcgetpgrp(view.process.childfd)
+    XCTAssertGreaterThan(command, 0, "no foreground process group to watch")
+    XCTAssertNotEqual(command, shell, "the shell itself still holds the pty")
+
+    terminal.terminate()
+    XCTAssertTrue(spin(untilTrue: { kill(command, 0) != 0 }), "the command outlived the close")
+    XCTAssertTrue(spin(untilTrue: { kill(shell, 0) != 0 }), "the shell outlived the close")
+  }
+
   /// The window's poll, which is the half the model cannot show: in the app nothing calls
   /// `refreshForegroundProcess` by hand, a timer does, and a timer that never starts leaves every
   /// tab named for its directory forever — indistinguishable, on an idle terminal, from working.
