@@ -58,6 +58,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// centres again rather than marching off a staircase no window is standing on anymore.
   private static var cascadePoint: NSPoint?
 
+  /// Whether AppKit built this window to restore into. Set by `restoreWindow` on the controller
+  /// it has just constructed, which is early enough for `applyDefaultFrame` to read — see there
+  /// for why the geometry cannot answer the question itself.
+  private var isRestored = false
+
   let workspace: Workspace
 
   private let rail = SessionRailViewController()
@@ -337,7 +342,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
     WorkspaceWindowController.all.append(self)
     reload()
-    applyDefaultFrameIfCollapsed()
+    applyDefaultFrame()
 
     // Not during launch: restoration runs between willFinishLaunching and
     // didFinishLaunching, so anything queued here fires *before* the saved widths have
@@ -392,19 +397,35 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
   required init?(coder: NSCoder) { fatalError("interface builder is not used") }
 
-  /// Assigning contentViewController shrinks the window to its content's fitting size
-  /// (the sum of the columns' minimum widths). This happens on both the fresh and the
-  /// restored path, so only grow when the window sits exactly at that fitting size —
-  /// which means there was no saved frame to restore. Never touch a restored frame.
-  private func applyDefaultFrameIfCollapsed() {
+  /// Size and place a *fresh* window. Assigning contentViewController shrinks the window to its
+  /// content's fitting size — the sum of the columns' minimum widths — so without this a new
+  /// window opens at its own floor, in whatever corner the last one left.
+  ///
+  /// A restored window is exempt, and it has to be *told* it is one: the geometry cannot answer
+  /// the question. This used to run only when `frame.width <= contentView.fittingSize.width + 8`,
+  /// on the reading that a window still at its fitting size is a window with no saved frame to
+  /// restore — but the split view's fitting width *is* the window's current width (measured:
+  /// 1650 inside a 1650pt window), so the test was true of every window, and every restored
+  /// frame was overwritten with the default size and re-centred. AppKit applies the saved frame
+  /// once more after this runs, which is why the window usually still came back where it was
+  /// left; which of the two landed last was a race, and a lost one is saved by the next quit, so
+  /// the window kept the default frame from then on.
+  private func applyDefaultFrame() {
     // AppKit re-fits the window later in the same run loop, so this has to wait one
-    // turn to take effect.
+    // turn to take effect. That turn is also what makes `isRestored` readable here: the
+    // restoration path sets it on the controller as soon as init returns.
     DispatchQueue.main.async { [weak self] in
       guard let self, let window = self.window,
-        let screen = window.screen ?? NSScreen.main,
-        let fitting = window.contentView?.fittingSize,
-        window.frame.width <= fitting.width + 8
+        let screen = window.screen ?? NSScreen.main
       else { return }
+      // A restored window has its saved frame by this turn — AppKit applies it while
+      // `restoreWindow` is still returning. One still standing at its floor is one restoration
+      // had no frame to give (state discarded because the machine's "close windows when
+      // quitting" was on, state written before there was a window to save), and it takes the
+      // default like a fresh window rather than opening at the columns' minimums.
+      let atFloor =
+        window.frame.width <= window.minSize.width && window.frame.height <= window.minSize.height
+      guard !self.isRestored || atFloor else { return }
       let size = NSSize(
         width: min(1400, screen.visibleFrame.width - 80),
         height: min(900, screen.visibleFrame.height - 80))
@@ -1149,6 +1170,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // Return a window carrying an empty Workspace here; the contents are filled in by
     // window(_:didDecodeRestorableState:).
     let controller = WorkspaceWindowController(workspace: Workspace())
+    // The frame is AppKit's to put back from here on — see `applyDefaultFrame`.
+    controller.isRestored = true
     completionHandler(controller.window, nil)
   }
 
