@@ -146,21 +146,56 @@ final class ClaudeSession {
     self.worktree = worktree
   }
 
-  /// Why the engine could not be started at all — a throw out of `start`, so it reaches the
-  /// `catch` that reports it rather than arriving later as a status code with no story.
-  enum LaunchError: LocalizedError {
-    case claudeNotFound
-
-    var errorDescription: String? {
-      switch self {
-      case .claudeNotFound:
-        // Where it looked, not just that it failed: from the Dock there is no PATH to inspect
-        // by hand, so naming the directories is the whole of what makes this actionable.
-        return "claude was not found. Looked in:\n"
-          + ClaudeBinary.searchedLocations().map { "  \($0)" }.joined(separator: "\n")
-      }
-    }
+  /// The engine is launched through the user's login shell, which is the whole of how the agent
+  /// gets a PATH.
+  ///
+  /// launchd gives a Dock-, Finder- or Spotlight-launched app `/usr/bin:/bin:/usr/sbin:/sbin` and
+  /// nothing else, and a child inherits it: not only was `claude` itself not on that PATH, but
+  /// every command the agent then ran through its own Bash was missing `brew`, `gh`, and a `node`
+  /// under a version manager. Claude Code pins the PATH it was launched with — its shell snapshot
+  /// sources the rc for functions and aliases and then re-exports the inherited PATH over
+  /// whatever the rc built — so this can only be fixed on the way in, and naming install
+  /// locations here fixes it for one binary while leaving the agent's own shell as bare as it
+  /// was.
+  ///
+  /// `-i` as well as `-l`, because which file builds PATH is not a matter of principle: Homebrew's
+  /// `shellenv` is written into `~/.zshrc` by its own installer, and a login-but-not-interactive
+  /// zsh does not read that file — `-lc` alone comes back without `/opt/homebrew/bin`. This is
+  /// the guess every editor that does this makes (Zed spawns `-l -i -c` too), and it costs about
+  /// 1.4s per launch against 0.1s for `-lc`, spent on the rc's completion setup. That is the
+  /// price of the decision, paid on every start, restart and fork.
+  ///
+  /// The shell is asked to *run* the engine rather than to report its PATH, which is what keeps
+  /// this to one line: nothing has to be parsed out of whatever the profile prints, and there is
+  /// no environment to carry around. What the profile prints goes to stdout ahead of the stream,
+  /// where `consume` drops it for want of a `type` — the one thing that would land in the
+  /// protocol is output with no trailing newline. The shell starts in the worktree, so a
+  /// directory-sensitive rc (direnv, asdf) sees the directory the agent is about to work in.
+  private static var shell: String {
+    ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
   }
+
+  /// What that shell is asked to do: hand its PATH to `claude` and get out of the way.
+  ///
+  /// `exec`, so the shell is replaced rather than left waiting in the middle: the pid hukan holds
+  /// is the engine's, and the SIGTERM that stops a session reaches it rather than a wrapper that
+  /// would have to pass it on. It is also why nothing is written back to the history file — the
+  /// interactive shell never reaches an exit.
+  ///
+  /// The arguments arrive as argv (`"$@"`) rather than spliced into this string. A launch carries
+  /// a whole system prompt, so quoting them into a command line would be a second escaping layer
+  /// with nothing to buy it.
+  ///
+  /// The `command -v` guard exists only for the message. Without it a missing engine is zsh's own
+  /// `command not found` and a bare 127, and the one fact that makes that actionable — which PATH
+  /// was searched — is exactly the fact a GUI launch cannot be asked for by hand.
+  private static let launchScript = """
+    command -v claude >/dev/null 2>&1 || {
+      printf 'claude was not found on PATH: %s\\n' "$PATH" >&2
+      exit 127
+    }
+    exec claude "$@"
+    """
 
   /// How much of stderr to keep. Enough for a message and the lines around it, far short of a
   /// verbose engine's whole output.
@@ -316,13 +351,8 @@ final class ClaudeSession {
       id: id, model: model, permissionMode: permissionMode, effort: effort, tools: tools,
       resume: resume, fork: fork, rollbackTo: rollbackTo)
 
-    // The resolved binary, not `/usr/bin/env claude`: `env` exists whatever the PATH, so a
-    // missing `claude` used to leave `run()` succeeding and the process exiting 127, which is
-    // the one failure the `catch` around this call was written for and the only one it never
-    // saw. Resolving here means a missing binary throws, and says so.
-    guard let executable = ClaudeBinary.url else { throw LaunchError.claudeNotFound }
-    process.executableURL = executable
-    process.arguments = arguments
+    process.executableURL = URL(fileURLWithPath: Self.shell)
+    process.arguments = ["-ilc", Self.launchScript, "hukan"] + arguments
     process.currentDirectoryURL = worktree
     process.standardInput = stdinPipe
     process.standardOutput = stdoutPipe
