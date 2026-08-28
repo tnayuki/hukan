@@ -11,7 +11,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // to be in front, which is why quitting an app scatters across Spaces and gathers into one.
     // The saved state carries the Space either way; this is the switch on reading it back.
     // Registered rather than written, so a hand-set value still wins.
-    UserDefaults.standard.register(defaults: ["NSWindowRestoresWorkspaceAtLaunch": true])
+    //
+    // And whether there is any saved state to read back at all is the System Settings checkbox
+    // "Close windows when quitting an application", which is one switch over every app on the
+    // machine — turned on for the sake of some other app, it takes hukan's window, its columns,
+    // its worktrees and its web tabs with it. A window holding a morning's worth of parallel
+    // agents is not a document another app's preference gets to decide about, so hukan asks for
+    // the restoring side of it by name. Registered too, so the answer is a default and not a
+    // decision: setting the key by hand in hukan's own domain still wins.
+    UserDefaults.standard.register(defaults: [
+      "NSWindowRestoresWorkspaceAtLaunch": true,
+      "NSQuitAlwaysKeepsWindows": true,
+    ])
     NSApp.mainMenu = AppDelegate.makeMainMenu()
   }
 
