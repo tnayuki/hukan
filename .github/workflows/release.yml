@@ -1,10 +1,9 @@
 name: Release
 
-# A push of a `v*` tag builds the ad-hoc-signed app and publishes it as that tag's GitHub
-# Release. Every push to main lints, tests and builds the same way and publishes nothing, so a
-# tree that would not ship is caught before anything is tagged. The cask in tnayuki/homebrew-hukan names the
-# version and the archive's sha256 and is updated by hand once the Release exists — no bot
-# commits anywhere.
+# A push of a `v*` tag builds the ad-hoc-signed app, publishes it as that tag's GitHub Release
+# and points the cask in tnayuki/homebrew-hukan at it. Every push to main lints, tests and builds
+# the same way and publishes nothing, so a tree that would not ship is caught before anything is
+# tagged.
 on:
   push:
     branches: [main]
@@ -85,3 +84,40 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: Hukan.zip
+
+      - name: Point the cask at the tag
+        # The tap's cask names the version and the zip's sha256, and both are known here: the
+        # archive built two steps up is the one the Release just published, so the hash is read
+        # off it rather than downloaded back. Auth is the `hukan-release-bot` deploy key, whose
+        # public half is registered read-write on the tap and nowhere else — narrower than a PAT,
+        # which would carry an account's whole reach into this runner. A re-run of an already
+        # released tag finds the cask saying what it would write and pushes nothing.
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          sha="$(shasum -a 256 Hukan.zip | cut -d' ' -f1)"
+
+          key="$RUNNER_TEMP/tap_deploy_key"
+          umask 077
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$key"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+
+          git clone --depth 1 git@github.com:tnayuki/homebrew-hukan.git "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+          # Anchored on the field names, not on the values they hold, so the edit does not need
+          # to know what the last release was.
+          /usr/bin/sed -i '' \
+            -e "s|^  version \".*\"$|  version \"$version\"|" \
+            -e "s|^  sha256 \".*\"$|  sha256 \"$sha\"|" \
+            Casks/hukan.rb
+          if git diff --quiet; then
+            echo "The cask already names $version; nothing to push."
+            exit 0
+          fi
+          git -c user.name='hukan-release-bot' \
+              -c user.email='hukan-release-bot@users.noreply.github.com' \
+              commit -am "Point the cask at $version"
+          git push origin HEAD:main
