@@ -238,4 +238,53 @@ final class FilesPanelTests: XCTestCase {
     }
     return found
   }
+
+  /// A file row drags as its own file URL — which is all that "drop a file on the composer to
+  /// add it to the context" needed, since the field already takes a Finder drop. A directory has
+  /// no content to attach, so it does not drag at all.
+  @MainActor
+  func testAFileRowDragsAsItsFileURLAndADirectoryDoesNot() throws {
+    let worktree = try makeWorktree(files: ["src/A.swift"])
+    let panel = FilesPanelViewController()
+    let window = host(panel)
+    panel.show(worktree: worktree)
+    window.displayIfNeeded()
+    let outline = try XCTUnwrap(findOutline(in: panel.view))
+    // The one root row is the `src` directory; open it so its file is a row too.
+    outline.expandItem(outline.item(atRow: 0))
+
+    var dragged: [String] = []
+    var refused = 0
+    for row in 0..<outline.numberOfRows {
+      let item = try XCTUnwrap(outline.item(atRow: row))
+      let written = panel.outlineView(outline, pasteboardWriterForItem: item)
+      if let entry = written as? NSPasteboardItem,
+        let text = entry.string(forType: .fileURL), let url = URL(string: text)
+      {
+        dragged.append(url.path)
+      } else {
+        refused += 1
+      }
+    }
+
+    XCTAssertEqual(dragged, [worktree.url.appendingPathComponent("src/A.swift").path])
+    XCTAssertEqual(refused, 1, "the src row is a directory and does not drag")
+
+    // The junction with the composer, which is the only part that could quietly not work: what
+    // the row writes has to come back off a pasteboard as a file URL, because that is the exact
+    // read the field does before it makes an attachment chip (see `ComposerTextView`).
+    let item = try XCTUnwrap(
+      panel.outlineView(outline, pasteboardWriterForItem: XCTUnwrap(outline.item(atRow: 1)))
+    )
+    let pasteboard = NSPasteboard(name: .init("dev.tnayuki.hukan.test-drag"))
+    pasteboard.clearContents()
+    pasteboard.writeObjects([item])
+    let read =
+      pasteboard.readObjects(
+        forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+    XCTAssertEqual(
+      read?.map(\.path), [worktree.url.appendingPathComponent("src/A.swift").path],
+      "the composer reads a dropped file exactly this way")
+  }
+
 }

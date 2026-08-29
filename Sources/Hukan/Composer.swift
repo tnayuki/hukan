@@ -472,8 +472,14 @@ final class ComposerInput: NSView {
     recomputeHeight()
   }
 
-  /// One attachment: a small thumbnail (the image itself, so you see what you attached) or a
-  /// document icon for a non-image file, with an × to drop it. The path is the tooltip.
+  /// One attachment. An image is its own thumbnail — you see what you attached, which is the
+  /// whole of what identifies it — and anything else is named, because a document glyph is the
+  /// same glyph for every file and says only that there is one. That was survivable while an
+  /// attachment came from the Finder now and then; a row dragged off the files panel makes it
+  /// the ordinary case, and three anonymous squares above the composer are three files you have
+  /// to remember the order of. The name is the last component, truncated in the middle so the
+  /// extension survives — it is half of what tells two of these apart — and the full path stays
+  /// the tooltip.
   private func makeChip(path: String, image: NSImage?) -> NSView {
     let chip = NSView()
     chip.wantsLayer = true
@@ -492,7 +498,9 @@ final class ComposerInput: NSView {
     } else {
       thumb.image = NSImage(systemSymbolName: "doc.fill", accessibilityDescription: "file")
       thumb.contentTintColor = .secondaryLabelColor
-      thumb.symbolConfiguration = .init(pointSize: 18, weight: .regular)
+      thumb.symbolConfiguration = .init(pointSize: 13, weight: .regular)
+      thumb.setContentHuggingPriority(.required, for: .horizontal)
+      thumb.setContentCompressionResistancePriority(.required, for: .horizontal)
     }
     chip.addSubview(thumb)
 
@@ -511,16 +519,42 @@ final class ComposerInput: NSView {
     remove.identifier = NSUserInterfaceItemIdentifier(path)
     chip.addSubview(remove)
 
-    NSLayoutConstraint.activate([
-      chip.widthAnchor.constraint(equalToConstant: 40),
+    var constraints: [NSLayoutConstraint] = [
       chip.heightAnchor.constraint(equalToConstant: 40),
-      thumb.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 3),
-      thumb.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -3),
-      thumb.topAnchor.constraint(equalTo: chip.topAnchor, constant: 3),
-      thumb.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -3),
       remove.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: 3),
       remove.topAnchor.constraint(equalTo: chip.topAnchor, constant: -3),
-    ])
+    ]
+    if image != nil {
+      constraints += [
+        chip.widthAnchor.constraint(equalToConstant: 40),
+        thumb.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 3),
+        thumb.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -3),
+        thumb.topAnchor.constraint(equalTo: chip.topAnchor, constant: 3),
+        thumb.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -3),
+      ]
+    } else {
+      let name = NSTextField(labelWithString: (path as NSString).lastPathComponent)
+      name.font = .systemFont(ofSize: 11)
+      name.textColor = .labelColor
+      name.lineBreakMode = .byTruncatingMiddle
+      name.maximumNumberOfLines = 1
+      name.cell?.truncatesLastVisibleLine = true
+      name.translatesAutoresizingMaskIntoConstraints = false
+      chip.addSubview(name)
+      // Wide enough for a name of ordinary length, capped so a handful of them still fit the row
+      // — the field truncates rather than the chip growing off the end of the composer.
+      let width = chip.widthAnchor.constraint(lessThanOrEqualToConstant: 160)
+      width.priority = .required
+      constraints += [
+        width,
+        thumb.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 8),
+        thumb.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
+        name.leadingAnchor.constraint(equalTo: thumb.trailingAnchor, constant: 6),
+        name.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -10),
+        name.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
+      ]
+    }
+    NSLayoutConstraint.activate(constraints)
     return chip
   }
 }

@@ -120,6 +120,10 @@ rather than moved to the Trash. A tab already showing
 a renamed file follows the new name, and one showing a deleted file closes. On the panel's own
 background the same menu makes a file at the worktree root.
 
+Dragging a file out of the panel onto the composer attaches it, the same way dropping one from
+the Finder does — the agent reads it from there, and the chip above the field carries its name. A directory does not drag; nor does it out to
+the Finder or another editor, which the same drag is good for.
+
 Tabs are files (always editable source), commits (read-only), web tabs (one shared cookie store,
 passing as this machine's Safari) and terminals (named as Terminal.app names one). The plain
 new-tab key opens a browser rather than a terminal — the shell work here is the agent's — and

@@ -178,6 +178,17 @@ Workspace (one window)
   word twice, and it charged the file 36pt to say it. The one thing that header carried alone —
   the dot for an unsaved edit — moved onto the tab, beside the ✕ that would discard it, which is
   where the state and the act that destroys it belong together.
+- **A file row drags out as a file URL, and that is the whole of "add this to the context".**
+  The composer already takes a file dropped from the Finder and turns it into an attachment chip
+  — the agent reads it from the path the chip carries — so the panel had only to write the same
+  thing a Finder drag writes, and dragging a row onto the field attaches it. The path is absolute
+  for that reason: it is what goes to the engine, and it must not depend on where the engine is
+  standing. Files only, the rule that already decides which rows have a tab to open. It is the
+  opposite call from the rail's rows, which stand for a checkout and so refuse `.fileURL`
+  outright — a repository row offered to the Finder would be a folder anyone could take, where
+  these rows *are* files, and being good in the Finder and in any editor is a side effect worth
+  having. Copy only, in and out of the window: an index must never be able to move the file it
+  points at.
 - **What has changed includes what git has never seen.** The working-tree diff carries untracked
   files, counted as added — `git status`'s reading of the question rather than
   `git diff HEAD`'s — because a file nobody has run `git add` on is the whole of what a brand-new

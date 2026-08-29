@@ -250,6 +250,10 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     outline.onRename = { [weak self] in self?.renameSelected() }
     contextMenu.delegate = self
     outline.menu = contextMenu
+    // Copy, inside the window and out. An index must never be able to *move* the file it points
+    // at: the row is a reference to the file, not the file's home.
+    outline.setDraggingSourceOperationMask(.copy, forLocal: true)
+    outline.setDraggingSourceOperationMask(.copy, forLocal: false)
     outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
     listScroll.documentView = outline
     listScroll.hasVerticalScroller = true
@@ -1485,6 +1489,29 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       }
       if let problem { self.report(problem) }
     }
+  }
+
+  // MARK: Dragging out
+
+  /// A file row drags as its own file URL, and that is the whole of the feature: the composer
+  /// already takes a file dropped from the Finder and turns it into an attachment chip, so a row
+  /// that writes the same thing needs nothing at the other end — dropping a file on the field
+  /// attaches it, and the agent reads it from the path the chip carries. Absolute for that
+  /// reason: the path is what goes to the engine, and it must not depend on where the engine is
+  /// standing.
+  ///
+  /// Files only, the same rule that decides which rows have a tab to open — a directory has no
+  /// content to attach, and a chip for one would be a document icon in front of something that is
+  /// not a document. Unlike the rail's rows, which stand for a checkout and so refuse `.fileURL`
+  /// outright, these rows *are* files: the drag is good anywhere a file is, the Finder included,
+  /// and it is offered as a copy so nothing can drag the file out of the worktree.
+  func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any)
+    -> NSPasteboardWriting?
+  {
+    guard let pick = picked(item), let url = url(for: pick.path) else { return nil }
+    let entry = NSPasteboardItem()
+    entry.setString(url.absoluteString, forType: .fileURL)
+    return entry
   }
 
   // MARK: Outline
