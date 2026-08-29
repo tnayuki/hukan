@@ -6,6 +6,10 @@ says which one is working, which one is stuck on a question and which one is wai
 approval. You stand in the middle of them and see them all from above, and decide which to
 advance and which to drop.
 
+![The rail down the left listing every session in every worktree, one of them holding a question
+above the composer; the desk on the right showing a commit's diff, with the worktree's files
+beside it](docs/hukan.png)
+
 ## No multi SCM. No multi coding agent. No multi platform.
 
 git, Claude Code, macOS — because that is what I use. Each of those is what buys the next line:
@@ -146,6 +150,10 @@ password or client-certificate challenge all get the system's panels, a swipe go
 finds in the page. Web tabs come back after a relaunch, on their worktrees, with their history —
 in the order they and the terminals stood on the strip —
 each loading only once it is looked at.
+
+![A web tab open on the desk beside the commit tab it was opened next to, showing a repository
+page under the tab strip's own address bar, with the conversation still running in the column to
+its left](docs/hukan-browser.png)
 
 A file tab is syntax-highlighted — Swift, TypeScript, TSX, JavaScript, Python, Ruby, Rust, Go,
 C, C++, C#, shell, JSON, YAML and Markdown, a fenced block in the language its info string names and
