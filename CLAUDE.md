@@ -178,6 +178,15 @@ Workspace (one window)
   word twice, and it charged the file 36pt to say it. The one thing that header carried alone —
   the dot for an unsaved edit — moved onto the tab, beside the ✕ that would discard it, which is
   where the state and the act that destroys it belong together.
+- **What has changed includes what git has never seen.** The working-tree diff carries untracked
+  files, counted as added — `git status`'s reading of the question rather than
+  `git diff HEAD`'s — because a file nobody has run `git add` on is the whole of what a brand-new
+  file is, and a brand-new file is what an agent produces most. While they were excluded, the
+  file an agent had just written was invisible in every place hukan reads a change from at once:
+  the panel's tree is git's path list, so the file was not in it; the ± scope, the toolbar's
+  diffstat and the rail all measured the same diff, so none of them counted it either — and the
+  panel's own New File and Rename landed in the same hole, making a name until `git add` ran.
+  Ignored files stay out, which is the half of libgit2's default worth keeping.
 - **The gutter is where the diff signal reaches line granularity** — change bars beside the
   line numbers, never a second text mode. Stagedness is the bar's fill — solid working-tree,
   hollow staged — because the color already carries the kind: green added, blue rewritten, a

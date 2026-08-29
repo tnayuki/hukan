@@ -18,9 +18,11 @@ enum Git {
     git_libgit2_init()
   }
 
-  /// Changes with line counts, measured against `base` (always `HEAD` today). Mirrors
-  /// `git diff --numstat HEAD`: the working tree — staged and unstaged both — against the base's
-  /// tree. Binaries report 0/0, the way numstat's "-" read as zero.
+  /// Changes with line counts, measured against `base` (always `HEAD` today): the working tree —
+  /// staged, unstaged and untracked alike — against the base's tree. Close to
+  /// `git diff --numstat HEAD`, except that untracked files count as added, since a file nobody
+  /// has run `git add` on is still the work (see `headDiff`). Binaries report 0/0, the way
+  /// numstat's "-" read as zero.
   static func changedFiles(at url: URL, since base: String) -> [ChangedFile] {
     guard let repo = openRepository(at: url) else { return [] }
     defer { git_repository_free(repo) }
@@ -1007,6 +1009,18 @@ enum Git {
     defer { git_object_free(tree) }
     var options = git_diff_options()
     git_diff_options_init(&options, UInt32(GIT_DIFF_OPTIONS_VERSION))
+    // Untracked files are part of the change, and are the *only* thing a brand-new file is: a
+    // diff without them made the file an agent had just written — or the files panel's own New
+    // File — invisible everywhere hukan reads a change from, the tree included, until something
+    // ran `git add`. `git diff HEAD` leaves them out and `git status` does not; this is the
+    // second reading, since what hukan is answering is "what has moved in this worktree".
+    // Recursing is what makes an untracked *directory* report its files rather than itself, and
+    // the content flag is what gives those files line counts instead of 0/0. Ignored files stay
+    // out, which is libgit2's default and the only part of this nobody wants changed.
+    options.flags =
+      UInt32(GIT_DIFF_INCLUDE_UNTRACKED.rawValue)
+      | UInt32(GIT_DIFF_RECURSE_UNTRACKED_DIRS.rawValue)
+      | UInt32(GIT_DIFF_SHOW_UNTRACKED_CONTENT.rawValue)
     var diff: OpaquePointer?
     guard git_diff_tree_to_workdir_with_index(&diff, repo, tree, &options) == 0 else { return nil }
     return diff

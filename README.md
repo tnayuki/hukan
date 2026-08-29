@@ -68,7 +68,10 @@ it was started from. Dragging a repository's heading puts it somewhere else in t
 and all — the insertion line falls only between repositories, never inside one.
 
 **Change review.** Branch and diffstat against `HEAD` in the toolbar, the changed files in the
-panel's ± scope, the changed lines in the open file's gutter. Reading the diff belongs to the PR.
+panel's ± scope, the changed lines in the open file's gutter. A file git has never seen counts as
+added throughout — a brand-new file is what an agent writes most, and waiting for `git add` would
+keep it out of every one of those readings. Ignored files stay out. Reading the diff belongs to
+the PR.
 
 **History.** The branch's log at the foot of the files panel, newest first, folded away from the
 toolbar's glyph beside the ±. It is read a page at a time: scrolling past the last row walks

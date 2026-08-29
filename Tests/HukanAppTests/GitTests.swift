@@ -78,7 +78,12 @@ final class GitTests: XCTestCase {
     XCTAssertFalse(expected.isEmpty)
   }
 
-  func testChangedFilesMatchesNumstat() throws {
+  /// `git diff --numstat HEAD` for everything git already knows about — staged and unstaged
+  /// alike — **plus** the untracked files, counted as added. numstat leaves those out and
+  /// `git status` does not, and hukan reads the second one: a file nobody has run `git add` on is
+  /// the whole of what a brand-new file is, and while it was excluded, the file an agent had just
+  /// written was invisible in every reading hukan takes of a change.
+  func testChangedFilesIsNumstatPlusTheUntrackedFiles() throws {
     makeRepository()
     try write("one\ntwo\n", to: "a.txt")
     try write("keep\n", to: "b.txt")
@@ -89,8 +94,14 @@ final class GitTests: XCTestCase {
     try write("one\ntwo\nthree\n", to: "a.txt")
     try write("keep\nmore\n", to: "b.txt")
     git(["add", "b.txt"])
-    // An untracked file must NOT appear (numstat excludes it), which is the subtle parity.
+    // Untracked, and untracked inside a directory that is itself untracked — the second is what
+    // needs the walk, or the directory reports itself instead of the file in it.
     try write("scratch\n", to: "c.txt")
+    try write("deep\n", to: "fresh/d.txt")
+    // Ignored stays out: that half is libgit2's default and nobody wants it moved.
+    try write("noise.log\n", to: ".gitignore")
+    try write("noise\n", to: "noise.log")
+    git(["add", ".gitignore"])
 
     var expected: [ChangedFile] = []
     for line in git(["diff", "--numstat", "HEAD"]).split(separator: "\n") {
@@ -99,11 +110,14 @@ final class GitTests: XCTestCase {
       expected.append(
         ChangedFile(path: String(parts[2]), added: Int(parts[0]) ?? 0, removed: Int(parts[1]) ?? 0))
     }
+    expected.append(ChangedFile(path: "c.txt", added: 1, removed: 0))
+    expected.append(ChangedFile(path: "fresh/d.txt", added: 1, removed: 0))
+
     let byPath: (ChangedFile, ChangedFile) -> Bool = { $0.path < $1.path }
-    XCTAssertEqual(
-      Git.changedFiles(at: root, since: "HEAD").sorted(by: byPath), expected.sorted(by: byPath))
+    let changed = Git.changedFiles(at: root, since: "HEAD")
+    XCTAssertEqual(changed.sorted(by: byPath), expected.sorted(by: byPath))
     XCTAssertTrue(expected.contains(ChangedFile(path: "a.txt", added: 1, removed: 0)))
-    XCTAssertFalse(Git.changedFiles(at: root, since: "HEAD").contains { $0.path == "c.txt" })
+    XCTAssertFalse(changed.contains { $0.path == "noise.log" }, "ignored files stay out")
   }
 
   func testDiffCarriesTheHunk() throws {
