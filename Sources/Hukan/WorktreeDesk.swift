@@ -212,8 +212,9 @@ final class WorktreeDeskViewController: NSViewController {
   var onNewTerminal: (() -> Void)?
   /// ⌘T or the strip's `+` asked for a web tab in the selected worktree.
   var onNewBrowser: (() -> Void)?
-  /// A file tab wrote itself back to disk — the column reloads so the change shows in the diffstat.
-  var onFileSaved: (() -> Void)?
+  /// A file tab wrote itself back to disk, naming its worktree — the column re-asks git so the
+  /// change shows in the diffstat.
+  var onFileSaved: ((UUID) -> Void)?
   /// Ask the window for the whole width, or to put the other columns back. The desk is a column
   /// and the columns are the window's, so maximizing is asked for here, never done here.
   var onSetMaximized: ((Bool) -> Void)?
@@ -607,7 +608,7 @@ final class WorktreeDeskViewController: NSViewController {
       tab.content.show(worktree: worktree, path: path)
     } else {
       let fresh = FileTab(path: path, isPreview: preview)
-      fresh.content.onSaved = { [weak self] in self?.onFileSaved?() }
+      fresh.content.onSaved = { [weak self] worktreeID in self?.onFileSaved?(worktreeID) }
       // The first edit pins the tab: you must not lose what you just started typing to the next
       // single click reusing the slot.
       let id = fresh.id

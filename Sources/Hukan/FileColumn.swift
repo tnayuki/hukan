@@ -83,9 +83,10 @@ final class FileContentViewController: NSViewController {
   /// Set once the current path's text has landed, so a reveal asked for mid-load can wait.
   private var isLoaded = false
   private var pendingReveal: (line: Int, term: String?)?
-  /// Fired after a save lands, so the column can re-ask git and the file's changed state catches
-  /// up (an FSEvents IgnoreSelf drops our own write, so nothing else would notice it).
-  var onSaved: (() -> Void)?
+  /// Fired after a save lands, naming the worktree written to, so the column can re-ask git and
+  /// the file's changed state catches up (an FSEvents IgnoreSelf drops our own write, so nothing
+  /// else would notice it).
+  var onSaved: ((UUID) -> Void)?
   /// Fired the moment an untouched file is first edited, so a preview tab can pin itself — you do
   /// not want the tab you just started typing in to be discarded by the next single click.
   var onEdited: (() -> Void)?
@@ -183,7 +184,7 @@ final class FileContentViewController: NSViewController {
     do {
       try textView.string.write(to: url, atomically: true, encoding: .utf8)
       isDirty = false
-      onSaved?()
+      onSaved?(worktree.id)
     } catch {
       NSSound.beep()
     }
@@ -395,11 +396,18 @@ final class FileColumns {
     desk.onNewTerminal = { [weak self] in self?.onNewTerminal?(nil) }
     desk.onNewBrowser = { [weak self] in self?.openBrowser() }
     desk.onSetMaximized = { [weak self] maximized in self?.onSetMaximized?(maximized) }
-    // A save is the panel's cue too: an FSEvents IgnoreSelf drops our own write, so the content
-    // hits would otherwise keep listing the line just fixed.
-    desk.onFileSaved = { [weak self] in
-      self?.panel.filesChangedOnDisk()
-      self?.onNeedsReload?()
+    // An FSEvents IgnoreSelf drops our own write, so a save is noticed nowhere unless it is
+    // said here — the same hand-off the panel's own writes take (`applyFileEdit`). git is asked
+    // again for the worktree written to, since the diffstat, the ± scope and the rail all read
+    // that answer and a save is exactly what makes a diff appear or go away; the moved set is
+    // empty, because the buffer already holds what was written. The panel re-runs its content
+    // hits on top of that, which git's answer does not move — it would otherwise keep listing
+    // the line just fixed.
+    desk.onFileSaved = { [weak self] worktreeID in
+      guard let self else { return }
+      self.workspace?.refreshFiles(worktreeID: worktreeID, moved: [])
+      self.panel.filesChangedOnDisk()
+      self.onNeedsReload?()
     }
     // A single click previews, a double-click (or Return) pins — the rail's gesture, kept.
     panel.onSelect = { [weak self] path, line in self?.openFromPanel(path, line: line, pin: false) }
