@@ -168,12 +168,19 @@ final class GitTests: XCTestCase {
     XCTAssertEqual(Git.worktrees(at: linked).first?.resolvingSymlinksInPath().path, root.path)
   }
 
-  func testNonGitDirectoryFallsBackToFilesystemWalk() throws {
-    // No `git init`: a Worktree may be a plain directory, and its files still have to list.
+  /// No `git init`: a Worktree may be a plain directory. git has no tracked list to give for it,
+  /// and none is invented — the files panel's tree, filter and search read the disk through
+  /// `WorktreeIndex`, which lists a plain directory the same way it lists a checkout.
+  func testANonGitDirectoryHasNoTrackedListAndIsListedByTheIndex() throws {
     try write("a.txt", to: "a.txt")
     try write("b.txt", to: "sub/b.txt")
-    let tracked = Set(Git.trackedFiles(at: root))
-    XCTAssertTrue(tracked.contains("a.txt"))
-    XCTAssertTrue(tracked.contains("sub/b.txt"))
+    XCTAssertEqual(Git.trackedFiles(at: root), [])
+    XCTAssertEqual(Git.ignored(at: root, directories: ["sub"]), [], "nothing to ignore by")
+
+    let index = WorktreeIndex(root: root) { [root] in Git.ignored(at: root!, directories: $0) }
+    let built = expectation(description: "walked")
+    index.build { built.fulfill() }
+    wait(for: [built], timeout: 5)
+    XCTAssertEqual(index.filePaths, ["a.txt", "sub/b.txt"])
   }
 }

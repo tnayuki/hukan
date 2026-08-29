@@ -424,8 +424,7 @@ final class FileColumns {
     guard let workspace, let worktree = panel.worktree else { return }
     switch edit {
     case .createdFolder:
-      // Nothing to open: a folder has no tab, and git has nothing to re-read for an empty one —
-      // the panel rebuilds its own tree, since it is the only party that can see it.
+      // Nothing to open: a folder has no tab, and git has nothing to re-read for an empty one.
       return
     case .created(let path):
       // A file made from the menu is one you are about to write in, so it opens as a lasting tab
@@ -598,13 +597,6 @@ final class FileColumns {
   func refreshTerminalTabs() {
     guard desk.isViewLoaded else { return }
     desk.reload(worktreeID: workspace?.selectedWorktreeID)
-  }
-
-  /// Redraw the panel's tree from what it already holds. For the one change git cannot report —
-  /// a directory it has no path for — where nothing else on screen is measured against anything
-  /// that moved.
-  func rebuildTree() {
-    panel.rebuildTree()
   }
 
   /// The selected worktree's files changed on disk: refresh every open file and the panel (its

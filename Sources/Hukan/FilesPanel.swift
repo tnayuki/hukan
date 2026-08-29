@@ -67,6 +67,13 @@ private final class ResultLine: NSObject {
 /// only — a pick opens a tab on the desk, nothing is edited here, which is what lets it stay
 /// narrow (the panel is the index, the tab is the text).
 ///
+/// The tree is the worktree as it is on disk (`DiskTree`), listed a directory at a time as its
+/// rows open, with git's answer laid over it: the diffstats, and which of it git ignores — shown
+/// dimmed rather than left out, since it is in the worktree whether git wants it or not. What
+/// narrows the tree — the filter, the ± scope — narrows a list of the paths git produced instead,
+/// because a filter has to see every path and walking the checkout for that is the cost the disk
+/// tree exists to avoid.
+///
 /// One field, but two operations kept apart by the gesture that runs them, because they are not
 /// the same kind of thing: **typing** narrows the tree by path, live and in memory, and the tree
 /// stays a tree — directories with no surviving child simply drop out. **Return** runs a content
@@ -170,7 +177,10 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   /// actually changed, so a routine reload does not fold every open directory.
   private var roots: [FileNode] = []
   private var builtFrom:
-    (paths: [String], changed: [ChangedFile], query: String, changedOnly: Bool)?
+    (
+      paths: [String], changed: [ChangedFile], query: String, changedOnly: Bool,
+      indexGeneration: Int
+    )?
 
   /// The scoped path set, and the same paths folded ready to be matched against. Typing is what
   /// this cache is for: the filter runs over every path in the worktree on each keystroke, and on
@@ -181,8 +191,23 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     let tracked: [String]
     let changed: [String]
     let changedOnly: Bool
+    /// The index's generation, so a directory relisted moves the filter's universe with it.
+    let indexGeneration: Int
   }
   private var scoped: (key: ScopeKey, paths: [String], folded: [FoldedText]?)?
+  /// Every path git would take, for the disk tree to tell an ignored file from one git simply
+  /// has not been asked about — nil where there is no git. Keyed like `scoped`, on git's answer.
+  private var known: (tracked: [String], changed: [String], paths: Set<String>?)?
+
+  /// The worktree as it is on disk, which is what the panel shows when nothing narrows it — no
+  /// filter, no ± scope. Kept across rebuilds, node objects and all: the disclosure state is keyed
+  /// on those objects, and what git's answer moves is the numbers on them, not the rows.
+  private var diskTree: DiskTree?
+  /// Browsing the disk, as opposed to a list of paths git produced (a filter, the changed scope)
+  /// or the hits of a content search.
+  private var isDiskMode: Bool {
+    filterField.stringValue.isEmpty && !isChangedOnly && !isShowingResults
+  }
 
   private var results: [ResultFile] = []
   private var truncated = false
@@ -447,6 +472,8 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       roots = []
       builtFrom = nil
       scoped = nil
+      known = nil
+      diskTree = nil
       generation += 1
       cancelScan()
       // Emptied here rather than left for the rebuild below: the rows on screen belong to the
@@ -458,14 +485,54 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     refresh()
   }
 
-  /// Rebuild the tree from what is already held, whatever the inputs say. The one caller is the
-  /// arrival of a directory git cannot see: git's lists are the tree's inputs and they cannot
-  /// move for an empty directory, so the ordinary refresh would find nothing to do — the tree has
-  /// to be told to look again.
-  func rebuildTree() {
-    guard isViewLoaded else { return }
-    builtFrom = nil
-    refresh()
+  /// The index read these directories again (it walked, or FSEvents named something in them),
+  /// so the rows built from them are drawn again — the ones already built, since a directory
+  /// nobody has opened has nothing to go stale. Nothing waits on git here: this is how a file
+  /// written by a build, an agent or a `mkdir` reaches the panel, whether git will ever see it or
+  /// not. nil is all of them — the walk landing, or a batch that could not be placed.
+  func pathsMoved(_ directories: Set<String>?) {
+    guard isViewLoaded, let tree = diskTree else { return }
+    var rootTouched = false
+    var touched: [FileNode] = []
+    if let directories {
+      for directory in directories {
+        if directory.isEmpty {
+          rootTouched = true
+        } else if let node = tree.listedNode(at: directory) {
+          node.markStale()
+          touched.append(node)
+        }
+      }
+    } else {
+      tree.markAllStale()
+      rootTouched = true
+    }
+    // The filter's universe moved with the index; a filter on screen is rebuilt from it.
+    guard isDiskMode else {
+      if !isShowingResults, editingPath == nil { refresh() }
+      return
+    }
+    // A name being typed holds the outline still (see `refresh`); the listings are stale all the
+    // same, and the redraw that ends the naming reads them.
+    guard editingPath == nil else { return }
+    if rootTouched {
+      redrawDisk()
+    } else {
+      for node in touched where outline.isItemExpanded(node) {
+        outline.reloadItem(node, reloadChildren: true)
+      }
+    }
+  }
+
+  /// List the top level again and redraw, keeping what is open and selected. The nodes are
+  /// reused, so the redraw is what puts a fresh listing under every open row that went stale.
+  private func redrawDisk() {
+    guard let tree = diskTree else { return }
+    let openDirs = expandedDirectories()
+    let selectedPath = selectedRowPath()
+    roots = tree.relistRoots()
+    redraw(openDirs: openDirs, selectedPath: selectedPath, query: "")
+    updateEmptyLabel()
   }
 
   /// The worktree's files changed on disk: the tree if its inputs moved, the results always (a
@@ -490,20 +557,25 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     guard let worktree else { return [] }
     let key = ScopeKey(
       tracked: worktree.trackedFiles, changed: worktree.changedFiles.map(\.path),
-      changedOnly: isChangedOnly)
+      changedOnly: isChangedOnly, indexGeneration: worktree.index?.generation ?? -1)
     if let scoped, scoped.key == key { return scoped.paths }
 
     var paths: [String]
     if isChangedOnly {
-      paths = key.changed.sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+      paths = key.changed.sorted(by: FileTree.precedesBytewise)
+    } else if let index = worktree.index {
+      // The disk, as the walk found it: the same files the tree shows, less the directories git
+      // ignores, which the walk does not go into.
+      paths = index.filePaths
     } else {
+      // No walk yet — the worktree has not been selected through the workspace, which is the
+      // tests' case — so git's list stands in.
       paths = worktree.trackedFiles
-      // An agent's brand-new file is not in the index yet but is certainly part of the work.
       let known = Set(paths)
       let extra = key.changed.filter { !known.contains($0) }
       if !extra.isEmpty {
         paths.append(contentsOf: extra)
-        paths.sort { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+        paths.sort(by: FileTree.precedesBytewise)
       }
     }
     scoped = (key, paths, nil)
@@ -547,7 +619,10 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     // scope has nothing to scope to, so it lets go rather than showing an empty panel.
     if isChangedOnly, worktree.changedFiles.isEmpty { isChangedOnly = false }
     let query = filterField.stringValue
-    let inputs = (worktree.trackedFiles, worktree.changedFiles, query, isChangedOnly)
+    let inputs = (
+      worktree.trackedFiles, worktree.changedFiles, query, isChangedOnly,
+      worktree.index?.generation ?? -1
+    )
     if let builtFrom, builtFrom == inputs, !isShowingResults {
       // Same inputs, same tree — but the button is repainted anyway, since this is also the path
       // a first load lands on once git answers.
@@ -567,28 +642,46 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     let openDirs = expandedDirectories()
     let selectedPath = selectedRowPath()
 
-    var paths = scopedPaths()
-    if !query.isEmpty {
-      let needle = FoldedText(query)
-      paths = zip(paths, foldedPaths()).compactMap { needle.occurs(in: $1) ? $0 : nil }
-    }
     var changed: [String: ChangedFile] = [:]
     for file in worktree.changedFiles { changed[file.path] = file }
-    // Not under the ± scope: that is the review set, and an empty directory is not a change —
-    // with them, the scope would list every directory of the checkout beside the changed files.
-    let unseen: ((String, Set<String>) -> [String])? =
-      isChangedOnly
-      ? nil
-      : { [root = worktree.url, needle = query.isEmpty ? nil : FoldedText(query)] parent, known in
-        Self.unseenDirectories(under: parent, in: root, besides: known, matching: needle)
+    if query.isEmpty, !isChangedOnly {
+      // Browsing: the worktree as it is on disk, git's answer laid over it. The tree outlives
+      // the answer, so what a new answer does is renumber the rows already listed.
+      let tree =
+        diskTree
+        ?? DiskTree(root: worktree.url) { [url = worktree.url] directories, files in
+          Git.ignored(at: url, directories: directories, files: files)
+        }
+      diskTree = tree
+      tree.index = worktree.index
+      tree.update(changed: changed, known: knownPaths())
+      // Listed once; after that git's answer renumbers what is listed and the disk is read only
+      // when FSEvents names something (`pathsMoved`).
+      roots = tree.roots.isEmpty ? tree.relistRoots() : tree.roots
+    } else {
+      // Narrowed: a list of the paths git produced — the ± scope's changed set, or everything
+      // matching what was typed — built into a tree. An ignored file is not in git's list and
+      // cannot be filtered to, which is the price of a filter that does not walk the checkout.
+      var paths = scopedPaths()
+      if !query.isEmpty {
+        let needle = FoldedText(query)
+        paths = zip(paths, foldedPaths()).compactMap { needle.occurs(in: $1) ? $0 : nil }
       }
-    roots = FileTree(paths: paths, changed: changed, unseenDirectories: unseen).rootChildren
+      roots = FileTree(paths: paths, changed: changed).rootChildren
+    }
     isShowingResults = false
+    redraw(openDirs: openDirs, selectedPath: selectedPath, query: query)
+    updateEmptyLabel()
+    onScopeChanged?()
+    startPendingNaming()
+  }
+
+  /// Put `roots` on screen. A narrowed tree is small and its point is to be read at a glance, so
+  /// it opens itself; unfiltered, the reader's own disclosure state is what comes back. Either
+  /// way the opening is batched: `expandItem` reloads the view around every row it inserts,
+  /// which on a filtered tree of a few hundred rows was most of what a keystroke cost.
+  private func redraw(openDirs: Set<String>, selectedPath: String?, query: String) {
     outline.reloadData()
-    // A narrowed tree is small and its point is to be read at a glance, so it opens itself;
-    // unfiltered, the reader's own disclosure state is what comes back. Either way the opening is
-    // batched: `expandItem` reloads the view around every row it inserts, which on a filtered
-    // tree of a few hundred rows was most of what a keystroke cost.
     outline.beginUpdates()
     if query.isEmpty {
       reopen(roots, openDirs)
@@ -598,9 +691,20 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     }
     outline.endUpdates()
     if let selectedPath { select(path: selectedPath) }
-    updateEmptyLabel()
-    onScopeChanged?()
-    startPendingNaming()
+  }
+
+  /// Every path git would take, or nil where there is no git — read off the same answer the
+  /// scope is, and kept until that answer moves.
+  private func knownPaths() -> Set<String>? {
+    guard let worktree else { return nil }
+    let changed = worktree.changedFiles.map(\.path)
+    if let known, known.tracked == worktree.trackedFiles, known.changed == changed {
+      return known.paths
+    }
+    let paths: Set<String>? =
+      Git.repository(at: worktree.url) == nil ? nil : Set(worktree.trackedFiles).union(changed)
+    known = (worktree.trackedFiles, changed, paths)
+    return paths
   }
 
   /// Hand a just-made file's row to the naming, once it has one. Called from every way out of
@@ -609,49 +713,6 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     guard let pending = pendingEdit, node(at: pending) != nil else { return }
     pendingEdit = nil
     beginNaming(path: pending)
-  }
-
-  /// The directories directly under `parent` that git produced no path for, `known` being the
-  /// names it did. Read as a node opens, which is the same bargain the tree already makes for its
-  /// children: a worktree of any size costs one directory listing per row actually opened — and
-  /// per rebuild, since a rebuild reopens what was open. Measured: 0.08ms for a 30-entry
-  /// directory, 4ms for a 900-entry one, listing and stat together. git is asked only about what
-  /// is left over — and in an ordinary tree, where every directory holds something tracked,
-  /// nothing is, so the repository is never opened at all.
-  ///
-  /// Ignored ones stay out, which is the whole reason git is asked at all — a checkout's build
-  /// directory holds nothing git can see, and a panel that listed it would be answering with the
-  /// one directory nobody wants. Hidden ones stay out too: `.git` is not a row, and neither is a
-  /// hidden directory nothing has been able to see until now.
-  ///
-  /// A filter reaches these by their own path, the same rule the rest of the tree is narrowed by.
-  /// What it cannot do is pull one in because something *under* it matches: finding that means
-  /// walking the worktree, which is the cost this whole arrangement exists to avoid — and there
-  /// is nothing under one of these that git could have found instead.
-  private static func unseenDirectories(
-    under parent: String, in root: URL, besides known: Set<String>, matching needle: FoldedText?
-  ) -> [String] {
-    let directory = parent.isEmpty ? root : root.appendingPathComponent(parent)
-    guard
-      let entries = try? FileManager.default.contentsOfDirectory(
-        at: directory, includingPropertiesForKeys: [.isDirectoryKey],
-        options: [.skipsHiddenFiles])
-    else { return [] }
-    let names = entries.compactMap { entry -> String? in
-      let name = entry.lastPathComponent
-      guard !known.contains(name),
-        (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-      else { return nil }
-      return name
-    }
-    guard !names.isEmpty else { return [] }
-    var pairs = names.map { ($0, parent.isEmpty ? $0 : "\(parent)/\($0)") }
-    if let needle {
-      pairs = pairs.filter { needle.occurs(in: FoldedText($1)) }
-    }
-    guard !pairs.isEmpty else { return [] }
-    let ignored = Git.ignored(at: root, directories: pairs.map(\.1))
-    return pairs.compactMap { ignored.contains($1) ? nil : $0 }
   }
 
   private func expandedDirectories() -> Set<String> {
@@ -863,7 +924,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
 
   private func updateEmptyLabel() {
     guard isViewLoaded else { return }
-    if let shownWait {
+    if let shownWait, shownWait == .scan || roots.isEmpty {
+      // The disk is listed at once, so a tree is usually on screen while git is still being
+      // read; the note is for the case where there is nothing yet, not a banner over the rows.
       emptyLabel.isHidden = false
       emptyLabel.stringValue = shownWait.note
       filterField.toolTip = nil
@@ -894,8 +957,10 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       return "results files:\(results.count) lines:\(lines)\(truncated ? "+" : "") "
         + "query:\(filterField.stringValue) scope:\(scope) waiting:\(waiting)"
     }
+    let index = worktree?.index.map { $0.isBuilt ? "built" : "walking" } ?? "—"
     return "tree rows:\(outline.numberOfRows) query:\(filterField.stringValue) "
-      + "scope:\(scope) waiting:\(waiting) naming:\(editingPath ?? "—") field:\(hasFieldEditor)"
+      + "scope:\(scope) waiting:\(waiting) naming:\(editingPath ?? "—") field:\(hasFieldEditor) "
+      + "index:\(index)"
   }
 
   /// Whether the row being named really has the field editor — which is the half `editingPath`
@@ -958,9 +1023,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   func writeForScripting(rename path: String, to name: String) -> String {
     loadViewIfNeeded()
     let problem = rename(path, to: name)
-    // The menu's rename is followed by a rebuild a turn later (see `catchUpAfterNaming`); this
-    // one is followed by nothing, so the rebuild a renamed empty directory needs is run here.
-    refresh()
+    // The menu's rename is followed by a redraw a turn later (see `catchUpAfterNaming`); this
+    // one is followed by nothing, so the redraw is run here.
+    if isDiskMode { redrawDisk() }
     return problem ?? "ok"
   }
 
@@ -1218,10 +1283,24 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     let name = untitledName(in: directory)
     let path = directory.isEmpty ? name : "\(directory)/\(name)"
     if let problem = createFile(at: path) { return problem }
-    // git is re-read off the main thread, so the row is a turn or two away; `refresh` starts the
-    // naming once it is there.
+    // Browsing the disk, the row is there as soon as the directory is listed again; narrowed,
+    // it arrives when git's answer does, and `refresh` starts the naming then.
     pendingEdit = path
+    relist(directory)
+    startPendingNaming()
     return nil
+  }
+
+  /// A directory the panel just wrote into: the index reads it again now, on this thread, so
+  /// the row is there to be named; then the tree redraws. FSEvents is asked to ignore hukan's
+  /// own writes, so nothing else will say so — and the index is also told the slow way, for
+  /// the subtree bookkeeping a directory that moved needs.
+  private func relist(_ directory: String) {
+    guard let tree = diskTree else { return }
+    worktree?.index?.refreshNow(directory)
+    if !directory.isEmpty { tree.listedNode(at: directory)?.markStale() }
+    guard isDiskMode, editingPath == nil else { return }
+    redrawDisk()
   }
 
   /// A folder is a row here for the same reason an untracked file is one: it is in this worktree.
@@ -1243,12 +1322,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       return error.localizedDescription
     }
     onFileEdit?(.createdFolder(path))
-    // git's lists have not moved — they cannot, for an empty directory — so the re-read that
-    // brings a new file's row back has nothing to report here. The tree is rebuilt on the spot
-    // instead, since the panel is the only party that can see this at all.
-    builtFrom = nil
     pendingEdit = path
-    refresh()
+    relist(directory)
+    startPendingNaming()
     return nil
   }
 
@@ -1327,21 +1403,17 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     } catch {
       return error.localizedDescription
     }
-    if !gitKnows(path) { builtFrom = nil }
     onFileEdit?(.renamed(from: path, to: renamed))
+    // Both directories, since a name that carried one is a move. Marked and not redrawn: a
+    // rename typed on a row ends inside the field editor's own callback, and the redraw waits
+    // for the turn after (see `catchUpAfterNaming`); the scripting verb redraws itself.
+    let newParent = (renamed as NSString).deletingLastPathComponent
+    worktree.index?.refreshNow(parent)
+    if newParent != parent { worktree.index?.refreshNow(newParent) }
+    worktree.index?.update(moved: [path, renamed]) { [weak self] in self?.pathsMoved($0) }
+    diskTree?.listedNode(at: parent)?.markStale()
+    diskTree?.listedNode(at: newParent)?.markStale()
     return nil
-  }
-
-  /// Whether git's lists — the tree's inputs — have anything at or under `path`. If they do, an
-  /// act on it moves them and the re-read that follows rebuilds the tree; if they do not (an
-  /// empty directory), nothing will, and the tree has to be invalidated by hand or the row
-  /// stays as it was.
-  private func gitKnows(_ path: String) -> Bool {
-    guard let worktree else { return false }
-    let prefix = path + "/"
-    let at: (String) -> Bool = { $0 == path || $0.hasPrefix(prefix) }
-    return worktree.trackedFiles.contains(where: at)
-      || worktree.changedFiles.contains { at($0.path) }
   }
 
   /// Deleted outright rather than moved to the Trash, and confirmed before it happens. A
@@ -1371,11 +1443,8 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       return error.localizedDescription
     }
     onFileEdit?(.deleted(path))
-    // An empty directory's row is the panel's own, so its going is too (see `gitKnows`).
-    if !gitKnows(path) {
-      builtFrom = nil
-      refresh()
-    }
+    relist((path as NSString).deletingLastPathComponent)
+    worktree?.index?.update(moved: [path]) { [weak self] in self?.pathsMoved($0) }
     return nil
   }
 
@@ -1477,15 +1546,23 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   private func catchUpAfterNaming(restoring path: String?, reporting problem: String?) {
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
-      if self.isShowingResults { self.runSearch() } else { self.refresh() }
-      // A row whose name did not take is still showing the plain string it was handed to be
-      // typed in — the half-typed one, or nothing at all — and the refresh that found nothing to
-      // rebuild did not touch it, so it is reloaded on its own account. A renamed row is left
-      // alone: the typed name is the right label until git's answer rebuilds the tree, where a
-      // reload would put the old name back for exactly that long. Never the row being typed in
-      // now, since a reload is what takes a field editor down.
-      if let path, path != self.editingPath, let node = self.node(at: path) {
-        self.outline.reloadItem(node)
+      if self.isShowingResults {
+        self.runSearch()
+      } else if self.isDiskMode {
+        // The disk is the tree, so the redraw is the whole of it: a renamed row is listed under
+        // its new name, and one that kept its name is drawn again with it.
+        self.refresh()
+        if self.editingPath == nil { self.redrawDisk() }
+      } else {
+        self.refresh()
+        // A row whose name did not take is still showing the plain string it was handed to be
+        // typed in — the half-typed one, or nothing at all — and the refresh that found nothing
+        // to rebuild did not touch it, so it is reloaded on its own account. A renamed row is
+        // left alone: the typed name is the right label until git's answer rebuilds the tree.
+        // Never the row being typed in now, since a reload is what takes a field editor down.
+        if let path, path != self.editingPath, let node = self.node(at: path) {
+          self.outline.reloadItem(node)
+        }
       }
       if let problem { self.report(problem) }
     }
@@ -1558,19 +1635,23 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       ?? PanelRowView(identifier: identifier)
     switch item {
     case let node as FileNode:
+      // An ignored file is in the worktree and so on the tree, but it is not the work; the
+      // dimming is what keeps a build directory from reading as it.
       cell.show(
         icon: node.isDirectory ? "folder" : "doc",
         lead: nil,
         name: NSAttributedString(
           string: node.name,
           attributes: [
-            .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor,
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: node.isIgnored ? NSColor.tertiaryLabelColor : NSColor.labelColor,
           ]),
         trailing: node.added.flatMap { added in
           node.removed.flatMap { removed in
             added + removed > 0 ? diffstatText(added: added, removed: removed) : nil
           }
-        })
+        },
+        dimmed: node.isIgnored)
       cell.toolTip = node.relativePath
     case let file as ResultFile:
       cell.show(
@@ -1708,13 +1789,14 @@ private final class PanelRowView: NSTableCellView {
   /// a row with no icon starts where its text does.
   func show(
     icon symbol: String?, lead: NSAttributedString?, name: NSAttributedString,
-    trailing: NSAttributedString?
+    trailing: NSAttributedString?, dimmed: Bool = false
   ) {
     // This cell may be the one a name was being typed in, handed back for another row. Ending
     // the edit is the safe failure; a bezel left on a row nobody is naming is the other one.
     if nameField.isEditable { endNaming() }
     icon.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
     icon.isHidden = symbol == nil
+    icon.contentTintColor = dimmed ? .quaternaryLabelColor : .tertiaryLabelColor
     leadField.attributedStringValue = lead ?? NSAttributedString()
     leadField.isHidden = lead == nil
     nameField.attributedStringValue = name

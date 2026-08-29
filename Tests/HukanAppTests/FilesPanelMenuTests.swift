@@ -469,7 +469,7 @@ final class FilesPanelNamingTests: XCTestCase {
       FileManager.default.fileExists(atPath: worktree.url.appendingPathComponent("a.swift").path))
     XCTAssertFalse(field.isEditable, "the box is gone")
     XCTAssertFalse(field.isBezeled, "and so is its frame")
-    XCTAssertEqual(field.stringValue, "a.swift", "the row says the file's name again")
+    XCTAssertEqual(try label(of: "a.swift", in: panel), "a.swift", "the row says the name again")
   }
 
   /// A name cleared and committed is not a rename. The file keeps its name, and so does the row.
@@ -491,8 +491,21 @@ final class FilesPanelNamingTests: XCTestCase {
 
     XCTAssertEqual(
       try FileManager.default.contentsOfDirectory(atPath: worktree.url.path), ["a.swift"])
-    XCTAssertEqual(field.stringValue, "a.swift", "the row says the file's name again")
+    XCTAssertEqual(try label(of: "a.swift", in: panel), "a.swift", "the row says the name again")
     XCTAssertFalse(field.isBezeled)
+  }
+
+  /// What the row for `path` reads as now — off whichever cell view the outline has for it,
+  /// since a redraw may hand the row a different one than the edit began in.
+  @MainActor
+  private func label(of path: String, in panel: FilesPanelViewController) throws -> String {
+    let outline = try XCTUnwrap(findOutline(in: panel.view))
+    let row = try XCTUnwrap(
+      (0..<outline.numberOfRows).first {
+        (outline.item(atRow: $0) as? FileNode)?.relativePath == path
+      }, "a row for \(path)")
+    let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView
+    return try XCTUnwrap(cell?.textField?.stringValue)
   }
 
   /// Starting a name on one row while another is being typed commits the first — and must not

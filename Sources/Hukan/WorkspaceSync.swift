@@ -217,6 +217,17 @@ extension Workspace {
     loadInFlight.insert(worktreeID)
     let url = worktree.url
     let limit = worktree.historyLimit
+    // The disk, walked once on its own queue and kept in step from then on (the watcher). The
+    // panel draws before it is done — the tree lists a directory itself where the index has no
+    // answer yet — so nothing here waits on it; when it lands, the panel is told the whole tree
+    // may read differently, which is what a nil batch means.
+    if worktree.index == nil {
+      let index = WorktreeIndex(root: url) { directories in
+        Git.ignored(at: url, directories: directories)
+      }
+      worktree.index = index
+      index.build { [weak self] in self?.onWorktreePathsMoved?(worktreeID, nil) }
+    }
     DispatchQueue.global(qos: .userInitiated).async {
       let tracked = Git.trackedFiles(at: url)
       DispatchQueue.main.async {
@@ -318,7 +329,15 @@ extension Workspace {
       let root = worktree.url.standardizedFileURL.path
       var started = [
         DirectoryWatcher(url: worktree.url) { [weak self] paths in
-          self?.refreshFiles(worktreeID: id, moved: Workspace.relativePaths(paths, under: root))
+          let moved = Workspace.relativePaths(paths, under: root)
+          // The index lists again the directories the batch touched, on its own queue, and
+          // says which — before git is asked, since the tree does not wait on git and git could
+          // not answer for a `mkdir` in any case. No index yet means no worktree on screen that
+          // reads one.
+          self?.worktree(id: id)?.index?.update(moved: moved) { directories in
+            self?.onWorktreePathsMoved?(id, directories)
+          }
+          self?.refreshFiles(worktreeID: id, moved: moved)
         }
       ]
       // A linked worktree keeps a pointer file where the main checkout keeps a directory, so its
@@ -338,32 +357,6 @@ extension Workspace {
           })
       }
       watchers[id] = started
-    }
-  }
-
-  /// Whether any of `moved` is a directory that exists, that git does not ignore, and that git
-  /// has nothing under — the one thing an FSEvents batch can carry that git's own answer cannot
-  /// report, since an empty directory is nothing to git. Three gates, cheapest first: the stat,
-  /// which every write to a file fails; then git's ignore rules, asked once for the whole batch,
-  /// because a dependency install is thousands of directories arriving at once under one ignored
-  /// parent and they must not cost a repository open each; and only then the scan of git's
-  /// lists, the one gate priced by the size of the checkout.
-  static func carriesUnseenDirectory(
-    _ moved: Set<String>, at url: URL, tracked: [String], changed: [String]
-  ) -> Bool {
-    let directories = moved.filter { path in
-      var isDirectory: ObjCBool = false
-      return FileManager.default.fileExists(
-        atPath: url.appendingPathComponent(path).path, isDirectory: &isDirectory)
-        && isDirectory.boolValue
-    }
-    guard !directories.isEmpty else { return false }
-    let ignored = Git.ignored(at: url, directories: Array(directories))
-    return directories.contains { path in
-      guard !ignored.contains(path) else { return false }
-      let prefix = path + "/"
-      let under: (String) -> Bool = { $0.hasPrefix(prefix) }
-      return !tracked.contains(where: under) && !changed.contains(where: under)
     }
   }
 
@@ -399,17 +392,6 @@ extension Workspace {
       // second, and the equality test has to see that as a change or the section would keep
       // drawing the list from before it.
       let history = Git.history(at: url, limit: limit)
-      // A directory git cannot see moved. It is a row in the files panel all the same, and git's
-      // lists can never report it — an empty directory is nothing to git — so the equality test
-      // below would let a `mkdir` pass unseen. Checked here rather than by widening that test,
-      // and narrowly: a moved path is looked at only if it is a directory that exists and git has
-      // nothing under it, which every write to a file fails at the first stat. That is what keeps
-      // the churning-build case free, since its paths are files and its directory is ignored.
-      let newDirectory =
-        moved.map {
-          Workspace.carriesUnseenDirectory(
-            $0, at: url, tracked: tracked, changed: changed.map(\.path))
-        } ?? false
       DispatchQueue.main.async {
         guard let self else { return }
         self.refreshInFlight.remove(worktreeID)
@@ -422,10 +404,6 @@ extension Workspace {
           worktree.history = history
           worktree.hasLoadedFiles = true
           self.onWorktreeFilesChanged?(worktreeID, moved)
-        } else if newDirectory {
-          // Nothing git can answer for has moved, so nothing but the tree has to be redrawn —
-          // the narrow hook, rather than the one that reloads the window.
-          self.onWorktreeDirectoriesChanged?(worktreeID)
         }
         // Whatever the result, git has just been asked — a branch move's re-read is satisfied.
         self.worktree(id: worktreeID)?.needsFileReload = false

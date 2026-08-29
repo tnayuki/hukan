@@ -192,12 +192,10 @@ Workspace (one window)
 - **What has changed includes what git has never seen.** The working-tree diff carries untracked
   files, counted as added — `git status`'s reading of the question rather than
   `git diff HEAD`'s — because a file nobody has run `git add` on is the whole of what a brand-new
-  file is, and a brand-new file is what an agent produces most. While they were excluded, the
-  file an agent had just written was invisible in every place hukan reads a change from at once:
-  the panel's tree is git's path list, so the file was not in it; the ± scope, the toolbar's
-  diffstat and the rail all measured the same diff, so none of them counted it either — and the
-  panel's own New File and Rename landed in the same hole, making a name until `git add` ran.
-  Ignored files stay out, which is the half of libgit2's default worth keeping.
+  file is, and a brand-new file is what an agent produces most. While they were excluded, nothing hukan measures a
+  change with counted the file an agent had just written: not the ± scope, not the toolbar's
+  diffstat, not the rail, not the row's own numbers — they all read this one diff. Ignored files
+  stay out, which is the half of libgit2's default worth keeping.
 - **The gutter is where the diff signal reaches line granularity** — change bars beside the
   line numbers, never a second text mode. Stagedness is the bar's fill — solid working-tree,
   hollow staged — because the color already carries the kind: green added, blue rewritten, a
@@ -488,30 +486,22 @@ Workspace (one window)
   session already writes with a shell, and having to leave the window to rename one bought nothing.
   What the acts do owe is a report of themselves, since nothing else will notice them: a tab
   showing a renamed file follows the name, one showing a deleted file closes, and git is re-read.
-- **A directory git cannot see is still a row, and that is what New Folder rests on.** git records
-  no empty directory, so a folder made on its own would have been invisible — which is why there
-  was no New Folder at first, and the argument that overturned it is the one this panel already
-  answered for untracked *files*: it is in this worktree, so it is a row. **The read is done as a
-  node opens, not by walking the worktree** — the same bargain the tree already makes for its
-  children, so a checkout of any size costs one directory listing per row actually opened, and the
-  tree stays a lazy window rather than becoming a scan. **git is asked only about what it did not
-  itself produce**, which is the whole of the cost control: in an ordinary tree every directory
-  holds something tracked, nothing is left over, and the repository is never opened at all. What
-  is left over is asked about because it has to be — a checkout's build directory holds nothing
-  git can see, and listing it would be answering with the one directory nobody wants, so an
-  ignored one stays out, and so does a hidden one. **A filter reaches these by their own path**
-  and cannot pull one in because something under it matches: finding that means the walk this
-  arrangement exists to avoid, and there is nothing under one of these that git could have found
-  instead. The other end of the same fact is that **git's lists cannot move for an empty
-  directory, so nothing that watches them can report one**: hukan's own New Folder rebuilds the
-  tree on the spot, and a directory made anywhere else is noticed by the FSEvents refresh itself.
-  That refresh only tells the window when git's answer moved — the equality test that keeps a
-  churning build from reloading anything — so the directory is looked for beside it, and narrowly:
-  a moved path is examined only if it is a directory that exists, that git has nothing under, and
-  that git does not ignore. Every write to a file fails at the first stat, which is what leaves
-  the case the equality test was written for exactly as free as it was. What it wakes is the tree
-  alone, on a hook of its own — no rail, no diffstat, no tab, because nothing anything else is
-  measured against has moved.
+- **The files panel's tree is the worktree as it is on disk, and git is laid over it.** It was
+  git's path list at first, and every hole that list had was patched one at a time — untracked
+  files, then empty directories, and the next was the ignored files, which were to be shown too.
+  At that point the list was the filesystem with extra steps. So the disk is what is listed, and
+  what git answers is laid over it: the diffstats, and the dimming. **An ignored file is a row,
+  dimmed** — it is in the worktree whether git wants it or not, and the dimming is what keeps a
+  build directory from reading as the work. **The listing is lazy and off the main thread**, so a
+  checkout of any size costs what is on screen and a file a build or an agent just wrote appears
+  when its batch lands, without waiting on git and whether git will ever see it or not. **The one
+  refusal is that ignored directories are not walked into.** They are rows, and they open, but a
+  dependency directory is a hundred thousand files nobody wants filtered or searched, and walking
+  it with git's ignore rules applied from outside libgit2 was measured at 566ms against the 107ms
+  the working-tree diff spends applying them inside. So **the filter and the content search cover
+  what the walk covers**, which is the tree less those directories; an ignored file in an ordinary
+  directory is covered like any other. The ± scope is git's changed set, as before, and everything
+  under `.git` is left out of all of it, being the repository and not the worktree.
 - **The panel's own costs were measured, against a 25,000-file checkout.** git was never the slow
   half there — the working-tree diff and the index read are tens of milliseconds — so all three
   of the numbers that mattered were hukan's own. A content search took 10.5s, nearly all of it

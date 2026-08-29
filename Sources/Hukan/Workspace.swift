@@ -24,10 +24,11 @@ final class Workspace {
   /// commit, a staging, anything under git's own directory — and everything a reader has open
   /// has to be re-read.
   var onWorktreeFilesChanged: ((UUID, Set<String>?) -> Void)?
-  /// A directory git cannot see arrived under a watched worktree — the one change git's own
-  /// answer never reports. Narrower than the hook above on purpose: nothing has moved that a tab,
-  /// the rail or a diffstat could be measured against, so only the tree is redrawn.
-  var onWorktreeDirectoriesChanged: ((UUID) -> Void)?
+  /// The worktree's index read again the directories an FSEvents batch touched, and these are
+  /// they — nil for all of them, which is a batch that could not be placed or the index's first
+  /// full walk landing. The files panel's tree reads the index, so this is what tells it which
+  /// rows to draw again; everything else waits for git's answer on the hook above.
+  var onWorktreePathsMoved: ((UUID, Set<String>?) -> Void)?
 
   // The four properties below are the class's own bookkeeping, but `private` is
   // file-scoped and their only other user is `WorkspaceSync.swift` — the extension that

@@ -32,30 +32,34 @@ enum Git {
     return fileStats(in: diff)
   }
 
-  /// Which of `paths` git would ignore. One repository open for the batch, because the caller
-  /// asks per directory it opens — the names directly under one node — rather than per file.
-  /// A directory is asked about with its trailing slash, which is how libgit2 is told that the
-  /// path is one.
-  static func ignored(at url: URL, directories: [String]) -> Set<String> {
-    guard !directories.isEmpty, let repo = openRepository(at: url) else { return [] }
+  /// Which of these git would ignore. One repository open for the batch, because the caller asks
+  /// per directory it lists — the entries directly under one node — rather than per path; each
+  /// answer is about 27µs on top of that. A directory is asked about with its trailing slash,
+  /// which is how libgit2 is told that the path is one.
+  static func ignored(at url: URL, directories: [String], files: [String] = []) -> Set<String> {
+    guard !(directories.isEmpty && files.isEmpty), let repo = openRepository(at: url) else {
+      return []
+    }
     defer { git_repository_free(repo) }
     var result: Set<String> = []
-    for path in directories {
+    for (path, spelled) in directories.map({ ($0, $0 + "/") }) + files.map({ ($0, $0) }) {
       var ignored: Int32 = 0
-      if git_ignore_path_is_ignored(&ignored, repo, path + "/") == 0, ignored != 0 {
+      if git_ignore_path_is_ignored(&ignored, repo, spelled) == 0, ignored != 0 {
         result.insert(path)
       }
     }
     return result
   }
 
-  /// The tracked list under git, otherwise a shallow walk of the real files. A Worktree is "a
-  /// directory that may carry git information", so both cases have to work — and a git directory
-  /// with nothing tracked yet (a fresh `git init`) falls through to the walk too, so its
-  /// not-yet-added files still show, matching what `git ls-files` returning nothing used to do.
-  /// The worktree's tracked paths, in git-index order — which is byte-sorted. The All-mode sidebar
-  /// tree (`FileTree`) relies on that ordering for its prefix binary search, so the non-git
-  /// fallback sorts the same way.
+  /// The one-file form, for the editor asking about the file it has open.
+  static func isIgnored(at url: URL, file path: String) -> Bool {
+    ignored(at: url, directories: [], files: [path]).contains(path)
+  }
+
+  /// The worktree's tracked paths, in git-index order — which is byte-sorted, the order the
+  /// panel's `FileTree` relies on for its prefix binary search. Empty where there is no git or
+  /// nothing tracked yet: the panel's tree and its filter read the disk (`WorktreeIndex`), and
+  /// this list is what tells a file git takes from one it ignores.
   static func trackedFiles(at url: URL) -> [String] {
     if let repo = openRepository(at: url) {
       defer { git_repository_free(repo) }
@@ -69,10 +73,10 @@ enum Git {
             paths.append(String(cString: path))
           }
         }
-        if !paths.isEmpty { return paths }
+        return paths
       }
     }
-    return filesystemWalk(at: url)
+    return []
   }
 
   /// The patch for one file, measured against `base` — `git diff HEAD -- <path>`. Returns the
@@ -1053,25 +1057,4 @@ enum Git {
     return diff
   }
 
-  /// The non-git fallback: a shallow walk of the real files under `url`, capped so a huge tree
-  /// cannot stall the sidebar.
-  private static func filesystemWalk(at url: URL) -> [String] {
-    let keys: [URLResourceKey] = [.isDirectoryKey]
-    guard
-      let enumerator = FileManager.default.enumerator(
-        at: url, includingPropertiesForKeys: keys,
-        options: [.skipsHiddenFiles, .skipsPackageDescendants])
-    else { return [] }
-    var paths: [String] = []
-    let prefix = url.standardizedFileURL.path + "/"
-    for case let fileURL as URL in enumerator {
-      if (try? fileURL.resourceValues(forKeys: Set(keys)))?.isDirectory == true { continue }
-      let path = fileURL.standardizedFileURL.path
-      guard path.hasPrefix(prefix) else { continue }
-      paths.append(String(path.dropFirst(prefix.count)))
-      if paths.count >= 5000 { break }
-    }
-    // Match the git-index path order the tree expects (enumeration order is not sorted).
-    return paths.sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
-  }
 }

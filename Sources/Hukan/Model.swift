@@ -95,6 +95,10 @@ final class Worktree {
   /// Working tree changes. The diffstat belongs to the worktree, not to a session.
   var changedFiles: [ChangedFile] = []
   var trackedFiles: [String] = []
+  /// The worktree's directories as they are on disk, walked once in the background and kept in
+  /// step with FSEvents — what the files panel's tree, filter and search read. Built when the
+  /// worktree is first selected; nil until then, where the panel lists the disk itself.
+  var index: WorktreeIndex?
   /// What this worktree has committed past its base branch — the History section's list. Read on
   /// the same tick as the changed files, since the commit that empties one fills the other.
   var history = Git.History()
@@ -143,24 +147,36 @@ struct ChangedFile: Equatable {
   var name: String { (path as NSString).lastPathComponent }
 }
 
-/// One node in the sidebar. Flat in Changed mode; in All mode it is a lazily-materialized window
-/// onto a shared, path-sorted `FileTree` — a directory's children are computed, and then cached,
-/// only when the outline view asks for them, so a huge worktree costs what it shows on screen, not
-/// what it holds on disk.
+/// One node in the sidebar, materialized lazily: a directory's children are computed, and then
+/// cached, only when the outline view asks for them, so a huge worktree costs what it shows on
+/// screen, not what it holds. Where the children come from is the node's `source` — a slice of a
+/// path-sorted `FileTree` when the tree is a list of paths (a filter, the changed scope), or the
+/// directory itself on disk when it is the worktree as it is (`DiskTree`).
 final class FileNode: NSObject {
   let name: String
   let relativePath: String
   let isDirectory: Bool
   var added: Int?
   var removed: Int?
+  /// git would not take this file, or anything under this directory. Shown all the same — it is
+  /// in the worktree — but dimmed, so the build output does not read as the work.
+  var isIgnored = false
 
-  /// The tree this directory node draws its children from, and the `paths` slice — every entry
-  /// sharing this node's first `depth` components — those children live in. nil for a leaf or a
-  /// flat Changed-mode node, whose `children` is always empty.
-  private let tree: FileTree?
-  private let range: Range<Int>
-  private let depth: Int
+  private enum Source {
+    /// A directory whose descendants are exactly `paths[range]` of the tree, every one of them
+    /// sharing the node's first `depth` components.
+    case block(FileTree, Range<Int>, Int)
+    /// A directory listed from disk as it opens.
+    case disk(DiskTree)
+  }
+  /// nil for a leaf, whose `children` is always empty.
+  private let source: Source?
   private var cachedChildren: [FileNode]?
+  /// The listing is known to be out of date (the directory moved on disk, or git's answer did),
+  /// and is read again on the next ask — reusing the nodes for what is still there, since the
+  /// outline keys its disclosure state on the node objects and a fresh set would fold every open
+  /// row beneath.
+  private var stale = false
 
   /// A leaf, or a flat Changed-mode row.
   init(
@@ -171,9 +187,7 @@ final class FileNode: NSObject {
     self.isDirectory = isDirectory
     self.added = added
     self.removed = removed
-    self.tree = nil
-    self.range = 0..<0
-    self.depth = 0
+    self.source = nil
   }
 
   /// A lazy directory node over `tree.paths[range]`.
@@ -183,27 +197,224 @@ final class FileNode: NSObject {
     self.name = name
     self.relativePath = relativePath
     self.isDirectory = true
-    self.tree = tree
-    self.range = range
-    self.depth = depth
+    self.source = .block(tree, range, depth)
+  }
+
+  /// A directory on disk, listed when it opens.
+  fileprivate init(name: String, relativePath: String, disk: DiskTree) {
+    self.name = name
+    self.relativePath = relativePath
+    self.isDirectory = true
+    self.source = .disk(disk)
+  }
+
+  var isFromDisk: Bool {
+    if case .disk = source { return true }
+    return false
   }
 
   /// This directory's immediate children, computed once on first access. Empty for a leaf.
   var children: [FileNode] {
-    if let cachedChildren { return cachedChildren }
-    let result = tree?.children(inRange: range, depth: depth, parent: relativePath) ?? []
+    if let cachedChildren, !stale { return cachedChildren }
+    let result: [FileNode]
+    switch source {
+    case .block(let tree, let range, let depth)?:
+      result = tree.children(inRange: range, depth: depth)
+    case .disk(let disk)?:
+      result = disk.children(
+        of: relativePath, parentIgnored: isIgnored, reusing: cachedChildren ?? [])
+    case nil:
+      result = []
+    }
     cachedChildren = result
+    stale = false
     return result
   }
+
+  /// The children already listed, without listing — what a stale walk goes through.
+  fileprivate var listedChildren: [FileNode] { cachedChildren ?? [] }
+
+  func markStale() { stale = true }
 
   /// Build a hierarchy from a list of paths, attaching diffstats to changed files. A convenience
   /// over `FileTree` for a caller holding a plain, possibly-unsorted list (the tests); production
   /// builds a `FileTree` straight from `Git.trackedFiles`, which is already byte-sorted, and skips
   /// this sort.
   static func tree(paths: [String], changed: [String: ChangedFile]) -> [FileNode] {
-    FileTree(
-      paths: paths.sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }, changed: changed
-    ).rootChildren
+    FileTree(paths: paths.sorted(by: FileTree.precedesBytewise), changed: changed).rootChildren
+  }
+
+  /// Directories first, then natural order — the look the eager tree had.
+  static func byKindThenName(_ left: FileNode, _ right: FileNode) -> Bool {
+    if left.isDirectory != right.isDirectory { return left.isDirectory }
+    return left.name.localizedStandardCompare(right.name) == .orderedAscending
+  }
+}
+
+/// The worktree as it is on disk, one directory at a time. A directory's rows are built when it
+/// opens and not before, and their entries come off the worktree's index — the walk that already
+/// went past, on its own queue — so opening a row costs the main thread nothing off the disk. The
+/// disk is read here only where the index has no answer: a directory git ignores, which the walk
+/// does not go into, or one the walk has not reached yet. Either is one directory's listing —
+/// measured at 0.08ms for 30 entries and 4ms for 900, listing and stat together — and the
+/// nodes are kept until something says the directory moved. git is not the source; it is asked
+/// two things about what was found: which of it changed (the diffstats, from the working-tree
+/// diff) and which of it git would not take (the dimming).
+final class DiskTree {
+  let root: URL
+  /// The walk's answer, when there is one. Set by the panel as the worktree's index appears.
+  var index: WorktreeIndex?
+  /// Diffstats by path.
+  private var changed: [String: ChangedFile] = [:]
+  /// Every path git would take — tracked, or untracked and not ignored. A file on disk that is
+  /// not here is one git ignores, or one git has not been asked about yet; the second is told
+  /// from the first by asking. nil where there is no git, and so nothing is ignored.
+  private var known: Set<String>?
+  /// git's ignore rules, asked once per listing for the directories it holds and the files git
+  /// does not know — never for a listing under an ignored directory, where the answer is already
+  /// known for the lot.
+  private let ignored: (_ directories: [String], _ files: [String]) -> Set<String>
+  private(set) var roots: [FileNode] = []
+
+  init(root: URL, ignored: @escaping (_ directories: [String], _ files: [String]) -> Set<String>) {
+    self.root = root
+    self.ignored = ignored
+  }
+
+  /// git answered. What it moves is the numbers on the rows and which of them are dimmed, and
+  /// both are re-read off the answer in memory — never the disk, which has not been touched by
+  /// git answering and which FSEvents speaks for on its own. An agent at work is a git answer
+  /// every batch, and a listing of every open directory per batch was the one recurring cost on
+  /// the main thread this tree had; this leaves it with none.
+  func update(changed: [String: ChangedFile], known: Set<String>?) {
+    self.changed = changed
+    self.known = known
+    for node in listedNodes() {
+      if node.isDirectory {
+        sumChanges(into: node)
+      } else {
+        node.added = changed[node.relativePath]?.added
+        node.removed = changed[node.relativePath]?.removed
+        // A file git now lists is one it takes; one it still does not keeps the answer it was
+        // given when it was listed.
+        if known?.contains(node.relativePath) == true { node.isIgnored = false }
+      }
+    }
+  }
+
+  /// Everything listed is read again on its next ask — for a batch of moved paths that could
+  /// not be placed, where which directories moved is not known and all of them might have.
+  func markAllStale() {
+    for node in listedNodes() { node.markStale() }
+  }
+
+  /// A directory carries the sum of what changed beneath it, so a folded tree still says where
+  /// the work is. Summed over the changed set, which is small, rather than over the listing,
+  /// which does not know what is under it.
+  private func sumChanges(into node: FileNode) {
+    var added = 0
+    var removed = 0
+    let prefix = node.relativePath + "/"
+    for (changedPath, file) in changed where changedPath.hasPrefix(prefix) {
+      added += file.added
+      removed += file.removed
+    }
+    node.added = added + removed > 0 ? added : nil
+    node.removed = added + removed > 0 ? removed : nil
+  }
+
+  /// The top-level entries, listed again — reusing the nodes for what is still there.
+  @discardableResult
+  func relistRoots() -> [FileNode] {
+    roots = children(of: "", parentIgnored: false, reusing: roots)
+    return roots
+  }
+
+  /// The node for `path`, if the directories above it have been listed — the walk goes through
+  /// listings only and never causes one, since a node nobody has opened has nothing to go stale.
+  func listedNode(at path: String) -> FileNode? {
+    var nodes = roots
+    let components = path.split(separator: "/").map(String.init)
+    for depth in 0..<components.count {
+      let prefix = components[0...depth].joined(separator: "/")
+      guard let node = nodes.first(where: { $0.relativePath == prefix }) else { return nil }
+      if depth == components.count - 1 { return node }
+      nodes = node.listedChildren
+    }
+    return nil
+  }
+
+  private func listedNodes() -> [FileNode] {
+    var result: [FileNode] = []
+    func walk(_ nodes: [FileNode]) {
+      for node in nodes {
+        result.append(node)
+        walk(node.listedChildren)
+      }
+    }
+    walk(roots)
+    return result
+  }
+
+  func children(of parent: String, parentIgnored: Bool, reusing previous: [FileNode]) -> [FileNode]
+  {
+    let indexed = index?.entries(of: parent)
+    guard
+      let entries = indexed
+        ?? WorktreeIndex.list(parent.isEmpty ? root : root.appendingPathComponent(parent))
+    else { return [] }
+    // Reused by path, and only where the node is the same kind of thing: a leaf is a leaf
+    // whatever listed it, but a directory node from a path-list tree would go on drawing its
+    // children from that list.
+    let reusable = Dictionary(
+      previous.map { ($0.relativePath, $0) }, uniquingKeysWith: { first, _ in first })
+    var result: [FileNode] = []
+    var directories: [FileNode] = []
+    var unknownFiles: [FileNode] = []
+    for entry in entries {
+      let name = entry.name
+      let path = parent.isEmpty ? name : "\(parent)/\(name)"
+      let isDirectory = entry.isDirectory
+      let node: FileNode
+      if let old = reusable[path], old.isDirectory == isDirectory,
+        !old.isDirectory || old.isFromDisk
+      {
+        node = old
+      } else if isDirectory {
+        node = FileNode(name: name, relativePath: path, disk: self)
+      } else {
+        node = FileNode(name: name, relativePath: path, isDirectory: false)
+      }
+      if isDirectory {
+        sumChanges(into: node)
+        directories.append(node)
+      } else {
+        node.added = changed[path]?.added
+        node.removed = changed[path]?.removed
+        if known != nil, known?.contains(path) != true { unknownFiles.append(node) }
+      }
+      node.isIgnored = parentIgnored
+      result.append(node)
+    }
+    // Under an ignored directory everything is ignored and nothing is asked. Under a plain one
+    // the index already knows which directories git ignores, having asked as it walked; git is
+    // asked here about the directories only where the listing was this tree's own, and about
+    // the files it did not produce — which are the ignored ones and the brand-new ones, and the
+    // ask is what tells those apart.
+    if known != nil, !parentIgnored, !(directories.isEmpty && unknownFiles.isEmpty) {
+      let askAbout = indexed == nil ? directories : []
+      if let index, indexed != nil {
+        for node in directories { node.isIgnored = index.isIgnoredDirectory(node.relativePath) }
+      }
+      if !(askAbout.isEmpty && unknownFiles.isEmpty) {
+        let answer = ignored(askAbout.map(\.relativePath), unknownFiles.map(\.relativePath))
+        for node in askAbout + unknownFiles {
+          node.isIgnored = answer.contains(node.relativePath)
+        }
+      }
+    }
+    result.sort(by: FileNode.byKindThenName)
+    return result
   }
 }
 
@@ -215,28 +426,34 @@ final class FileNode: NSObject {
 final class FileTree {
   let paths: [String]
   private let changed: [String: ChangedFile]
-  /// The directories directly under a given path that git produced no path for — empty ones, and
-  /// ones holding nothing git can see — asked for as a node opens rather than found by walking
-  /// the worktree, so a tree that shows them still costs what is on screen. nil leaves the tree
-  /// exactly git's path list, which is what the tests and the non-git case want.
-  private let unseenDirectories: ((String, Set<String>) -> [String])?
 
-  init(
-    paths: [String], changed: [String: ChangedFile],
-    unseenDirectories: ((String, Set<String>) -> [String])? = nil
-  ) {
+  /// git-index order: bytes. `utf8.lexicographicallyPrecedes` says the same thing and walks the
+  /// two views a byte at a time through generic iteration — 315ms to sort 14,500 paths, against
+  /// the few milliseconds one `memcmp` per comparison costs.
+  static func precedesBytewise(_ left: String, _ right: String) -> Bool {
+    var left = left
+    var right = right
+    return left.withUTF8 { leftBytes in
+      right.withUTF8 { rightBytes in
+        let common = min(leftBytes.count, rightBytes.count)
+        let order = memcmp(leftBytes.baseAddress, rightBytes.baseAddress, common)
+        return order != 0 ? order < 0 : leftBytes.count < rightBytes.count
+      }
+    }
+  }
+
+  init(paths: [String], changed: [String: ChangedFile]) {
     self.paths = paths
     self.changed = changed
-    self.unseenDirectories = unseenDirectories
   }
 
   /// The top-level entries.
-  var rootChildren: [FileNode] { children(inRange: 0..<paths.count, depth: 0, parent: "") }
+  var rootChildren: [FileNode] { children(inRange: 0..<paths.count, depth: 0) }
 
   /// The immediate children of the directory whose descendants are exactly `paths[range]`, every
   /// one of them sharing the same first `depth` path components. Directories come first, then
   /// natural order — the look the eager tree had.
-  func children(inRange range: Range<Int>, depth: Int, parent: String) -> [FileNode] {
+  func children(inRange range: Range<Int>, depth: Int) -> [FileNode] {
     var result: [FileNode] = []
     var i = range.lowerBound
     while i < range.upperBound {
@@ -275,26 +492,7 @@ final class FileTree {
         i = end
       }
     }
-    // A directory git has no path for is still a directory in this worktree — the same reason an
-    // untracked file is a row. It gets an empty range: everything under it, if anything ever
-    // lands there, arrives the same way this did, one node at a time.
-    if let unseenDirectories {
-      // The names git already produced go in, not out: the read on the other side asks git about
-      // what is left, and in an ordinary tree — every directory holding something tracked —
-      // nothing is, so it never has to ask at all.
-      let known = Set(result.map(\.name))
-      let empty = range.upperBound..<range.upperBound
-      for name in unseenDirectories(parent, known) {
-        result.append(
-          FileNode(
-            name: name, relativePath: parent.isEmpty ? name : "\(parent)/\(name)", tree: self,
-            range: empty, depth: depth + 1))
-      }
-    }
-    result.sort { left, right in
-      if left.isDirectory != right.isDirectory { return left.isDirectory }
-      return left.name.localizedStandardCompare(right.name) == .orderedAscending
-    }
+    result.sort(by: FileNode.byKindThenName)
     return result
   }
 

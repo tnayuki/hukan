@@ -96,9 +96,14 @@ tab's own search field marks every occurrence in every open card at once, and Re
 through them.
 
 **The desk.** The selected worktree's tabs, with the files panel as the trailing column, hidden
-by the toggle at the toolbar's far end. One field over the tree runs two jobs, told apart by
+by the toggle at the toolbar's far end. The tree is the worktree as it is on disk — every file and
+directory, including the ones git ignores, which are drawn dimmed — walked once in the background
+when the worktree is first selected and kept in step with what moves, so a file a build or an
+agent just wrote is there as it lands. git's diffstats are laid over it. One field over the tree runs two jobs, told apart by
 gesture: typing filters by path, Return searches contents and the panel becomes a result list
-until Escape. Either can be walked away from: the scan says it is searching, and a query typed
+until Escape. Both work over what the tree shows, with one exception: a directory git ignores is
+on the tree, dimmed, but neither filtered into nor searched — a dependency directory is a hundred
+thousand files nobody wants either done to. An ignored file in an ordinary directory is. Either can be walked away from: the scan says it is searching, and a query typed
 over it drops the one still reading rather than queueing behind it. The ± scopes both to the
 changed files, and every row carries its own diffstat.
 
@@ -109,11 +114,7 @@ deletes it. A name is typed on the row itself: renaming edits it in place, and a
 under an untitled name and handed straight to the same edit. ⏎ on a row starts it, the way the
 Finder does, and ⌘↓ is what opens a row from the keyboard. The name is read against the directory
 the row is in and may carry directories, which are made on the way, so renaming is also how a file
-moves. It cannot climb out of the worktree. New Folder sits beside New File: git records no empty
-directory, but the panel shows one anyway — it is in this worktree, which is the same reason an
-untracked file is a row — reading each directory as its row opens rather than walking the
-checkout, and leaving out the ones git ignores. One made in the Finder or by a command shows up
-the same way.
+moves. It cannot climb out of the worktree. New Folder sits beside New File.
 While a name is being typed the tree holds still, so an agent writing in the worktree cannot take
 the field away mid-word. A delete is confirmed and then really deleted
 rather than moved to the Trash. A tab already showing

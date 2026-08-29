@@ -17,8 +17,9 @@ final class FilesPanelTests: XCTestCase {
     super.tearDown()
   }
 
-  /// `tracked`, where it differs from `files`, is a file list the tree is built from without
-  /// writing any of it to disk — the tree reads git's answer, not the directory.
+  /// `files` go on disk, which is what the tree lists. `tracked`, where it differs, is what git
+  /// answers — the list a filter or the ± scope is built from, and what tells an ignored file
+  /// from one git would take; a file on disk that is not in it is drawn dimmed.
   private func makeWorktree(files: [String], tracked: [String]? = nil) throws -> Worktree {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("hukan-files-panel-\(UUID().uuidString)")
@@ -114,9 +115,9 @@ final class FilesPanelTests: XCTestCase {
     XCTAssertFalse(panel.isHistoryVisible, "folded by hand stays folded across the switch")
   }
 
-  /// A refresh that shrinks the tree — a branch move, the scope narrowed to the changed files —
-  /// rebuilds `roots` under rows the view still holds, and the disclosure state is read back off
-  /// those rows.
+  /// A refresh that shrinks the tree — files gone from disk, the scope narrowed to the changed
+  /// files — rebuilds `roots` under rows the view still holds, and the disclosure state is read
+  /// back off those rows.
   @MainActor
   func testARefreshThatShrinksTheTreeKeepsTheViewInStep() throws {
     let worktree = try makeWorktree(files: (0..<40).map { "file\($0).swift" })
@@ -127,10 +128,73 @@ final class FilesPanelTests: XCTestCase {
     window.displayIfNeeded()
     XCTAssertEqual(outline.numberOfRows, 40)
 
-    worktree.trackedFiles = ["file0.swift"]
-    panel.filesChangedOnDisk()
+    for index in 1..<40 {
+      try FileManager.default.removeItem(
+        at: worktree.url.appendingPathComponent("file\(index).swift"))
+    }
+    // The disk is what moved, so FSEvents is what says so — by the directory it read again;
+    // git's answer only renumbers.
+    panel.pathsMoved([""])
 
     XCTAssertEqual(outline.numberOfRows, 1, "the one survivor")
+
+    // A batch that could not be placed reads everything again — the fallback, and the test
+    // that it is a real one.
+    try FileManager.default.removeItem(at: worktree.url.appendingPathComponent("file0.swift"))
+    panel.pathsMoved(nil)
+    XCTAssertEqual(outline.numberOfRows, 0)
+  }
+
+  /// The tree is the disk, so a file git would not take is a row all the same — dimmed, which
+  /// is what keeps a build directory from reading as the work. A worktree with no git has
+  /// nothing to dim.
+  @MainActor
+  func testAFileGitIgnoresIsARowAndIsDimmed() throws {
+    let worktree = try makeWorktree(files: ["a.swift", "build/out.o"], tracked: ["a.swift"])
+    let git = Process()
+    git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    git.arguments = ["-C", worktree.url.path, "init", "-q"]
+    try git.run()
+    git.waitUntilExit()
+    try "build/\n".write(
+      to: worktree.url.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+    let panel = FilesPanelViewController()
+    let window = host(panel)
+    panel.show(worktree: worktree)
+    let outline = try XCTUnwrap(findOutline(in: panel.view))
+    window.displayIfNeeded()
+
+    let rows = (0..<outline.numberOfRows).compactMap { outline.item(atRow: $0) as? FileNode }
+    XCTAssertEqual(rows.map(\.name), ["build", ".gitignore", "a.swift"], "everything on disk")
+    XCTAssertEqual(rows.map(\.isIgnored), [true, false, false], "and the build directory dimmed")
+    let build = try XCTUnwrap(rows.first)
+    XCTAssertEqual(build.children.map(\.name), ["out.o"])
+    XCTAssertTrue(build.children[0].isIgnored, "under an ignored directory, without asking")
+  }
+
+  /// FSEvents names what moved; the directories it sits in are read again, and only those.
+  /// Nothing waits on git, which is how a file a build wrote reaches the panel at all.
+  @MainActor
+  func testAPathThatMovedRelistsItsDirectory() throws {
+    let worktree = try makeWorktree(files: ["src/a.swift"])
+    let panel = FilesPanelViewController()
+    let window = host(panel)
+    panel.show(worktree: worktree)
+    let outline = try XCTUnwrap(findOutline(in: panel.view))
+    outline.expandItem(outline.item(atRow: 0))
+    window.displayIfNeeded()
+    XCTAssertEqual(outline.numberOfRows, 2)
+
+    try "x\n".write(
+      to: worktree.url.appendingPathComponent("src/b.swift"), atomically: true, encoding: .utf8)
+    try FileManager.default.createDirectory(
+      at: worktree.url.appendingPathComponent("empty"), withIntermediateDirectories: true)
+    panel.pathsMoved(["src", ""])
+
+    let names = (0..<outline.numberOfRows).compactMap {
+      (outline.item(atRow: $0) as? FileNode)?.relativePath
+    }
+    XCTAssertEqual(names, ["empty", "src", "src/a.swift", "src/b.swift"], "and src stayed open")
   }
 
   /// The result list is the same collision from the other side: the rows on screen are the
@@ -162,8 +226,8 @@ final class FilesPanelTests: XCTestCase {
     XCTAssertEqual(outline.numberOfRows, 1, "the new worktree's one file, no results left")
   }
 
-  /// The crash as it actually happened: a rail click lands on a worktree git has not answered
-  /// for yet, so the new tree is empty while the view still holds forty rows of the old one.
+  /// The crash as it actually happened: a rail click lands on a worktree with nothing in it
+  /// while the view still holds forty rows of the old one.
   @MainActor
   func testSwitchingToAWorktreeWhoseFilesHaveNotLoaded() throws {
     let loaded = try makeWorktree(files: (0..<40).map { "file\($0).swift" })
@@ -213,7 +277,7 @@ final class FilesPanelTests: XCTestCase {
     let files = (0..<200).flatMap { directory in
       (0..<10).map { "dir\(String(format: "%03d", directory))/file\($0).swift" }
     }
-    let worktree = try makeWorktree(files: [], tracked: files)
+    let worktree = try makeWorktree(files: files)
     let panel = FilesPanelViewController()
     let window = host(panel)
     panel.show(worktree: worktree)

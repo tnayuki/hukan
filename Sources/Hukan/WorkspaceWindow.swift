@@ -339,11 +339,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     workspace.onWorktreeFilesChanged = { [weak self] id, changed in
       self?.worktreeFilesChanged(id, changed: changed)
     }
-    // A directory git cannot see arrived. Only the tree can show it and only the tree has to be
-    // redrawn — no rail, no diffstat, no tab: nothing git could measure has moved.
-    workspace.onWorktreeDirectoriesChanged = { [weak self] id in
+    // Something moved on disk in the worktree on screen: the files panel lists again the
+    // directories it touched. Nothing else moves on this — the rail, the diffstat and the tabs
+    // are measured against git, and wait for its answer above.
+    workspace.onWorktreePathsMoved = { [weak self] id, paths in
       guard let self, id == self.workspace.selectedWorktreeID else { return }
-      self.files.rebuildTree()
+      self.files.panel.pathsMoved(paths)
     }
 
     WorkspaceWindowController.all.append(self)

@@ -61,49 +61,4 @@ final class ChangedPathsTests: XCTestCase {
     XCTAssertNil(Workspace.union(nil, nil))
   }
 
-  /// The one thing an FSEvents batch can carry that git's own answer cannot report: a directory
-  /// git has no path for. The panel shows one, so the refresh has to notice it — and has to keep
-  /// noticing nothing when a build churns, which is the case the equality test exists for.
-  func testADirectoryGitCannotSeeIsNoticedAndAnIgnoredOneIsNot() throws {
-    let worktree = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appendingPathComponent("hukan-unseen-\(UUID().uuidString)")
-    defer { try? FileManager.default.removeItem(at: worktree) }
-    for path in ["src/a.swift", ".gitignore"] {
-      let file = worktree.appendingPathComponent(path)
-      try FileManager.default.createDirectory(
-        at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try (path == ".gitignore" ? "build/\n" : "let a = 1\n").write(
-        to: file, atomically: true, encoding: .utf8)
-    }
-    for name in ["fresh", "build", "build/noise"] {
-      try FileManager.default.createDirectory(
-        at: worktree.appendingPathComponent(name), withIntermediateDirectories: true)
-    }
-    try "x\n".write(
-      to: worktree.appendingPathComponent("build/noise/x.o"), atomically: true, encoding: .utf8)
-    let git = Process()
-    git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    git.arguments = ["-C", worktree.path, "init", "-q"]
-    try git.run()
-    git.waitUntilExit()
-    let tracked = ["src/a.swift", ".gitignore"]
-
-    XCTAssertTrue(
-      Workspace.carriesUnseenDirectory(["fresh"], at: worktree, tracked: tracked, changed: []),
-      "a directory git has no path for")
-    XCTAssertFalse(
-      Workspace.carriesUnseenDirectory(
-        ["build", "build/noise", "build/noise/x.o"], at: worktree,
-        tracked: tracked, changed: []),
-      "the churning build stays free")
-    XCTAssertFalse(
-      Workspace.carriesUnseenDirectory(
-        ["src/a.swift", "src/b.swift"], at: worktree,
-        tracked: tracked, changed: []),
-      "a file is not a directory, which is the stat every batch of writes fails at")
-    XCTAssertFalse(
-      Workspace.carriesUnseenDirectory(["src"], at: worktree, tracked: tracked, changed: []),
-      "git already has paths under it")
-  }
-
 }
