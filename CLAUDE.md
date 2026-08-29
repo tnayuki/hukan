@@ -124,6 +124,19 @@ Workspace (one window)
   unlike a file or a commit — the pages an agent hands you are context you want side by side — so
   what keeps them from piling up is that an address already open is switched to rather than opened
   twice.
+- **A double-click selects the whole token, and a token is what an agent hands you.** A commit
+  hash, a session id, a branch name, a path, a URL, an option, a file and its line: the things
+  this window is read for, each one unit. macOS breaks all of them, and only on a Japanese line —
+  it words a paragraph in the language it detects for it, so one kana anywhere puts the rest of
+  the line on a tokenizer that splits a Latin run at every class boundary, while the identical
+  English line was already right. So no word rule is invented here: **an ASCII run is worded as if
+  it stood alone**, and Japanese keeps the morpheme split it already had. **Honouring whichever
+  answer was wider was the first rule, and it is the wrong shape** — the Japanese tokenizer calls
+  `kebab-case-name` one word where the English one calls it five, so a rule that took the wider
+  answer left the same token reading differently on the two lines, which is the bug and not a
+  safety net. It belongs to the transcript, the editor and the commit tab at once, all three being
+  the same kind of text, and it is a gesture: the double-click's meaning wherever text is read,
+  never a mode and never a preference.
 - **The web tab's chrome reads the view, and the tab does the host's half of WKWebView.** The
   address, title and history buttons are KVO on the web view, not the navigation delegate:
   `didCommit` fires for a document load and nothing else, and GitHub — the page this browser

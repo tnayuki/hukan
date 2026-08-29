@@ -154,6 +154,9 @@ its emphasis drawn bold and italic — with a gutter carrying its changes agains
 solid while not. The bars measure the buffer, so an edit is marked as it is typed; hover one for
 the lines it replaced. Lines never wrap.
 
+A double-click takes the whole token — a hash, a path, a URL, an option — here and in the
+transcript alike, on a Japanese line as readily as an English one.
+
 **Cost & usage.** A per-session cost estimate in the conversation header (the "if it were
 API-metered" figure) and, beside it, how full that session's context window is — amber past three
 quarters, red past nine tenths, with the breakdown by category in the tooltip. The account-wide

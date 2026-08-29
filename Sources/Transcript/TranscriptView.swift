@@ -220,12 +220,12 @@ public func transcriptClickDelegate(of textView: NSTextView) -> TranscriptClickD
 }
 
 /// Also used by the offscreen preview, so the two render through the same setup.
-/// The transcript's text view: standard in everything except a fast second click on a fold
-/// header. That arrives as `clickCount` 2, which the standard handling turns into word
-/// selection — on a line whose first click just toggled the fold under the pointer. If the
-/// preceding click toggled a fold within the double-click interval, this click is read as
-/// another toggle, not a selection.
-public final class TranscriptTextView: NSTextView {
+/// The transcript's text view: `WordSelectingTextView`'s double-click, and one thing more — a
+/// fast second click on a fold header. That arrives as `clickCount` 2, which the standard
+/// handling turns into word selection — on a line whose first click just toggled the fold under
+/// the pointer. If the preceding click toggled a fold within the double-click interval, this
+/// click is read as another toggle, not a selection.
+public final class TranscriptTextView: WordSelectingTextView {
   /// What the `…` at the end of a message offers. Supplied by whoever owns the view, because
   /// `Sources/Transcript` may not know what a session is: the view finds the anchor and the
   /// extent of the message, the owner decides what those mean.
