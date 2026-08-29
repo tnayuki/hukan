@@ -247,6 +247,24 @@
             <parameter name="searching" code="Srch" type="text" optional="yes" description="type this into the field and press Return, searching every file's contents">
                 <cocoa key="searching"/>
             </parameter>
+            <parameter name="menu" code="Rmnu" type="text" optional="yes" description="report the right-click menu this path's row would carry, a line each; empty text for the panel's background">
+                <cocoa key="menu"/>
+            </parameter>
+            <parameter name="creating" code="Mkfl" type="text" optional="yes" description="New File in this directory (empty text for the worktree root), as the menu does — the row it makes goes into naming (guarded)">
+                <cocoa key="creating"/>
+            </parameter>
+            <parameter name="renaming" code="Mvfl" type="text" optional="yes" description="rename this path, as the menu's Rename does (guarded)">
+                <cocoa key="renaming"/>
+            </parameter>
+            <parameter name="to" code="Mvto" type="text" optional="yes" description="the new name, read against the directory the row is in; it may carry directories, which are made on the way">
+                <cocoa key="toName"/>
+            </parameter>
+            <parameter name="folder" code="Mkdr" type="text" optional="yes" description="New Folder in this directory (empty text for the worktree root), as the menu does (guarded)">
+                <cocoa key="folder"/>
+            </parameter>
+            <parameter name="deleting" code="Rmfl" type="text" optional="yes" description="delete this path, as the menu's Delete does (guarded)">
+                <cocoa key="deleting"/>
+            </parameter>
             <result type="text"/>
         </command>
 

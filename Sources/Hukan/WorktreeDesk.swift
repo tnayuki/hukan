@@ -308,6 +308,10 @@ final class WorktreeDeskViewController: NSViewController {
   private weak var selectedTabView: NSView?
 
   private var fileTabs: [FileTab] { worktreeID.flatMap { fileTabsByWorktree[$0] } ?? [] }
+  /// The showing worktree's file tabs by path, in strip order — what a test reads to check that a
+  /// tab followed a rename or left with a delete. The strip itself is views, and a tab's identity
+  /// is its path, so this is the whole of what there is to assert.
+  var openFilePaths: [String] { fileTabs.map(\.path) }
   private var browserTabs: [BrowserTab] { worktreeID.flatMap { browserTabsByWorktree[$0] } ?? [] }
   private var commitTabs: [CommitTab] { worktreeID.flatMap { commitTabsByWorktree[$0] } ?? [] }
 
@@ -895,6 +899,47 @@ final class WorktreeDeskViewController: NSViewController {
     for tab in fileTabs where changed == nil || changed?.contains(tab.path) == true {
       tab.content.refreshCurrent()
     }
+  }
+
+  /// The files panel renamed something. A tab is keyed by its path, so every tab on the renamed
+  /// file — or under the renamed directory — follows it; nothing is closed, since the text is
+  /// exactly where it was, one name along.
+  func fileRenamed(worktreeID: UUID, from: String, to: String) {
+    var moved = false
+    for tab in fileTabsByWorktree[worktreeID] ?? [] {
+      guard let path = Self.repath(tab.path, from: from, to: to) else { continue }
+      tab.path = path
+      tab.content.renamed(to: path)
+      moved = true
+    }
+    guard moved else { return }
+    rebuildTabBar()
+  }
+
+  /// The files panel deleted something. A tab showing a file that no longer exists has nothing
+  /// left to show, so it goes — without the unsaved-edit prompt `close` would put in front of
+  /// it, which would be offering to save an edit back to a path the person has just removed.
+  func fileDeleted(worktreeID: UUID, path: String) {
+    let previous = orderedSurfaces
+    var tabs = fileTabsByWorktree[worktreeID] ?? []
+    let doomed = tabs.filter { Self.repath($0.path, from: path, to: path) != nil }
+    guard !doomed.isEmpty else { return }
+    for tab in doomed { tab.content.removeFromParent() }
+    let gone = Set(doomed.map(\.id))
+    tabs.removeAll { gone.contains($0.id) }
+    fileTabsByWorktree[worktreeID] = tabs
+    reconcileSurface(previous: previous)
+    rebuildTabBar()
+    applySurface()
+    if isMaximized, surface == .none { onSetMaximized?(false) }
+  }
+
+  /// `path` rewritten if it is `from` or sits under it, nil if the rename does not reach it.
+  /// The directory test is on the separator, so renaming `Sources` does not claim `Sources.md`.
+  private static func repath(_ path: String, from: String, to: String) -> String? {
+    if path == from { return to }
+    guard path.hasPrefix(from + "/") else { return nil }
+    return to + path.dropFirst(from.count)
   }
 
   // MARK: Surface bookkeeping

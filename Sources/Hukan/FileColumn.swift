@@ -206,6 +206,23 @@ final class FileContentViewController: NSViewController {
     render()
   }
 
+  /// The panel renamed the open file: a buffer is keyed by `(Worktree, relative path)`, so the
+  /// pane follows the name rather than pointing at one that is gone. A clean buffer re-reads,
+  /// since the language and the gutter's base are both per-path; a dirty one keeps its text the
+  /// way it does through an agent's write, and ⌘S now writes it to the new name.
+  func renamed(to newPath: String) {
+    loadViewIfNeeded()
+    path = newPath
+    baseFileName = (newPath as NSString).lastPathComponent
+    highlighter = SyntaxHighlighter(textView: textView, path: newPath)
+    guard !isDirty else {
+      // The text stays; what it is measured against moves with the name.
+      loadFileBase()
+      return
+    }
+    render(preservingScroll: true)
+  }
+
   /// Re-read the open file after it changed on disk, keeping the reader where they were
   /// scrolled. Unlike `show` it does not jump to the top — an agent saving mid-read should
   /// refresh the text under the eye, not yank the view around.
@@ -364,7 +381,8 @@ final class FileColumns {
   }
   var onNeedsReload: (() -> Void)?
   /// ⌃⌘T / the desk's `+` bubbles up to the window controller, which owns terminal creation.
-  var onNewTerminal: (() -> Void)?
+  /// A directory with it is the files panel's Open in Terminal; nil is the worktree's root.
+  var onNewTerminal: ((URL?) -> Void)?
   /// A double-click on a tab, or its menu, asking for the whole window. The columns are the
   /// window controller's, so this bubbles up the same way.
   var onSetMaximized: ((Bool) -> Void)?
@@ -373,7 +391,7 @@ final class FileColumns {
   let panel = FilesPanelViewController()
 
   init() {
-    desk.onNewTerminal = { [weak self] in self?.onNewTerminal?() }
+    desk.onNewTerminal = { [weak self] in self?.onNewTerminal?(nil) }
     desk.onNewBrowser = { [weak self] in self?.openBrowser() }
     desk.onSetMaximized = { [weak self] maximized in self?.onSetMaximized?(maximized) }
     // A save is the panel's cue too: an FSEvents IgnoreSelf drops our own write, so the content
@@ -391,6 +409,34 @@ final class FileColumns {
     panel.history.onSelect = { [weak self] oid in self?.openCommitFromPanel(oid, pin: false) }
     panel.history.onActivate = { [weak self] oid in self?.openCommitFromPanel(oid, pin: true) }
     panel.history.onLoadMore = { [weak self] in self?.loadMoreHistory() }
+    // The panel's context menu: a shell where the row is, and the writes it makes to the
+    // worktree.
+    panel.onNewTerminal = { [weak self] url in self?.onNewTerminal?(url) }
+    panel.onFileEdit = { [weak self] edit in self?.applyFileEdit(edit) }
+  }
+
+  /// The files panel wrote to the worktree. FSEvents is asked to ignore hukan's own writes, so
+  /// nothing here happens on its own: the desk is told what moved under its tabs, and git is
+  /// asked again — with an empty moved set, since no open file's *contents* changed.
+  private func applyFileEdit(_ edit: FilesPanelViewController.FileEdit) {
+    // The panel's worktree, not the selection's: they agree, but the panel is where the edit was
+    // made, and the path it reports is relative to that.
+    guard let workspace, let worktree = panel.worktree else { return }
+    switch edit {
+    case .createdFolder:
+      // Nothing to open: a folder has no tab, and git has nothing to re-read for an empty one —
+      // the panel rebuilds its own tree, since it is the only party that can see it.
+      return
+    case .created(let path):
+      // A file made from the menu is one you are about to write in, so it opens as a lasting tab
+      // rather than in the preview slot the next click would take back.
+      desk.openFile(worktree: worktree, path: path, preview: false)
+    case .renamed(let from, let to):
+      desk.fileRenamed(worktreeID: worktree.id, from: from, to: to)
+    case .deleted(let path):
+      desk.fileDeleted(worktreeID: worktree.id, path: path)
+    }
+    workspace.refreshFiles(worktreeID: worktree.id, moved: [])
   }
 
   private func openFromPanel(_ path: String, line: Int?, pin: Bool) {
@@ -552,6 +598,13 @@ final class FileColumns {
   func refreshTerminalTabs() {
     guard desk.isViewLoaded else { return }
     desk.reload(worktreeID: workspace?.selectedWorktreeID)
+  }
+
+  /// Redraw the panel's tree from what it already holds. For the one change git cannot report —
+  /// a directory it has no path for — where nothing else on screen is measured against anything
+  /// that moved.
+  func rebuildTree() {
+    panel.rebuildTree()
   }
 
   /// The selected worktree's files changed on disk: refresh every open file and the panel (its

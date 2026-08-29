@@ -199,7 +199,10 @@ final class FoldCommand: NSScriptCommand {
 /// what it is waiting on — and `filtering`/`searching` run the two gestures. Hidden, like `fold`:
 /// the panel is a tree of rows with no text to read back, and the states worth checking (the tree
 /// budgeted open under a filter, the note while a read is out) are exactly the ones a screenshot
-/// cannot assert.
+/// cannot assert. `menu` reads back the right-click menu a row would carry, for the same reason;
+/// `creating`/`folder`/`renaming`/`deleting` run what that menu does, and are guarded, since each
+/// of them stands in for a human's answer — a name typed on the row, or the alert before a
+/// delete.
 @objc(FilesPanelCommand)
 final class FilesPanelCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {
@@ -212,6 +215,30 @@ final class FilesPanelCommand: NSScriptCommand {
     if let query = argument("searching", as: String.self) {
       panel.searchForScripting(query)
       return panel.report
+    }
+    if let path = argument("menu", as: String.self) {
+      return panel.menuForScripting(path: path)
+    }
+    // The writes the menu makes. Guarded, like `approve`: each stands in for a human's answer, so
+    // a scripted one is hukan acting on a worktree with nobody having said yes.
+    if let path = argument("creating", as: String.self) {
+      guard guardedScriptingEnabled() else { return fail("guarded") }
+      return panel.writeForScripting(create: path)
+    }
+    if let path = argument("renaming", as: String.self) {
+      guard guardedScriptingEnabled() else { return fail("guarded") }
+      guard let name = argument("toName", as: String.self) else {
+        return fail("a name is required")
+      }
+      return panel.writeForScripting(rename: path, to: name)
+    }
+    if let path = argument("folder", as: String.self) {
+      guard guardedScriptingEnabled() else { return fail("guarded") }
+      return panel.writeForScripting(createFolder: path)
+    }
+    if let path = argument("deleting", as: String.self) {
+      guard guardedScriptingEnabled() else { return fail("guarded") }
+      return panel.writeForScripting(delete: path)
     }
     return panel.report
   }

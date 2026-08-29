@@ -447,6 +447,60 @@ Workspace (one window)
   worktree narrows almost nothing, and opening every row of that was most of what a keystroke
   cost. So the opening is a budget spent in tree order, and what does not fit stays folded —
   which is the state a tree row is readable in anyway.
+- **The panel's right-click menu is the one place hukan writes to a worktree, and it writes files,
+  never the repository.** Open in a tab, Reveal in Finder, a terminal in the row's directory, Copy
+  Path, then New File, New Folder, Rename and Delete. The path copies **two ways, as two items**:
+  the relative one is what is wanted nearly every time — it is the unit a buffer is keyed by and
+  the form a path is written in to an agent — and the absolute one was briefly its ⌥ alternate,
+  which is the wrong saving, since an alternate is reachable only by someone who already knows it
+  is there and a menu is where you look precisely when you do not. **⏎ names the selected row** —
+  the Finder's key, and Xcode's navigator's. It was the open, matching the rail's dive into a
+  session, and naming took it because naming is the one act on a row with no other way to it from
+  the keyboard, while opening keeps the double-click it always had and gains ⌘↓. Only in the tree:
+  a result list is hits rather than rows of it, and there ⏎ keeps the meaning it always had.
+  **A name is typed on the row, not in a dialog** — the row already says what is being renamed, so
+  a sheet would say it a second time and take the window to do it, and a new file's name is decided
+  against the rows around it, which is what a sheet stands in front of. That decides New File too:
+  the file is **made first under an untitled name and then handed to the same edit**, the Finder's
+  order, so there is one naming mechanism instead of two; what it costs is that Escape leaves an
+  `untitled` behind, which is the Finder's bargain as well. **While a name is being typed the tree
+  holds still**, since in a worktree an agent is working in a redraw arrives every second and takes
+  the field with it; it catches up the moment the name is finished, a read held back and never run
+  being worse than the flicker holding it back avoids. A name may carry directories, read against
+  the directory the row is in and made on the way — which turns a rename into a move as the same
+  rule read from the other side, a name box that quietly cannot reach a new directory being the
+  worse surprise. It cannot leave the worktree: `..` is refused rather than resolved, since the one
+  thing a name typed on a row must not be able to mean is a file somewhere else. **Delete is
+  confirmed and then deleted, not moved to the Trash.** None of this moves the line `hukan observes
+  worktrees, it does not act on them` draws: that one is about the repository — the merge, the
+  `worktree remove`, the decision nobody reviewed — where a file in a checkout is something any
+  session already writes with a shell, and having to leave the window to rename one bought nothing.
+  What the acts do owe is a report of themselves, since nothing else will notice them: a tab
+  showing a renamed file follows the name, one showing a deleted file closes, and git is re-read.
+- **A directory git cannot see is still a row, and that is what New Folder rests on.** git records
+  no empty directory, so a folder made on its own would have been invisible — which is why there
+  was no New Folder at first, and the argument that overturned it is the one this panel already
+  answered for untracked *files*: it is in this worktree, so it is a row. **The read is done as a
+  node opens, not by walking the worktree** — the same bargain the tree already makes for its
+  children, so a checkout of any size costs one directory listing per row actually opened, and the
+  tree stays a lazy window rather than becoming a scan. **git is asked only about what it did not
+  itself produce**, which is the whole of the cost control: in an ordinary tree every directory
+  holds something tracked, nothing is left over, and the repository is never opened at all. What
+  is left over is asked about because it has to be — a checkout's build directory holds nothing
+  git can see, and listing it would be answering with the one directory nobody wants, so an
+  ignored one stays out, and so does a hidden one. **A filter reaches these by their own path**
+  and cannot pull one in because something under it matches: finding that means the walk this
+  arrangement exists to avoid, and there is nothing under one of these that git could have found
+  instead. The other end of the same fact is that **git's lists cannot move for an empty
+  directory, so nothing that watches them can report one**: hukan's own New Folder rebuilds the
+  tree on the spot, and a directory made anywhere else is noticed by the FSEvents refresh itself.
+  That refresh only tells the window when git's answer moved — the equality test that keeps a
+  churning build from reloading anything — so the directory is looked for beside it, and narrowly:
+  a moved path is examined only if it is a directory that exists, that git has nothing under, and
+  that git does not ignore. Every write to a file fails at the first stat, which is what leaves
+  the case the equality test was written for exactly as free as it was. What it wakes is the tree
+  alone, on a hook of its own — no rail, no diffstat, no tab, because nothing anything else is
+  measured against has moved.
 - **The panel's own costs were measured, against a 25,000-file checkout.** git was never the slow
   half there — the working-tree diff and the index read are tens of milliseconds — so all three
   of the numbers that mattered were hukan's own. A content search took 10.5s, nearly all of it
@@ -454,7 +508,7 @@ Workspace (one window)
   time: 1.4–1.8s, abandonable, and in path order regardless of which read finishes first, because
   the cap has to cut the same hits a serial scan would have cut. A keystroke in the filter cost
   272ms of the main thread — 33ms matching every path, 239ms opening every row of what survived —
-  and is now ~34ms: the paths are folded once when git's answer moves rather than per keystroke,
+  and is now ~34ms: the paths are folded once when the file list moves rather than per keystroke,
   the opening is budgeted, and the rows are inserted in one batch, since `expandItem` reloads the
   view around every row it inserts and that alone was 58ms of the 239. And the held-elsewhere
   rescan re-listed Claude Code's process registry once *per session on the rail* — 42ms of the
@@ -856,7 +910,7 @@ this — extend it rather than reaching for coordinates. The dictionary is an ob
 
 ```sh
 osascript -e 'tell application "Hukan Dev" to get name of every worktree of every repository of window 1'
-osascript -e 'tell application "Hukan Dev" to files'   # then: files filtering "…" / files searching "…"
+osascript -e 'tell application "Hukan Dev" to files'   # then: files filtering "…" / files searching "…" / files menu "…"
 osascript -e 'tell application "Hukan Dev" to send "..." to (selected session of window 1)'
 osascript -e 'tell application "Hukan Dev" to get transcript of (selected session of window 1)'
 osascript -e 'tell application "Hukan Dev" to get history of worktree "main" of repository 1 of window 1'
@@ -878,7 +932,10 @@ for a human decision — `approve`/`deny` a pending tool call (`approve session 
 only under `HUKAN_SCRIPTING_GUARDED=1`, since a session's own agent can reach `osascript` and would
 otherwise approve its own calls. The files panel has a hidden verb for the same reason the tabs
 do — it is rows and not text, so `files` reports what the panel is showing and which of the two
-gestures put it there, and `filtering`/`searching` run them. `completions` is the third of that
+gestures put it there, and `filtering`/`searching` run them. `files menu "<path>"` reads back the
+right-click menu that row would carry, a line each; the writes that menu makes
+(`creating`/`folder`/`renaming … to …`/`deleting`) are guarded, because each of them stands in for
+a human's answer — a name typed on the row, or the alert before a delete. `completions` is the third of that
 kind: the command list is rows on a panel floating over the window, so checking that a `/` opened
 it — and that `⏎` took the row the arrows had reached — is otherwise a click at coordinates.
 `typing` goes through the text view's own edit path rather than a shortcut only a script can

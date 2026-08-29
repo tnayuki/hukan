@@ -1,12 +1,23 @@
 import AppKit
 
-/// The panel's outline, subclassed only so Return opens the selected row as a lasting file tab —
-/// the same dive the rail makes on Return.
+/// The panel's outline, subclassed for the two keys a row answers to. ⏎ names the row — the
+/// Finder's key, and Xcode's navigator's — and ⌘↓ opens it as a lasting tab, which is where that
+/// went. ⏎ was the open once, matching the rail's dive; naming took it because naming is the one
+/// act on a row with no other way to it from the keyboard, while opening keeps the double-click
+/// it always had and gains a key of its own.
 private final class FilesOutlineView: NSOutlineView {
   var onActivate: (() -> Void)?
+  var onRename: (() -> Void)?
 
   override func keyDown(with event: NSEvent) {
-    if event.keyCode == 36 || event.keyCode == 76 {
+    let command = event.modifierFlags.contains(.command)
+    let isReturn = event.keyCode == 36 || event.keyCode == 76
+    if isReturn, !command {
+      onRename?()
+      return
+    }
+    // ⌘↓, the Finder's open.
+    if event.keyCode == 125, command {
       onActivate?()
       return
     }
@@ -68,12 +79,28 @@ private final class ResultLine: NSObject {
 /// files — the review set, the thing an agent just wrote. It carries no number: the size of the
 /// change is the toolbar's, and repeating it here would say the same thing twice.
 final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
-  NSOutlineViewDelegate, NSSearchFieldDelegate
+  NSOutlineViewDelegate, NSSearchFieldDelegate, NSMenuDelegate
 {
   /// A single click / arrow-key move: preview the file (at `line` for a content hit).
   var onSelect: ((String, Int?) -> Void)?
   /// A double-click / Return on a row: open it as a lasting tab.
   var onActivate: ((String, Int?) -> Void)?
+  /// The context menu's Open in Terminal: a shell in this directory. Terminals are the window
+  /// controller's to make, so the panel only says where one belongs.
+  var onNewTerminal: ((URL) -> Void)?
+  /// The panel wrote to the worktree. FSEvents is asked to ignore hukan's own writes, so this is
+  /// the only notice anything gets: the desk has to follow a file it may have open, and git has
+  /// to be re-read, because the panel says so and nothing else will.
+  var onFileEdit: ((FileEdit) -> Void)?
+
+  /// What the menu did to the worktree. A rename carries both halves because a buffer is keyed
+  /// by `(Worktree, relative path)` and an open tab has to follow the name.
+  enum FileEdit {
+    case created(String)
+    case createdFolder(String)
+    case renamed(from: String, to: String)
+    case deleted(String)
+  }
 
   private let filterField = GestureSearchField()
   /// Says what ⏎ escalates to, while the field is focused. See `showSearchHint`.
@@ -91,6 +118,22 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   private let hintLabel = NSTextField(labelWithString: "")
   private lazy var hintHeight = hintLabel.heightAnchor.constraint(equalToConstant: 0)
   private let outline = FilesOutlineView()
+  /// Rebuilt per click — what it offers depends on the row under the cursor. See
+  /// `menuNeedsUpdate`.
+  private let contextMenu = NSMenu()
+  /// The row the open menu was raised on, kept only for as long as the menu is up: `clickedRow`
+  /// is meaningful during the click and the acts fire after it.
+  private var menuTarget: MenuTarget?
+  /// The row view the name is being typed in. Held rather than looked up again: the lookup goes
+  /// through the tree, and taking a row out of edit has to work even when the tree no longer
+  /// answers for it — which is exactly the Escape case, where nothing on disk moved.
+  private weak var namingRowView: PanelRowView?
+  /// The path whose row is being typed in, while it is. Naming happens on the row itself rather
+  /// than in a dialog, so this is also what makes the tree hold still: see `refresh`.
+  private var editingPath: String?
+  /// A file just made, waiting for the row it will appear on so the naming can start. The make
+  /// is announced and git is re-read off the main thread, so the row is a turn or two away.
+  private var pendingEdit: String?
   private let listScroll = NSScrollView()
   /// The panel's second half: what this worktree has committed. Its own controller, since the
   /// tree and the history answer different questions and only share a column.
@@ -173,6 +216,8 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   var onScopeChanged: (() -> Void)?
 
   func toggleChangedOnlyScope() {
+    // A click on the toolbar is a click elsewhere: the name is committed, as one on the list would.
+    endNaming(commit: true, handingBackFocus: true)
     isChangedOnly.toggle()
     onScopeChanged?()
     if isShowingResults { runSearch() } else { refresh() }
@@ -202,6 +247,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     outline.target = self
     outline.doubleAction = #selector(activateSelected)
     outline.onActivate = { [weak self] in self?.activateSelected() }
+    outline.onRename = { [weak self] in self?.renameSelected() }
+    contextMenu.delegate = self
+    outline.menu = contextMenu
     outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
     listScroll.documentView = outline
     listScroll.hasVerticalScroller = true
@@ -382,6 +430,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   /// query and the results; the same one just refreshes.
   func show(worktree: Worktree?) {
     loadViewIfNeeded()
+    // Leaving a worktree mid-name drops the name: a rename landing on a checkout that is no longer
+    // on screen would be an act nobody watched.
+    if worktree !== self.worktree { endNaming(commit: false, handingBackFocus: true) }
     history.show(history: worktree?.history ?? Git.History())
     updateHistoryVisibility()
     if worktree !== self.worktree {
@@ -400,6 +451,16 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       // of the old worktree's disclosure state is worth carrying over anyway.
       outline.reloadData()
     }
+    refresh()
+  }
+
+  /// Rebuild the tree from what is already held, whatever the inputs say. The one caller is the
+  /// arrival of a directory git cannot see: git's lists are the tree's inputs and they cannot
+  /// move for an empty directory, so the ordinary refresh would find nothing to do — the tree has
+  /// to be told to look again.
+  func rebuildTree() {
+    guard isViewLoaded else { return }
+    builtFrom = nil
     refresh()
   }
 
@@ -460,6 +521,10 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   /// selection. Typing narrows the path set first, so the tree stays a tree — a directory with no
   /// surviving child is simply not built.
   private func refresh() {
+    // A rebuild reloads the outline, which takes the field editor down mid-word — and an agent
+    // writing files in this worktree makes that happen every second. The tree holds still until
+    // the name is finished, then catches up in one go.
+    guard editingPath == nil else { return }
     cancelScan()
     guard let worktree else {
       roots = []
@@ -483,6 +548,10 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       // Same inputs, same tree — but the button is repainted anyway, since this is also the path
       // a first load lands on once git answers.
       onScopeChanged?()
+      // A file made a moment ago may already be a row by the time this refresh runs, and a
+      // refresh with nothing to rebuild is still the one that has to start naming it. Left out,
+      // the row is made and never handed the field, which reads as New File having done nothing.
+      startPendingNaming()
       return
     }
     builtFrom = inputs
@@ -501,7 +570,15 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     }
     var changed: [String: ChangedFile] = [:]
     for file in worktree.changedFiles { changed[file.path] = file }
-    roots = FileTree(paths: paths, changed: changed).rootChildren
+    // Not under the ± scope: that is the review set, and an empty directory is not a change —
+    // with them, the scope would list every directory of the checkout beside the changed files.
+    let unseen: ((String, Set<String>) -> [String])? =
+      isChangedOnly
+      ? nil
+      : { [root = worktree.url, needle = query.isEmpty ? nil : FoldedText(query)] parent, known in
+        Self.unseenDirectories(under: parent, in: root, besides: known, matching: needle)
+      }
+    roots = FileTree(paths: paths, changed: changed, unseenDirectories: unseen).rootChildren
     isShowingResults = false
     outline.reloadData()
     // A narrowed tree is small and its point is to be read at a glance, so it opens itself;
@@ -519,6 +596,58 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     if let selectedPath { select(path: selectedPath) }
     updateEmptyLabel()
     onScopeChanged?()
+    startPendingNaming()
+  }
+
+  /// Hand a just-made file's row to the naming, once it has one. Called from every way out of
+  /// `refresh`, since which of them the row arrives on depends on which git read lands first.
+  private func startPendingNaming() {
+    guard let pending = pendingEdit, node(at: pending) != nil else { return }
+    pendingEdit = nil
+    beginNaming(path: pending)
+  }
+
+  /// The directories directly under `parent` that git produced no path for, `known` being the
+  /// names it did. Read as a node opens, which is the same bargain the tree already makes for its
+  /// children: a worktree of any size costs one directory listing per row actually opened — and
+  /// per rebuild, since a rebuild reopens what was open. Measured: 0.08ms for a 30-entry
+  /// directory, 4ms for a 900-entry one, listing and stat together. git is asked only about what
+  /// is left over — and in an ordinary tree, where every directory holds something tracked,
+  /// nothing is, so the repository is never opened at all.
+  ///
+  /// Ignored ones stay out, which is the whole reason git is asked at all — a checkout's build
+  /// directory holds nothing git can see, and a panel that listed it would be answering with the
+  /// one directory nobody wants. Hidden ones stay out too: `.git` is not a row, and neither is a
+  /// hidden directory nothing has been able to see until now.
+  ///
+  /// A filter reaches these by their own path, the same rule the rest of the tree is narrowed by.
+  /// What it cannot do is pull one in because something *under* it matches: finding that means
+  /// walking the worktree, which is the cost this whole arrangement exists to avoid — and there
+  /// is nothing under one of these that git could have found instead.
+  private static func unseenDirectories(
+    under parent: String, in root: URL, besides known: Set<String>, matching needle: FoldedText?
+  ) -> [String] {
+    let directory = parent.isEmpty ? root : root.appendingPathComponent(parent)
+    guard
+      let entries = try? FileManager.default.contentsOfDirectory(
+        at: directory, includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles])
+    else { return [] }
+    let names = entries.compactMap { entry -> String? in
+      let name = entry.lastPathComponent
+      guard !known.contains(name),
+        (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+      else { return nil }
+      return name
+    }
+    guard !names.isEmpty else { return [] }
+    var pairs = names.map { ($0, parent.isEmpty ? $0 : "\(parent)/\($0)") }
+    if let needle {
+      pairs = pairs.filter { needle.occurs(in: FoldedText($1)) }
+    }
+    guard !pairs.isEmpty else { return [] }
+    let ignored = Git.ignored(at: root, directories: pairs.map(\.1))
+    return pairs.compactMap { ignored.contains($1) ? nil : $0 }
   }
 
   private func expandedDirectories() -> Set<String> {
@@ -565,18 +694,23 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   /// Re-select the row for `path` without announcing it — whatever is open stays open. `path` can
   /// name a directory, which is a row like any other.
   private func select(path: String) {
+    guard let node = node(at: path) else { return }
+    selectItem(node, announce: false)
+  }
+
+  /// The row for `path`, opening the directories above it on the way — which is what makes a
+  /// file just made three levels down actually reachable.
+  private func node(at path: String) -> FileNode? {
     var nodes = roots
     let components = path.split(separator: "/").map(String.init)
     for depth in 0..<components.count {
       let prefix = components[0...depth].joined(separator: "/")
-      guard let node = nodes.first(where: { $0.relativePath == prefix }) else { return }
-      guard node.isDirectory, depth < components.count - 1 else {
-        selectItem(node, announce: false)
-        return
-      }
+      guard let node = nodes.first(where: { $0.relativePath == prefix }) else { return nil }
+      guard node.isDirectory, depth < components.count - 1 else { return node }
       outline.expandItem(node)
       nodes = node.children
     }
+    return nil
   }
 
   // MARK: Field
@@ -599,7 +733,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   }
 
   func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-    guard control === filterField else { return false }
+    if control !== filterField {
+      return nameFieldCommand(selector, typed: textView.string)
+    }
     switch selector {
     case #selector(NSResponder.insertNewline(_:)):
       runSearch()
@@ -620,6 +756,25 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       if outline.selectedRow < 0 {
         outline.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
       }
+      return true
+    default:
+      return false
+    }
+  }
+
+  /// Escape and Return on a row being named. Handled here rather than left to the field editor
+  /// because inside a table Escape reaches `abortEditing()`, which takes the editor down without
+  /// posting `controlTextDidEndEditing` — so a row left to AppKit keeps its box and the panel goes
+  /// on believing a name is being typed. Focus is handed back to the list either way, which is
+  /// also what stops the editor lingering on a field that is no longer editable.
+  private func nameFieldCommand(_ selector: Selector, typed: String) -> Bool {
+    guard editingPath != nil else { return false }
+    switch selector {
+    case #selector(NSResponder.cancelOperation(_:)):
+      endNaming(commit: false, handingBackFocus: true)
+      return true
+    case #selector(NSResponder.insertNewline(_:)):
+      endNaming(commit: true, typed: typed, handingBackFocus: true)
       return true
     default:
       return false
@@ -736,19 +891,84 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
         + "query:\(filterField.stringValue) scope:\(scope) waiting:\(waiting)"
     }
     return "tree rows:\(outline.numberOfRows) query:\(filterField.stringValue) "
-      + "scope:\(scope) waiting:\(waiting)"
+      + "scope:\(scope) waiting:\(waiting) naming:\(editingPath ?? "—") field:\(hasFieldEditor)"
+  }
+
+  /// Whether the row being named really has the field editor — which is the half `editingPath`
+  /// cannot answer for, since a name typed on a row that never took focus goes nowhere.
+  private var hasFieldEditor: Bool {
+    guard let editor = namingRowView?.nameFieldForNaming.currentEditor() else { return false }
+    return view.window?.firstResponder === editor
   }
 
   /// Type into the field, the way a keystroke reaches it.
   func filterForScripting(_ query: String) {
     loadViewIfNeeded()
+    // A keystroke in the field would already have taken the focus off a name being typed; this
+    // path moves no focus, so it ends the name itself or the rebuild would be held.
+    endNaming(commit: true, handingBackFocus: true)
     filterField.stringValue = query
     refresh()
+  }
+
+  /// What the right-click menu offers on `path` (empty for the panel's own background), a line
+  /// each, `--` for a separator. Reported and not run: what is checkable without a click is which
+  /// items a row carries at all, and the acts themselves are the guarded verbs below.
+  func menuForScripting(path: String) -> String {
+    loadViewIfNeeded()
+    guard let worktree else { return "no worktree" }
+    var isDirectory: ObjCBool = false
+    let url = path.isEmpty ? worktree.url : worktree.url.appendingPathComponent(path)
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+      return "no such path"
+    }
+    let menu = NSMenu()
+    build(menu, for: MenuTarget(path: path, isDirectory: isDirectory.boolValue, line: nil))
+    return
+      menu.items
+      .map { $0.isSeparatorItem ? "--" : $0.title }
+      .joined(separator: "\n")
+  }
+
+  // The writes the menu makes, run without the row's naming or the alert that normally stands
+  // in front of them — which is exactly why they are guarded (`HUKAN_SCRIPTING_GUARDED=1`, the
+  // same gate `approve` sits behind): each stands in for a human's answer, and a session's own
+  // agent can reach osascript. What they buy is a check of the half that has no text to read
+  // back — that a row goes into naming, that an open tab follows a rename and leaves on a delete,
+  // and that git is re-read at all, since FSEvents drops hukan's own writes.
+
+  /// New File in this directory (empty text for the worktree root) — the menu's whole act, which
+  /// does not stop at the write: the row it makes goes straight into naming.
+  func writeForScripting(create directory: String) -> String {
+    loadViewIfNeeded()
+    return newFile(inDirectory: directory) ?? "ok"
+  }
+
+  /// New Folder in this directory — the other half of the same act, and the one with no git read
+  /// behind it at all, which is exactly what makes it worth a check of its own.
+  func writeForScripting(createFolder directory: String) -> String {
+    loadViewIfNeeded()
+    return newFolder(inDirectory: directory) ?? "ok"
+  }
+
+  func writeForScripting(rename path: String, to name: String) -> String {
+    loadViewIfNeeded()
+    let problem = rename(path, to: name)
+    // The menu's rename is followed by a rebuild a turn later (see `catchUpAfterNaming`); this
+    // one is followed by nothing, so the rebuild a renamed empty directory needs is run here.
+    refresh()
+    return problem ?? "ok"
+  }
+
+  func writeForScripting(delete path: String) -> String {
+    loadViewIfNeeded()
+    return delete(path) ?? "ok"
   }
 
   /// Type into the field and press Return.
   func searchForScripting(_ query: String) {
     loadViewIfNeeded()
+    endNaming(commit: true, handingBackFocus: true)
     filterField.stringValue = query
     runSearch()
   }
@@ -837,11 +1057,434 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     onActivate?(pick.path, pick.line)
   }
 
+  /// ⏎ on a row: name it. A result list is hits rather than the tree, and there is nothing to
+  /// rename in it, so ⏎ there keeps the meaning it always had — open what it found.
+  @objc private func renameSelected() {
+    guard !isShowingResults else {
+      activateSelected()
+      return
+    }
+    guard let path = selectedRowPath() else { return }
+    beginNaming(path: path)
+  }
+
   func outlineViewSelectionDidChange(_ notification: Notification) {
     guard !isSelectingQuietly, let pick = picked(outline.item(atRow: outline.selectedRow)) else {
       return
     }
     onSelect?(pick.path, pick.line)
+  }
+
+  // MARK: Context menu
+
+  /// What a right-click landed on. Every act the menu offers is about one path in the worktree,
+  /// so the three kinds of row — a tree node, a result's file, one of its lines — reduce to the
+  /// same target, and so does the background: a click below the last row is the worktree root,
+  /// which is the directory a file made there belongs in.
+  private struct MenuTarget {
+    let path: String
+    let isDirectory: Bool
+    /// A content hit's line, so Open in New Tab lands where the row said it would.
+    let line: Int?
+    var isRoot: Bool { path.isEmpty }
+    var name: String { (path as NSString).lastPathComponent }
+    /// The directory an act performed at this row works in: the row itself when it is one,
+    /// otherwise the directory holding it.
+    var directory: String { isDirectory ? path : (path as NSString).deletingLastPathComponent }
+  }
+
+  private func clickedTarget() -> MenuTarget? {
+    guard worktree != nil else { return nil }
+    let row = outline.clickedRow
+    switch row >= 0 ? outline.item(atRow: row) : nil {
+    case let node as FileNode:
+      return MenuTarget(path: node.relativePath, isDirectory: node.isDirectory, line: nil)
+    case let file as ResultFile:
+      return MenuTarget(path: file.path, isDirectory: false, line: file.lines.first?.line)
+    case let line as ResultLine:
+      return MenuTarget(path: line.path, isDirectory: false, line: line.line)
+    default:
+      return MenuTarget(path: "", isDirectory: true, line: nil)
+    }
+  }
+
+  private func url(for path: String) -> URL? {
+    guard let worktree else { return nil }
+    return path.isEmpty ? worktree.url : worktree.url.appendingPathComponent(path)
+  }
+
+  /// Built per click rather than kept around: `clickedRow` is only meaningful while the click
+  /// that raised the menu is being handled, and what the menu offers is read off the row it
+  /// landed on.
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    menu.removeAllItems()
+    // A right-click is a click elsewhere: a name being typed is committed before the menu can act
+    // on the tree — and before `clickedRow` is read, since committing may move the rows.
+    endNaming(commit: true, handingBackFocus: true)
+    menuTarget = clickedTarget()
+    guard let target = menuTarget else { return }
+    build(menu, for: target)
+  }
+
+  /// The menu's contents for `target`, separated from the delegate so the scripting surface can
+  /// read back what a row would offer without a click to read `clickedRow` from.
+  private func build(_ menu: NSMenu, for target: MenuTarget) {
+    @discardableResult
+    func add(_ title: String, _ action: Selector) -> NSMenuItem {
+      let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      item.target = self
+      menu.addItem(item)
+      return item
+    }
+
+    if !target.isRoot, !target.isDirectory {
+      add("Open in New Tab", #selector(openTargetInNewTab))
+    }
+    add("Reveal in Finder", #selector(revealTargetInFinder))
+    add("Open in Terminal", #selector(openTerminalAtTarget))
+
+    if !target.isRoot {
+      menu.addItem(.separator())
+      // Two items rather than one and an ⌥ alternate. The relative path is what is wanted nearly
+      // every time — it is the unit a buffer is keyed by and the form a path is written in to an
+      // agent — but an alternate is only reachable by someone who already knows it is there, and
+      // a menu is where you look precisely when you do not.
+      add("Copy Path", #selector(copyRelativePath))
+      add("Copy Absolute Path", #selector(copyAbsolutePath))
+    }
+
+    menu.addItem(.separator())
+    add("New File…", #selector(newFileAtTarget))
+    add("New Folder…", #selector(newFolderAtTarget))
+    if !target.isRoot {
+      menu.addItem(.separator())
+      // A result row names a file and the file can be renamed — but naming happens on the file's
+      // row in the tree, and what is on screen is hits. Delete needs no row, so it stays.
+      if !isShowingResults { add("Rename…", #selector(renameTarget)) }
+      add("Delete…", #selector(deleteTarget))
+    }
+  }
+
+  @objc private func openTargetInNewTab() {
+    guard let target = menuTarget, !target.isDirectory else { return }
+    onActivate?(target.path, target.line)
+  }
+
+  @objc private func revealTargetInFinder() {
+    guard let target = menuTarget, let url = url(for: target.path) else { return }
+    NSWorkspace.shared.activateFileViewerSelecting([url])
+  }
+
+  @objc private func openTerminalAtTarget() {
+    guard let target = menuTarget, let url = url(for: target.directory) else { return }
+    onNewTerminal?(url)
+  }
+
+  @objc private func copyRelativePath() {
+    guard let target = menuTarget else { return }
+    put(target.path, onPasteboard: .general)
+  }
+
+  @objc private func copyAbsolutePath() {
+    guard let target = menuTarget, let url = url(for: target.path) else { return }
+    put(url.path, onPasteboard: .general)
+  }
+
+  private func put(_ text: String, onPasteboard pasteboard: NSPasteboard) {
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
+  }
+
+  /// The file is made first, under a name nobody chose, and then named on its own row — which is
+  /// the Finder's order and the one that leaves a single naming mechanism instead of two. A row
+  /// for a file that does not exist would have to be conjured into a tree built from git's path
+  /// list and then defended against every refresh an agent's writing triggers; a file that is
+  /// really there needs none of that, and it arrives on the row through the ordinary path.
+  ///
+  /// A name typed on its row may carry directories — `Sources/Hukan/Model.swift` — and they are
+  /// made on the way; New Folder beside it is for the directory wanted on its own.
+  @objc private func newFileAtTarget() {
+    guard let target = menuTarget else { return }
+    if let problem = newFile(inDirectory: target.directory) { report(problem) }
+  }
+
+  /// Make the file and ask for its row. Returns what refused, or nil.
+  private func newFile(inDirectory directory: String) -> String? {
+    guard worktree != nil else { return "no worktree" }
+    let name = untitledName(in: directory)
+    let path = directory.isEmpty ? name : "\(directory)/\(name)"
+    if let problem = createFile(at: path) { return problem }
+    // git is re-read off the main thread, so the row is a turn or two away; `refresh` starts the
+    // naming once it is there.
+    pendingEdit = path
+    return nil
+  }
+
+  /// A folder is a row here for the same reason an untracked file is one: it is in this worktree.
+  /// git records no empty directory, so nothing about it will survive a commit until something
+  /// lands in it — which is exactly what the row is for.
+  @objc private func newFolderAtTarget() {
+    guard let target = menuTarget else { return }
+    if let problem = newFolder(inDirectory: target.directory) { report(problem) }
+  }
+
+  private func newFolder(inDirectory directory: String) -> String? {
+    guard let worktree else { return "no worktree" }
+    let name = untitledName(in: directory, base: "untitled folder")
+    let path = directory.isEmpty ? name : "\(directory)/\(name)"
+    do {
+      try FileManager.default.createDirectory(
+        at: worktree.url.appendingPathComponent(path), withIntermediateDirectories: true)
+    } catch {
+      return error.localizedDescription
+    }
+    onFileEdit?(.createdFolder(path))
+    // git's lists have not moved — they cannot, for an empty directory — so the re-read that
+    // brings a new file's row back has nothing to report here. The tree is rebuilt on the spot
+    // instead, since the panel is the only party that can see this at all.
+    builtFrom = nil
+    pendingEdit = path
+    refresh()
+    return nil
+  }
+
+  /// `untitled`, then `untitled 2` and so on — the Finder's rule, and it has to be a real answer
+  /// because the file is made before it is named. No extension: what it is called is the next
+  /// thing that happens.
+  private func untitledName(in directory: String, base name: String = "untitled") -> String {
+    guard let worktree else { return name }
+    let root = directory.isEmpty ? worktree.url : worktree.url.appendingPathComponent(directory)
+    var candidate = name
+    var counter = 2
+    while FileManager.default.fileExists(atPath: root.appendingPathComponent(candidate).path) {
+      candidate = "\(name) \(counter)"
+      counter += 1
+    }
+    return candidate
+  }
+
+  /// The write itself, without the prompt in front of it — shared with the guarded scripting
+  /// verb, which stands in for the answer the prompt collects. Returns what refused, or nil.
+  private func createFile(at path: String) -> String? {
+    guard let worktree else { return "no worktree" }
+    let url = worktree.url.appendingPathComponent(path)
+    guard !FileManager.default.fileExists(atPath: url.path) else {
+      return "“\(path)” already exists."
+    }
+    do {
+      try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    } catch {
+      return error.localizedDescription
+    }
+    guard FileManager.default.createFile(atPath: url.path, contents: Data()) else {
+      return "Could not create “\(path)”."
+    }
+    onFileEdit?(.created(path))
+    return nil
+  }
+
+  @objc private func renameTarget() {
+    guard let target = menuTarget, !target.isRoot else { return }
+    beginNaming(path: target.path)
+  }
+
+  /// The typed name, read against the directory the row is in. It may carry directories —
+  /// `deep/Model.swift` — and they are made on the way, which turns a rename into a move as the
+  /// same rule read from the other side; the trade is worth taking, since a name box that quietly
+  /// cannot reach a new directory is a worse surprise than one that can.
+  ///
+  /// It cannot leave the worktree, though. `..` is refused outright rather than resolved, since
+  /// the one thing a name typed on a row must not be able to mean is a file somewhere else.
+  private func rename(_ path: String, to name: String) -> String? {
+    guard let worktree else { return "no worktree" }
+    let components = name.split(separator: "/").map(String.init)
+    guard !components.isEmpty, !name.hasPrefix("/"),
+      !components.contains(where: { $0 == ".." || $0 == "." })
+    else {
+      return "“\(name)” is not a name this worktree has room for."
+    }
+    let parent = (path as NSString).deletingLastPathComponent
+    let renamed = ([parent] + components).filter { !$0.isEmpty }.joined(separator: "/")
+    guard renamed != path else { return nil }
+    let from = worktree.url.appendingPathComponent(path)
+    let to = worktree.url.appendingPathComponent(renamed)
+    // Skipped when only the case moved: this filesystem answers "exists" for the file being
+    // renamed, and `Model.swift` → `model.swift` is a rename git very much sees.
+    if to.path.compare(from.path, options: .caseInsensitive) != .orderedSame,
+      FileManager.default.fileExists(atPath: to.path)
+    {
+      return "“\(renamed)” already exists."
+    }
+    do {
+      try FileManager.default.createDirectory(
+        at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try FileManager.default.moveItem(at: from, to: to)
+    } catch {
+      return error.localizedDescription
+    }
+    if !gitKnows(path) { builtFrom = nil }
+    onFileEdit?(.renamed(from: path, to: renamed))
+    return nil
+  }
+
+  /// Whether git's lists — the tree's inputs — have anything at or under `path`. If they do, an
+  /// act on it moves them and the re-read that follows rebuilds the tree; if they do not (an
+  /// empty directory), nothing will, and the tree has to be invalidated by hand or the row
+  /// stays as it was.
+  private func gitKnows(_ path: String) -> Bool {
+    guard let worktree else { return false }
+    let prefix = path + "/"
+    let at: (String) -> Bool = { $0 == path || $0.hasPrefix(prefix) }
+    return worktree.trackedFiles.contains(where: at)
+      || worktree.changedFiles.contains { at($0.path) }
+  }
+
+  /// Deleted outright rather than moved to the Trash, and confirmed before it happens. A
+  /// worktree is a checkout: what was committed git still has, and what was not was never
+  /// anywhere else — so the Trash's copy would answer to a path this worktree no longer has,
+  /// for the one case it could actually help with. The confirmation is what stands in for it.
+  @objc private func deleteTarget() {
+    guard let target = menuTarget, !target.isRoot else { return }
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = "Delete “\(target.name)”?"
+    alert.informativeText =
+      target.isDirectory
+      ? "The folder and everything in it will be deleted. This cannot be undone."
+      : "The file will be deleted. This cannot be undone."
+    alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+    alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+    guard alert.runModal() == .alertFirstButtonReturn else { return }
+    if let problem = delete(target.path) { report(problem) }
+  }
+
+  private func delete(_ path: String) -> String? {
+    guard let url = url(for: path), !path.isEmpty else { return "no such path" }
+    do {
+      try FileManager.default.removeItem(at: url)
+    } catch {
+      return error.localizedDescription
+    }
+    onFileEdit?(.deleted(path))
+    // An empty directory's row is the panel's own, so its going is too (see `gitKnows`).
+    if !gitKnows(path) {
+      builtFrom = nil
+      refresh()
+    }
+    return nil
+  }
+
+  /// What went wrong, said once. These are the ordinary refusals — a name already taken, a
+  /// permission — and none of them has a next step hukan could offer.
+  private func report(_ problem: String) {
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = problem
+    alert.addButton(withTitle: "OK")
+    alert.runModal()
+  }
+
+  // MARK: Naming a row
+
+  /// Put `path`'s row into edit. A name is typed where the name is, not in a dialog over the
+  /// window: the row already says what is being renamed, so a dialog would say it a second time
+  /// and take the whole window to do it — and New File's name is decided against the rows around
+  /// it, which a sheet stands in front of.
+  func beginNaming(path: String) {
+    loadViewIfNeeded()
+    // Tree rows only: a result list still holds the tree's nodes behind it, but none of them is
+    // on screen to be typed in.
+    guard !isShowingResults else { return }
+    // A name already being typed is committed first, the way any click elsewhere commits it —
+    // and before `editingPath` moves, or the old field's end of editing, which the new field
+    // taking focus is about to cause, would be read as the new row's and rename the wrong file.
+    endNaming(commit: true, handingBackFocus: false)
+    guard let node = node(at: path), let window = view.window else { return }
+    let row = outline.row(forItem: node)
+    guard row >= 0 else { return }
+    outline.scrollRowToVisible(row)
+    selectItem(node, announce: false)
+    guard
+      let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? PanelRowView
+    else { return }
+    editingPath = path
+    namingRowView = cell
+    // The field may be refused the focus — something else declining to give it up — and a
+    // naming nobody can type into must not hold the tree still.
+    guard cell.beginNaming(node.name, delegate: self, in: window) else {
+      editingPath = nil
+      namingRowView = nil
+      return
+    }
+  }
+
+  /// Return, Tab or a click elsewhere commits; Escape leaves the name alone. Either way the tree
+  /// starts moving again, and catches up on whatever it held back while the name was being typed.
+  func controlTextDidEndEditing(_ obj: Notification) {
+    // The naming field's, and no other: the filter is a text field with this same delegate, and
+    // a row's field that has already been taken out of edit may still end its editing later.
+    guard let field = obj.object as? NSTextField, field === namingRowView?.nameFieldForNaming
+    else { return }
+    let cancelled =
+      (obj.userInfo?["NSTextMovement"] as? Int).map { $0 == NSTextMovement.cancel.rawValue }
+      ?? false
+    endNaming(commit: !cancelled, typed: field.stringValue, handingBackFocus: false)
+  }
+
+  /// Take the row out of edit, keeping the typed name or leaving it. What was typed is read off
+  /// the field editor while it is still up — a field's own `stringValue` does not catch up until
+  /// editing has ended — unless the caller has it already.
+  ///
+  /// `handingBackFocus` is for the ends the panel starts itself: Escape, Return, the toolbar, the
+  /// menu. The editor is still first responder then and the list should be again, or the editor
+  /// lingers on a field that is no longer editable. It must stay false on the focus-loss path,
+  /// where AppKit is midway through moving first responder to what was clicked and a
+  /// `makeFirstResponder` from inside that would take the click's target away from it.
+  private func endNaming(commit: Bool, typed: String? = nil, handingBackFocus: Bool) {
+    guard let path = editingPath else { return }
+    editingPath = nil
+    let cell = namingRowView
+    namingRowView = nil
+    let field = cell?.nameFieldForNaming
+    let editor = field?.currentEditor()
+    let name = (typed ?? editor?.string ?? field?.stringValue ?? "")
+      .trimmingCharacters(in: .whitespaces)
+    cell?.endNaming()
+    if handingBackFocus, let window = view.window, let editor, window.firstResponder === editor {
+      window.makeFirstResponder(outline)
+    }
+    var problem: String?
+    var renamed = false
+    // An empty name is not a name: it leaves the file alone, the way Escape does, rather than
+    // refusing out loud — there is nothing to tell someone who has just cleared a field.
+    if commit, !name.isEmpty, name != (path as NSString).lastPathComponent {
+      problem = rename(path, to: name)
+      renamed = problem == nil
+    }
+    catchUpAfterNaming(restoring: renamed ? nil : path, reporting: problem)
+  }
+
+  /// The tree moves again. Deferred a turn: this is called out of the field editor's own
+  /// notification, and reloading the outline under it is what AppKit spends that turn undoing.
+  /// The refresh always runs — one may have been held back (see `refresh`), and the one that was
+  /// not is the cheap early return — and so does the alert, for the same reason: a modal run from
+  /// inside the editor's notification is run from inside the thing it interrupts.
+  private func catchUpAfterNaming(restoring path: String?, reporting problem: String?) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      if self.isShowingResults { self.runSearch() } else { self.refresh() }
+      // A row whose name did not take is still showing the plain string it was handed to be
+      // typed in — the half-typed one, or nothing at all — and the refresh that found nothing to
+      // rebuild did not touch it, so it is reloaded on its own account. A renamed row is left
+      // alone: the typed name is the right label until git's answer rebuilds the tree, where a
+      // reload would put the old name back for exactly that long. Never the row being typed in
+      // now, since a reload is what takes a field editor down.
+      if let path, path != self.editingPath, let node = self.node(at: path) {
+        self.outline.reloadItem(node)
+      }
+      if let problem { self.report(problem) }
+    }
   }
 
   // MARK: Outline
@@ -966,6 +1609,9 @@ private final class PanelRowView: NSTableCellView {
       field.cell?.truncatesLastVisibleLine = true
       field.translatesAutoresizingMaskIntoConstraints = false
     }
+    // The rows set their text attributed, font included; this is the font a name is typed in,
+    // which is plain text, so it has to say the same size.
+    nameField.font = .systemFont(ofSize: 12)
     // The name is the only thing allowed to give: a truncated name still identifies the row,
     // while a truncated diffstat or line number says nothing at all.
     nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -993,12 +1639,53 @@ private final class PanelRowView: NSTableCellView {
 
   required init?(coder: NSCoder) { fatalError() }
 
+  /// Put this row's name into edit. The field is a label the rest of the time — an editable one
+  /// would take a plain click, and a click on a row here previews the file — so what makes it a
+  /// field is this call, and `endNaming` takes it back.
+  /// False if the field could not take the focus, in which case the row is a label again.
+  func beginNaming(_ name: String, delegate: NSTextFieldDelegate, in window: NSWindow) -> Bool {
+    nameField.stringValue = name
+    nameField.isEditable = true
+    nameField.isSelectable = true
+    nameField.isBezeled = true
+    nameField.bezelStyle = .roundedBezel
+    nameField.drawsBackground = true
+    nameField.delegate = delegate
+    guard window.makeFirstResponder(nameField) else {
+      endNaming()
+      return false
+    }
+    // The extension is rarely what is being changed, so the selection is the stem — the Finder's
+    // rule. A name that is all extension (`.gitignore`) has no stem, and takes the lot.
+    let stem = (name as NSString).deletingPathExtension
+    if !stem.isEmpty, stem != name {
+      nameField.currentEditor()?.selectedRange = NSRange(
+        location: 0, length: (stem as NSString).length)
+    }
+    return true
+  }
+
+  /// The field a name is typed in, for the panel to read a value back off when something other
+  /// than the field editor itself ends the edit.
+  var nameFieldForNaming: NSTextField { nameField }
+
+  func endNaming() {
+    nameField.isEditable = false
+    nameField.isSelectable = false
+    nameField.isBezeled = false
+    nameField.drawsBackground = false
+    nameField.delegate = nil
+  }
+
   /// Fill the row. A nil part is hidden rather than left empty, so the stack closes the gap and
   /// a row with no icon starts where its text does.
   func show(
     icon symbol: String?, lead: NSAttributedString?, name: NSAttributedString,
     trailing: NSAttributedString?
   ) {
+    // This cell may be the one a name was being typed in, handed back for another row. Ending
+    // the edit is the safe failure; a bezel left on a row nobody is naming is the other one.
+    if nameField.isEditable { endNaming() }
     icon.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
     icon.isHidden = symbol == nil
     leadField.attributedStringValue = lead ?? NSAttributedString()

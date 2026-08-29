@@ -334,10 +334,16 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // the item that draws it.
     files.panel.onScopeChanged = { [weak self] in self?.updateFilesToolbarItem() }
     // The desk's + button opens a terminal in the selected worktree, same as ⌃⌘T.
-    files.onNewTerminal = { [weak self] in self?.newTerminal(nil) }
+    files.onNewTerminal = { [weak self] cwd in self?.newTerminal(at: cwd) }
     // A watched worktree's files moved: refresh in place, no full reload.
     workspace.onWorktreeFilesChanged = { [weak self] id, changed in
       self?.worktreeFilesChanged(id, changed: changed)
+    }
+    // A directory git cannot see arrived. Only the tree can show it and only the tree has to be
+    // redrawn — no rail, no diffstat, no tab: nothing git could measure has moved.
+    workspace.onWorktreeDirectoriesChanged = { [weak self] id in
+      guard let self, id == self.workspace.selectedWorktreeID else { return }
+      self.files.rebuildTree()
     }
 
     WorkspaceWindowController.all.append(self)
@@ -1667,10 +1673,16 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
   /// File ▸ New Terminal (⌃⌘T). A shell in the selected worktree, shown as a tab on its desk.
   @objc func newTerminal(_ sender: Any?) {
+    newTerminal(at: nil)
+  }
+
+  /// The same terminal, started somewhere other than the worktree's root — the files panel's
+  /// Open in Terminal, which names the directory the row is in.
+  private func newTerminal(at cwd: URL?) {
     guard let worktreeID = workspace.selectedWorktreeID,
       let worktree = workspace.worktree(id: worktreeID)
     else { return }
-    createTerminal(in: worktree)
+    createTerminal(in: worktree, cwd: cwd)
   }
 
   /// The scripting seam (`make new terminal`), mirroring `makeSession`.
@@ -1707,8 +1719,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   }
 
   @discardableResult
-  private func createTerminal(in worktree: Worktree) -> TerminalSession {
-    let terminal = TerminalSession(worktreeID: worktree.id, cwd: worktree.url)
+  private func createTerminal(in worktree: Worktree, cwd: URL? = nil) -> TerminalSession {
+    let terminal = TerminalSession(worktreeID: worktree.id, cwd: cwd ?? worktree.url)
     registerTerminal(terminal)
     // Show it now only if its worktree is the one on screen; otherwise it waits, unspawned, for
     // that worktree to be selected (scripting can make a terminal in any worktree).

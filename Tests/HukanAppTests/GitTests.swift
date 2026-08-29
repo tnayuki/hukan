@@ -120,6 +120,22 @@ final class GitTests: XCTestCase {
     XCTAssertFalse(changed.contains { $0.path == "noise.log" }, "ignored files stay out")
   }
 
+  /// The files panel asks this about the directories git produced no path for, so that a
+  /// checkout's build directory — which holds nothing git can see, and would otherwise be the one
+  /// row nobody wants — stays out of the tree.
+  func testIgnoredAnswersForDirectories() throws {
+    makeRepository()
+    try write("build/\n", to: ".gitignore")
+    try write("a\n", to: "src/a.txt")
+    git(["add", "."])
+    git(["commit", "-q", "-m", "first"])
+    try FileManager.default.createDirectory(
+      at: root.appendingPathComponent("build"), withIntermediateDirectories: true)
+
+    XCTAssertEqual(Git.ignored(at: root, directories: ["build", "src"]), ["build"])
+    XCTAssertEqual(Git.ignored(at: root, directories: []), [])
+  }
+
   func testDiffCarriesTheHunk() throws {
     makeRepository()
     try write("one\ntwo\n", to: "a.txt")

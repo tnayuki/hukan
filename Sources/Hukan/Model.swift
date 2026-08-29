@@ -191,7 +191,7 @@ final class FileNode: NSObject {
   /// This directory's immediate children, computed once on first access. Empty for a leaf.
   var children: [FileNode] {
     if let cachedChildren { return cachedChildren }
-    let result = tree?.children(inRange: range, depth: depth) ?? []
+    let result = tree?.children(inRange: range, depth: depth, parent: relativePath) ?? []
     cachedChildren = result
     return result
   }
@@ -215,19 +215,28 @@ final class FileNode: NSObject {
 final class FileTree {
   let paths: [String]
   private let changed: [String: ChangedFile]
+  /// The directories directly under a given path that git produced no path for — empty ones, and
+  /// ones holding nothing git can see — asked for as a node opens rather than found by walking
+  /// the worktree, so a tree that shows them still costs what is on screen. nil leaves the tree
+  /// exactly git's path list, which is what the tests and the non-git case want.
+  private let unseenDirectories: ((String, Set<String>) -> [String])?
 
-  init(paths: [String], changed: [String: ChangedFile]) {
+  init(
+    paths: [String], changed: [String: ChangedFile],
+    unseenDirectories: ((String, Set<String>) -> [String])? = nil
+  ) {
     self.paths = paths
     self.changed = changed
+    self.unseenDirectories = unseenDirectories
   }
 
   /// The top-level entries.
-  var rootChildren: [FileNode] { children(inRange: 0..<paths.count, depth: 0) }
+  var rootChildren: [FileNode] { children(inRange: 0..<paths.count, depth: 0, parent: "") }
 
   /// The immediate children of the directory whose descendants are exactly `paths[range]`, every
   /// one of them sharing the same first `depth` path components. Directories come first, then
   /// natural order — the look the eager tree had.
-  func children(inRange range: Range<Int>, depth: Int) -> [FileNode] {
+  func children(inRange range: Range<Int>, depth: Int, parent: String) -> [FileNode] {
     var result: [FileNode] = []
     var i = range.lowerBound
     while i < range.upperBound {
@@ -264,6 +273,22 @@ final class FileTree {
         }
         result.append(node)
         i = end
+      }
+    }
+    // A directory git has no path for is still a directory in this worktree — the same reason an
+    // untracked file is a row. It gets an empty range: everything under it, if anything ever
+    // lands there, arrives the same way this did, one node at a time.
+    if let unseenDirectories {
+      // The names git already produced go in, not out: the read on the other side asks git about
+      // what is left, and in an ordinary tree — every directory holding something tracked —
+      // nothing is, so it never has to ask at all.
+      let known = Set(result.map(\.name))
+      let empty = range.upperBound..<range.upperBound
+      for name in unseenDirectories(parent, known) {
+        result.append(
+          FileNode(
+            name: name, relativePath: parent.isEmpty ? name : "\(parent)/\(name)", tree: self,
+            range: empty, depth: depth + 1))
       }
     }
     result.sort { left, right in

@@ -341,6 +341,32 @@ extension Workspace {
     }
   }
 
+  /// Whether any of `moved` is a directory that exists, that git does not ignore, and that git
+  /// has nothing under — the one thing an FSEvents batch can carry that git's own answer cannot
+  /// report, since an empty directory is nothing to git. Three gates, cheapest first: the stat,
+  /// which every write to a file fails; then git's ignore rules, asked once for the whole batch,
+  /// because a dependency install is thousands of directories arriving at once under one ignored
+  /// parent and they must not cost a repository open each; and only then the scan of git's
+  /// lists, the one gate priced by the size of the checkout.
+  static func carriesUnseenDirectory(
+    _ moved: Set<String>, at url: URL, tracked: [String], changed: [String]
+  ) -> Bool {
+    let directories = moved.filter { path in
+      var isDirectory: ObjCBool = false
+      return FileManager.default.fileExists(
+        atPath: url.appendingPathComponent(path).path, isDirectory: &isDirectory)
+        && isDirectory.boolValue
+    }
+    guard !directories.isEmpty else { return false }
+    let ignored = Git.ignored(at: url, directories: Array(directories))
+    return directories.contains { path in
+      guard !ignored.contains(path) else { return false }
+      let prefix = path + "/"
+      let under: (String) -> Bool = { $0.hasPrefix(prefix) }
+      return !tracked.contains(where: under) && !changed.contains(where: under)
+    }
+  }
+
   /// A file moved under a watched worktree — re-query git and, only if the working set
   /// actually shifted, adopt it and tell the window. Unlike `loadFiles` this ignores
   /// `hasLoadedFiles`: its whole point is to refresh a worktree that was already loaded. The
@@ -373,6 +399,17 @@ extension Workspace {
       // second, and the equality test has to see that as a change or the section would keep
       // drawing the list from before it.
       let history = Git.history(at: url, limit: limit)
+      // A directory git cannot see moved. It is a row in the files panel all the same, and git's
+      // lists can never report it — an empty directory is nothing to git — so the equality test
+      // below would let a `mkdir` pass unseen. Checked here rather than by widening that test,
+      // and narrowly: a moved path is looked at only if it is a directory that exists and git has
+      // nothing under it, which every write to a file fails at the first stat. That is what keeps
+      // the churning-build case free, since its paths are files and its directory is ignored.
+      let newDirectory =
+        moved.map {
+          Workspace.carriesUnseenDirectory(
+            $0, at: url, tracked: tracked, changed: changed.map(\.path))
+        } ?? false
       DispatchQueue.main.async {
         guard let self else { return }
         self.refreshInFlight.remove(worktreeID)
@@ -385,6 +422,10 @@ extension Workspace {
           worktree.history = history
           worktree.hasLoadedFiles = true
           self.onWorktreeFilesChanged?(worktreeID, moved)
+        } else if newDirectory {
+          // Nothing git can answer for has moved, so nothing but the tree has to be redrawn —
+          // the narrow hook, rather than the one that reloads the window.
+          self.onWorktreeDirectoriesChanged?(worktreeID)
         }
         // Whatever the result, git has just been asked — a branch move's re-read is satisfied.
         self.worktree(id: worktreeID)?.needsFileReload = false

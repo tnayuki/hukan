@@ -102,6 +102,24 @@ until Escape. Either can be walked away from: the scan says it is searching, and
 over it drops the one still reading rather than queueing behind it. The ± scopes both to the
 changed files, and every row carries its own diffstat.
 
+A right-click on a row is where hukan writes to a worktree itself. It opens the row in a lasting
+tab, reveals it in the Finder, opens a terminal in its directory, and copies its path — twice
+over, relative to the worktree and absolute. Below that it makes a new file, renames the row and
+deletes it. A name is typed on the row itself: renaming edits it in place, and a new file is made
+under an untitled name and handed straight to the same edit. ⏎ on a row starts it, the way the
+Finder does, and ⌘↓ is what opens a row from the keyboard. The name is read against the directory
+the row is in and may carry directories, which are made on the way, so renaming is also how a file
+moves. It cannot climb out of the worktree. New Folder sits beside New File: git records no empty
+directory, but the panel shows one anyway — it is in this worktree, which is the same reason an
+untracked file is a row — reading each directory as its row opens rather than walking the
+checkout, and leaving out the ones git ignores. One made in the Finder or by a command shows up
+the same way.
+While a name is being typed the tree holds still, so an agent writing in the worktree cannot take
+the field away mid-word. A delete is confirmed and then really deleted
+rather than moved to the Trash. A tab already showing
+a renamed file follows the new name, and one showing a deleted file closes. On the panel's own
+background the same menu makes a file at the worktree root.
+
 Tabs are files (always editable source), commits (read-only), web tabs (one shared cookie store,
 passing as this machine's Safari) and terminals (named as Terminal.app names one). The plain
 new-tab key opens a browser rather than a terminal — the shell work here is the agent's — and

@@ -24,6 +24,10 @@ final class Workspace {
   /// commit, a staging, anything under git's own directory — and everything a reader has open
   /// has to be re-read.
   var onWorktreeFilesChanged: ((UUID, Set<String>?) -> Void)?
+  /// A directory git cannot see arrived under a watched worktree — the one change git's own
+  /// answer never reports. Narrower than the hook above on purpose: nothing has moved that a tab,
+  /// the rail or a diffstat could be measured against, so only the tree is redrawn.
+  var onWorktreeDirectoriesChanged: ((UUID) -> Void)?
 
   // The four properties below are the class's own bookkeeping, but `private` is
   // file-scoped and their only other user is `WorkspaceSync.swift` — the extension that

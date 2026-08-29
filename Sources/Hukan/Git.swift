@@ -32,6 +32,23 @@ enum Git {
     return fileStats(in: diff)
   }
 
+  /// Which of `paths` git would ignore. One repository open for the batch, because the caller
+  /// asks per directory it opens — the names directly under one node — rather than per file.
+  /// A directory is asked about with its trailing slash, which is how libgit2 is told that the
+  /// path is one.
+  static func ignored(at url: URL, directories: [String]) -> Set<String> {
+    guard !directories.isEmpty, let repo = openRepository(at: url) else { return [] }
+    defer { git_repository_free(repo) }
+    var result: Set<String> = []
+    for path in directories {
+      var ignored: Int32 = 0
+      if git_ignore_path_is_ignored(&ignored, repo, path + "/") == 0, ignored != 0 {
+        result.insert(path)
+      }
+    }
+    return result
+  }
+
   /// The tracked list under git, otherwise a shallow walk of the real files. A Worktree is "a
   /// directory that may carry git information", so both cases have to work — and a git directory
   /// with nothing tracked yet (a fresh `git init`) falls through to the walk too, so its
