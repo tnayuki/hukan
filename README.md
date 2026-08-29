@@ -174,6 +174,8 @@ built-ins beside every skill and user command it found — filtered as you type,
 `⇥`. A skill added on disk shows up once an engine has restarted; nothing here keeps a copy.
 
 **Markdown.** Rendered on both sides of the conversation, with what you typed tinted and indented.
+A table's cells are selectable — by character inside a cell, by whole cells once the drag leaves
+one — and copy as tab-separated text, which is what a spreadsheet and Slack read as a table.
 
 **Search.** One field for the rail, with the same two gestures as the panel's: typing filters the
 sessions by title, `⏎` searches the transcripts themselves, off the main thread. Opening a

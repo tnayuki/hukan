@@ -124,6 +124,20 @@ Workspace (one window)
   unlike a file or a commit — the pages an agent hands you are context you want side by side — so
   what keeps them from piling up is that an address already open is switched to rather than opened
   twice.
+- **A table in the transcript is selected in, and what it copies is tab-separated.** It is drawn
+  rather than laid out — the cells are fitted to the pane, and the pane's width is known to
+  nothing but the layout — so no range in the storage can name a cell, and the selection is the
+  table's own. A drag takes characters while it stays in the cell it started in and snaps to whole
+  cells the moment it leaves: a run that ends halfway through a cell two rows down is a shape no
+  table can be copied as, so the switch is what keeps the highlight and the copy the same thing,
+  and it makes taking a column, or a row, the same gesture rather than a mode. **Tabs rather than
+  the markdown the agent wrote**, because a table lifted out on its own is going to a spreadsheet
+  or to Slack, and Slack builds a real table out of tab-separated text and out of nothing else —
+  which was measured rather than reasoned: a `<table>` on the pasteboard beside it is read first
+  and the table dropped, and the dedicated tabular type is not read at all. The markdown is still
+  what a selection *through* the transcript yields, where the table is one attachment inside prose
+  and pipes are what reads there. A block of cells carries the header whether the drag touched it
+  or not, since that is what says what the rows are.
 - **A double-click selects the whole token, and a token is what an agent hands you.** A commit
   hash, a session id, a branch name, a path, a URL, an option, a file and its line: the things
   this window is read for, each one unit. macOS breaks all of them, and only on a Japanese line —
@@ -135,8 +149,9 @@ Workspace (one window)
   `kebab-case-name` one word where the English one calls it five, so a rule that took the wider
   answer left the same token reading differently on the two lines, which is the bug and not a
   safety net. It belongs to the transcript, the editor and the commit tab at once, all three being
-  the same kind of text, and it is a gesture: the double-click's meaning wherever text is read,
-  never a mode and never a preference.
+  the same kind of text — and a table's cells, which are not a text view at all and are read the
+  same way regardless. It is a gesture: the double-click's meaning wherever text is read, never a
+  mode and never a preference.
 - **The web tab's chrome reads the view, and the tab does the host's half of WKWebView.** The
   address, title and history buttons are KVO on the web view, not the navigation delegate:
   `didCommit` fires for a document load and nothing else, and GitHub — the page this browser

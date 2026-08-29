@@ -257,6 +257,8 @@ public final class TranscriptTextView: WordSelectingTextView {
       return
     }
     if event.clickCount >= 2, retoggleFold(for: event) { return }
+    if dragInTable(event, at: point) { return }
+    clearTableSelection()
     super.mouseDown(with: event)
   }
 
@@ -272,6 +274,208 @@ public final class TranscriptTextView: WordSelectingTextView {
     return found
   }
 
+  // MARK: Selecting inside a table
+
+  /// The table showing a selection, and where its attachment sits in the storage. The selection
+  /// itself lives on the attachment; this is which one is wearing it, and the offset is kept so a
+  /// redraw finds the table without walking the transcript.
+  private var selectedTable: (table: TableAttachment, offset: Int)?
+
+  /// The table under a point, if the point is on one. Found through the character under the
+  /// pointer rather than by scanning the storage: a click must not cost a walk of the transcript.
+  private func table(at point: CGPoint) -> (table: TableAttachment, offset: Int, frame: CGRect)? {
+    guard let storage = textStorage, storage.length > 0 else { return nil }
+    let index = characterIndexForInsertion(at: point)
+    // The insertion point falls on either side of the attachment character depending on which
+    // half of it was hit, so both sides are candidates.
+    for offset in [index, index - 1] where offset >= 0 && offset < storage.length {
+      guard
+        let table = storage.attribute(.attachment, at: offset, effectiveRange: nil)
+          as? TableAttachment,
+        let frame = tableFrame(table, at: offset), frame.contains(point)
+      else { continue }
+      return (table, offset, frame)
+    }
+    return nil
+  }
+
+  /// Where a table's image sits in view coordinates. The attachment is alone on its line, so the
+  /// layout fragment's top is the image's top.
+  private func tableFrame(_ table: TableAttachment, at offset: Int) -> CGRect? {
+    guard let size = table.layout?.size, let layout = textLayoutManager,
+      let content = layout.textContentManager,
+      let location = content.location(content.documentRange.location, offsetBy: offset),
+      let fragment = layout.textLayoutFragment(for: location)
+    else { return nil }
+    let origin = textContainerOrigin
+    let padding = textContainer?.lineFragmentPadding ?? 0
+    return CGRect(
+      x: origin.x + padding, y: origin.y + fragment.layoutFragmentFrame.minY,
+      width: size.width, height: size.height)
+  }
+
+  /// What one step of a drag selects: a click drags by character, a double-click by word, a
+  /// triple-click by row — the text view's own escalation, each of which goes on extending while
+  /// the mouse is down.
+  private enum TableGranularity { case character, word, row }
+
+  /// True when the click landed on a table and the drag was handled here. The table's cells are
+  /// not text in the storage, so the text view's own selection cannot name them: this runs the
+  /// tracking loop itself, and the two selections are exclusive — starting one empties the other.
+  private func dragInTable(_ event: NSEvent, at point: CGPoint) -> Bool {
+    guard let hit = table(at: point), let layout = hit.table.layout else { return false }
+    if selectedTable?.table !== hit.table { clearTableSelection() }
+    setSelectedRange(NSRange(location: 0, length: 0))
+    let table = hit.table
+    selectedTable = (table, hit.offset)
+
+    func local(_ point: CGPoint) -> CGPoint {
+      CGPoint(x: point.x - hit.frame.minX, y: point.y - hit.frame.minY)
+    }
+    guard let pressed = layout.position(at: local(point)) else { return true }
+    func word(at position: TableCellPosition) -> NSRange {
+      layout.text(row: position.row, column: position.column)?.wordRange(at: position.character)
+        ?? NSRange(location: position.character, length: 0)
+    }
+
+    // ⇧ extends what is already selected, so the anchor becomes that selection's far end.
+    var anchor = pressed
+    if event.modifierFlags.contains(.shift) {
+      switch table.selection {
+      case .text(let span)?:
+        anchor = pressed < span.end ? span.end : span.start
+      case .block(let block)?:
+        anchor = TableCellPosition(
+          row: pressed.row <= block.rows.lowerBound ? block.rows.upperBound : block.rows.lowerBound,
+          column: pressed.column <= block.columns.lowerBound
+            ? block.columns.upperBound : block.columns.lowerBound,
+          character: 0)
+      case nil:
+        break
+      }
+    }
+    let granularity: TableGranularity =
+      event.clickCount == 2 ? .word : (event.clickCount >= 3 ? .row : .character)
+    let anchorWord = word(at: anchor)
+
+    func extend(to point: CGPoint) {
+      guard let current = layout.position(at: local(point)) else { return }
+      let next: TableSelection
+      if granularity == .row {
+        next = .block(
+          TableCellBlock(
+            rows: min(anchor.row, current.row)...max(anchor.row, current.row),
+            columns: 0...(layout.columnCount - 1)))
+      } else if current.row != anchor.row || current.column != anchor.column {
+        next = .block(
+          TableCellBlock(
+            rows: min(anchor.row, current.row)...max(anchor.row, current.row),
+            columns: min(anchor.column, current.column)...max(anchor.column, current.column)))
+      } else if granularity == .word {
+        let currentWord = word(at: current)
+        next = .text(
+          TableTextSpan(
+            start: TableCellPosition(
+              row: anchor.row, column: anchor.column,
+              character: min(anchorWord.location, currentWord.location)),
+            end: TableCellPosition(
+              row: anchor.row, column: anchor.column,
+              character: max(NSMaxRange(anchorWord), NSMaxRange(currentWord)))))
+      } else {
+        next = .text(TableTextSpan(start: min(anchor, current), end: max(anchor, current)))
+      }
+      guard table.selection != next else { return }
+      table.selection = next
+      needsDisplay = true
+    }
+
+    extend(to: point)
+    while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+      if next.type == .leftMouseUp { break }
+      extend(to: convert(next.locationInWindow, from: nil))
+    }
+    return true
+  }
+
+  /// Drops the table selection, and reports whether there was one — so a key that is only meant
+  /// to dismiss it can stop there.
+  @discardableResult
+  private func clearTableSelection() -> Bool {
+    guard let selected = selectedTable else { return false }
+    selected.table.selection = nil
+    selectedTable = nil
+    needsDisplay = true
+    return true
+  }
+
+  /// Drawn behind the image rather than over it: the table's row fills are translucent, so the
+  /// standard selection colour reads through them the way it does behind text.
+  private func drawTableSelection() {
+    guard let selected = selectedTable, let selection = selected.table.selection,
+      let layout = selected.table.layout, let storage = textStorage,
+      selected.offset < storage.length,
+      storage.attribute(.attachment, at: selected.offset, effectiveRange: nil)
+        as? TableAttachment === selected.table,
+      let frame = tableFrame(selected.table, at: selected.offset)
+    else { return }
+    let colour =
+      window?.firstResponder === self && window?.isKeyWindow == true
+      ? NSColor.selectedTextBackgroundColor : NSColor.unemphasizedSelectedTextBackgroundColor
+    colour.setFill()
+    let rects: [CGRect]
+    let radius: CGFloat
+    switch selection {
+    case .block(let block):
+      rects = [layout.blockRect(block)]
+      radius = 3
+    case .text(let span):
+      rects = layout.textRects(span)
+      radius = 2
+    }
+    for rect in rects {
+      NSBezierPath(
+        roundedRect: rect.offsetBy(dx: frame.minX, dy: frame.minY), xRadius: radius,
+        yRadius: radius
+      ).fill()
+    }
+  }
+
+  /// A table selection is not a range in the storage, so the standard copy has nothing to write:
+  /// this writes the cells instead. Tab-separated, and on the tabular type as well when whole
+  /// cells were taken — see `TableAttachment.selectedText`.
+  public override func copy(_ sender: Any?) {
+    guard let table = selectedTable?.table, let text = table.selectedText() else {
+      super.copy(sender)
+      return
+    }
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    var types: [NSPasteboard.PasteboardType] = [.string]
+    if table.selectionSpansCells { types.append(.tabularText) }
+    pasteboard.declareTypes(types, owner: nil)
+    pasteboard.setString(text, forType: .string)
+    if table.selectionSpansCells { pasteboard.setString(text, forType: .tabularText) }
+  }
+
+  /// Copy is disabled while the text selection is empty, which is exactly the state a table
+  /// selection leaves the view in.
+  public override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+    if item.action == #selector(copy(_:)), selectedTable?.table.selectedText() != nil {
+      return true
+    }
+    return super.validateUserInterfaceItem(item)
+  }
+
+  public override func selectAll(_ sender: Any?) {
+    clearTableSelection()
+    super.selectAll(sender)
+  }
+
+  public override func cancelOperation(_ sender: Any?) {
+    guard !clearTableSelection() else { return }
+    super.cancelOperation(sender)
+  }
+
   // MARK: The message mark
 
   /// A marked message's `…`, drawn at the vertical centre of the block's trailing edge — over the
@@ -279,6 +483,7 @@ public final class TranscriptTextView: WordSelectingTextView {
   /// draw its own line, and the message's height is known to nothing but the layout. Every marked
   /// block that reaches the viewport gets one, found through the same attribute the click reads.
   public override func draw(_ dirtyRect: NSRect) {
+    drawTableSelection()
     super.draw(dirtyRect)
     drawMessageMarks(in: dirtyRect)
   }
