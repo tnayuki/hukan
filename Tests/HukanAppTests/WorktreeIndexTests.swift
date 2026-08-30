@@ -51,6 +51,37 @@ final class WorktreeIndexTests: XCTestCase {
       index.entries(of: "")?.map(\.name).sorted(), ["README.md", "build", "empty", "src"])
   }
 
+  /// The listing is `readdir`, so what the entry itself says about a name has to agree with what
+  /// a `stat` used to: a link is what it points at, a link pointing nowhere is not a directory,
+  /// a hidden file is a file like any other, and `.git` is the one name left out — it is the
+  /// repository, not the worktree, and in a linked worktree it is a file rather than a directory.
+  func testTheListingReadsLinksAndHiddenNamesTheWayAStatDid() throws {
+    let root = try makeTree(["src/a.swift", ".env", "elsewhere/b.swift", ".git/HEAD"])
+    let manager = FileManager.default
+    try manager.createSymbolicLink(
+      at: root.appendingPathComponent("link"),
+      withDestinationURL: root.appendingPathComponent(
+        "elsewhere"))
+    try manager.createSymbolicLink(
+      at: root.appendingPathComponent("dangling"),
+      withDestinationURL: root.appendingPathComponent("nothing-here"))
+    try manager.createSymbolicLink(
+      at: root.appendingPathComponent("file-link"),
+      withDestinationURL: root.appendingPathComponent("src/a.swift"))
+
+    let listed = try XCTUnwrap(WorktreeIndex.list(root))
+    let byName = Dictionary(
+      listed.map { ($0.name, $0.isDirectory) }, uniquingKeysWith: { a, _ in a })
+    XCTAssertEqual(byName["link"], true, "a link to a directory is a directory")
+    XCTAssertEqual(byName["file-link"], false)
+    XCTAssertEqual(byName["dangling"], false, "nothing there to be a directory")
+    XCTAssertEqual(byName[".env"], false, "hidden names are listed")
+    XCTAssertEqual(byName["src"], true)
+    XCTAssertNil(byName[".git"], "the repository is not the worktree")
+    XCTAssertFalse(listed.contains { $0.name == "." || $0.name == ".." })
+    XCTAssertNil(WorktreeIndex.list(root.appendingPathComponent("nothing-here")))
+  }
+
   /// A batch names paths; the directories they sit in are read again, a new directory is walked
   /// in, and a directory that went takes its subtree out. Each answer says which directories
   /// now read differently.

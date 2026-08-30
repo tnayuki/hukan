@@ -58,17 +58,47 @@ enum Git {
     return byPath.values.sorted { FileTree.precedesBytewise($0.path, $1.path) }
   }
 
-  /// Which of these git would ignore. One repository open for the batch, because the caller asks
+  /// How many paths one repository open answers for. The index's walk asks about a whole level
+  /// of directories at once — thousands of them, several levels down — and one answer is an
+  /// ignore stack walked from the root, so past a point the batch is worth splitting over the
+  /// cores. Under it there is nothing to split: the panel asks per directory it lists, where a
+  /// second repository open would cost more than the answers do.
+  private static let ignoreChunk = 512
+
+  /// Which of these git would ignore. One repository open per chunk, because the caller asks
   /// per directory it lists — the entries directly under one node — rather than per path; each
-  /// answer is about 27µs on top of that. A directory is asked about with its trailing slash,
-  /// which is how libgit2 is told that the path is one.
+  /// answer is about 17µs on top of that against a `.gitignore` of a few hundred patterns. A
+  /// directory is asked about with its trailing slash, which is how libgit2 is told that the
+  /// path is one.
+  ///
+  /// The chunks are independent all the way down — a `git_repository` each, nothing shared — and
+  /// on the index's walk of a synthesized 11,000-directory worktree they are 200ms of it against
+  /// 48ms.
   static func ignored(at url: URL, directories: [String], files: [String] = []) -> Set<String> {
-    guard !(directories.isEmpty && files.isEmpty), let repo = openRepository(at: url) else {
-      return []
+    let asked = directories.map { ($0, $0 + "/") } + files.map { ($0, $0) }
+    guard !asked.isEmpty else { return [] }
+    guard asked.count > ignoreChunk else { return ignored(at: url, asking: asked[...]) }
+    let chunks = stride(from: 0, to: asked.count, by: ignoreChunk).map {
+      asked[$0..<min($0 + ignoreChunk, asked.count)]
     }
+    var found = [Set<String>](repeating: [], count: chunks.count)
+    found.withUnsafeMutableBufferPointer { buffer in
+      DispatchQueue.concurrentPerform(iterations: buffer.count) { index in
+        buffer[index] = ignored(at: url, asking: chunks[index])
+      }
+    }
+    return found.reduce(into: Set<String>()) { $0.formUnion($1) }
+  }
+
+  /// One chunk, against one repository of its own. `asked` is each path with the spelling
+  /// libgit2 is to be given it in.
+  private static func ignored(at url: URL, asking asked: ArraySlice<(String, String)>) -> Set<
+    String
+  > {
+    guard let repo = openRepository(at: url) else { return [] }
     defer { git_repository_free(repo) }
     var result: Set<String> = []
-    for (path, spelled) in directories.map({ ($0, $0 + "/") }) + files.map({ ($0, $0) }) {
+    for (path, spelled) in asked {
       var ignored: Int32 = 0
       if git_ignore_path_is_ignored(&ignored, repo, spelled) == 0, ignored != 0 {
         result.insert(path)
