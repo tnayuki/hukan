@@ -120,6 +120,70 @@ final class GitTests: XCTestCase {
     XCTAssertFalse(changed.contains { $0.path == "noise.log" }, "ignored files stay out")
   }
 
+  /// The narrowed read an FSEvents batch takes: `git diff HEAD -- <paths>`. It has to answer for
+  /// those paths exactly as the whole read does — including for an untracked file inside a
+  /// directory that is itself untracked, which needs the walk to go in, and for a name carrying
+  /// glob characters, which a pathspec would otherwise read as a pattern and never match.
+  func testChangedFilesNarrowedToPathsAnswersForThoseOnly() throws {
+    makeRepository()
+    try write("one\ntwo\n", to: "a.txt")
+    try write("keep\n", to: "b.txt")
+    try write("gone\n", to: "src/gone.txt")
+    git(["add", "."])
+    git(["commit", "-q", "-m", "first"])
+
+    try write("one\ntwo\nthree\n", to: "a.txt")
+    try write("scratch\n", to: "c.txt")
+    try write("deep\n", to: "fresh/d.txt")
+    try write("glob\n", to: "g[a].txt")
+    try FileManager.default.removeItem(at: root.appendingPathComponent("src/gone.txt"))
+
+    let whole = Git.changedFiles(at: root, since: "HEAD")
+    for path in ["a.txt", "c.txt", "fresh/d.txt", "g[a].txt", "src/gone.txt"] {
+      XCTAssertEqual(
+        Git.changedFiles(at: root, since: "HEAD", paths: [path]), whole.filter { $0.path == path },
+        path)
+    }
+    // A path that has not moved is answered for too — with nothing, which is what takes a file
+    // edited back to what HEAD holds out of the set.
+    XCTAssertEqual(Git.changedFiles(at: root, since: "HEAD", paths: ["b.txt"]), [])
+    // And the batch is asked as one question.
+    XCTAssertEqual(
+      Git.changedFiles(at: root, since: "HEAD", paths: ["a.txt", "fresh/d.txt"]),
+      whole.filter { $0.path == "a.txt" || $0.path == "fresh/d.txt" })
+  }
+
+  /// Folding a narrowed read back in has to leave the set indistinguishable from a whole read's
+  /// — the two are compared to decide whether anything needs redrawing, so a set that merely
+  /// re-sorted itself would redraw the window on every write.
+  func testMergedIsWhatTheWholeReadWouldHaveSaid() throws {
+    makeRepository()
+    // `a.txt`, `a/b.txt` and `a-b.txt` are the ordering case: libgit2 hands its deltas over in
+    // byte order, where `-` precedes `.` precedes `/`.
+    for path in ["a.txt", "a/b.txt", "a-b.txt", "z.txt"] { try write("one\n", to: path) }
+    git(["add", "."])
+    git(["commit", "-q", "-m", "first"])
+    for path in ["a.txt", "a/b.txt", "a-b.txt", "z.txt"] { try write("one\ntwo\n", to: path) }
+
+    let whole = Git.changedFiles(at: root, since: "HEAD")
+    XCTAssertEqual(whole.map(\.path), ["a-b.txt", "a.txt", "a/b.txt", "z.txt"])
+
+    // What the worktree held before `a/b.txt` was written: the file not in the set at all, and
+    // `z.txt` carrying a stale count the narrowed read was never asked about.
+    let before = whole.filter { $0.path != "a/b.txt" }
+      .map { $0.path == "z.txt" ? ChangedFile(path: "z.txt", added: 99, removed: 99) : $0 }
+    let answered = Git.changedFiles(at: root, since: "HEAD", paths: ["a/b.txt"])
+    XCTAssertEqual(
+      Git.merged(answered, into: before, for: ["a/b.txt"]).map(\.path), whole.map(\.path))
+    XCTAssertEqual(Git.merged(answered, into: whole, for: ["a/b.txt"]), whole)
+
+    // A file edited back to what HEAD holds: asked about, answered for with nothing, and gone.
+    try write("one\n", to: "z.txt")
+    let none = Git.changedFiles(at: root, since: "HEAD", paths: ["z.txt"])
+    XCTAssertEqual(
+      Git.merged(none, into: whole, for: ["z.txt"]).map(\.path), ["a-b.txt", "a.txt", "a/b.txt"])
+  }
+
   /// The files panel asks this about the directories git produced no path for, so that a
   /// checkout's build directory — which holds nothing git can see, and would otherwise be the one
   /// row nobody wants — stays out of the tree.

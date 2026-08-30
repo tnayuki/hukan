@@ -653,6 +653,20 @@ Workspace (one window)
   the reader's selection with it — so one agent write must not cost every tab on the desk one.
   What cannot be placed is not narrowed: a commit or a staging moves what every open file is
   measured against while touching none of them, so it refreshes them all.
+  **The same batch narrows what git is asked, and that is where the size of a checkout is paid.**
+  The working-tree diff stats every file there is, which on a very large one is seconds, and it
+  ran per batch — so an agent's write cost a walk of the whole checkout. It is now
+  `git diff HEAD -- <the paths that moved>`, which libgit2 answers by walking only where they
+  point rather than by filtering a diff it has already taken in full: 97ms whole against 12ms for
+  one path on a synthesized 50,000-file repository, nearly all of the 12 being the index both of
+  them load. What comes back answers for those paths and no others, so it is folded into the
+  changed set rather than replacing it — a path asked about that the diff did not name no longer
+  differs from HEAD, which is how a file edited back to what HEAD holds leaves the set. The index
+  is not read again at all then: it lives inside git's own directory, so a batch that named
+  nothing there cannot have moved it. **hukan's own writes ask the same question and answer the
+  other one differently**: a save and the files panel's edits raise no event at all (every watcher
+  carries `IgnoreSelf`), so they say what they wrote and git is asked about exactly that — but
+  nothing is re-read, the buffer already holding what went to disk.
 
 - **hukan observes worktrees, it does not act on them.** Work reaches main through a PR the
   agent opens itself; cleaning up a merged worktree is a plain `git worktree remove` any

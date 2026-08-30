@@ -83,10 +83,10 @@ final class FileContentViewController: NSViewController {
   /// Set once the current path's text has landed, so a reveal asked for mid-load can wait.
   private var isLoaded = false
   private var pendingReveal: (line: Int, term: String?)?
-  /// Fired after a save lands, naming the worktree written to, so the column can re-ask git and
-  /// the file's changed state catches up (an FSEvents IgnoreSelf drops our own write, so nothing
-  /// else would notice it).
-  var onSaved: ((UUID) -> Void)?
+  /// Fired after a save lands, naming the worktree written to and the path in it, so the column
+  /// can re-ask git about that file and its changed state catches up (an FSEvents IgnoreSelf
+  /// drops our own write, so nothing else would notice it).
+  var onSaved: ((UUID, String) -> Void)?
   /// Fired the moment an untouched file is first edited, so a preview tab can pin itself — you do
   /// not want the tab you just started typing in to be discarded by the next single click.
   var onEdited: (() -> Void)?
@@ -184,7 +184,7 @@ final class FileContentViewController: NSViewController {
     do {
       try textView.string.write(to: url, atomically: true, encoding: .utf8)
       isDirty = false
-      onSaved?(worktree.id)
+      onSaved?(worktree.id, path)
     } catch {
       NSSound.beep()
     }
@@ -398,14 +398,14 @@ final class FileColumns {
     desk.onSetMaximized = { [weak self] maximized in self?.onSetMaximized?(maximized) }
     // An FSEvents IgnoreSelf drops our own write, so a save is noticed nowhere unless it is
     // said here — the same hand-off the panel's own writes take (`applyFileEdit`). git is asked
-    // again for the worktree written to, since the diffstat, the ± scope and the rail all read
-    // that answer and a save is exactly what makes a diff appear or go away; the moved set is
-    // empty, because the buffer already holds what was written. The panel re-runs its content
-    // hits on top of that, which git's answer does not move — it would otherwise keep listing
-    // the line just fixed.
-    desk.onFileSaved = { [weak self] worktreeID in
+    // again about the file written, since the diffstat, the ± scope and the rail all read that
+    // answer and a save is exactly what makes a diff appear or go away; `ownWrite` is what says
+    // not to re-read the file afterwards, the buffer already holding what went to disk. The
+    // panel re-runs its content hits on top of that, which git's answer does not move — it would
+    // otherwise keep listing the line just fixed.
+    desk.onFileSaved = { [weak self] worktreeID, path in
       guard let self else { return }
-      self.workspace?.refreshFiles(worktreeID: worktreeID, moved: [])
+      self.workspace?.refreshFiles(worktreeID: worktreeID, moved: [path], ownWrite: true)
       self.panel.filesChangedOnDisk()
       self.onNeedsReload?()
     }
@@ -426,11 +426,13 @@ final class FileColumns {
 
   /// The files panel wrote to the worktree. FSEvents is asked to ignore hukan's own writes, so
   /// nothing here happens on its own: the desk is told what moved under its tabs, and git is
-  /// asked again — with an empty moved set, since no open file's *contents* changed.
+  /// asked again about the paths written — `ownWrite`, since no open file's *contents* changed
+  /// under them. A rename names both ends, which on a directory is every file that went with it.
   private func applyFileEdit(_ edit: FilesPanelViewController.FileEdit) {
     // The panel's worktree, not the selection's: they agree, but the panel is where the edit was
     // made, and the path it reports is relative to that.
     guard let workspace, let worktree = panel.worktree else { return }
+    let written: Set<String>
     switch edit {
     case .createdFolder:
       // Nothing to open: a folder has no tab, and git has nothing to re-read for an empty one.
@@ -439,12 +441,15 @@ final class FileColumns {
       // A file made from the menu is one you are about to write in, so it opens as a lasting tab
       // rather than in the preview slot the next click would take back.
       desk.openFile(worktree: worktree, path: path, preview: false)
+      written = [path]
     case .renamed(let from, let to):
       desk.fileRenamed(worktreeID: worktree.id, from: from, to: to)
+      written = [from, to]
     case .deleted(let path):
       desk.fileDeleted(worktreeID: worktree.id, path: path)
+      written = [path]
     }
-    workspace.refreshFiles(worktreeID: worktree.id, moved: [])
+    workspace.refreshFiles(worktreeID: worktree.id, moved: written, ownWrite: true)
   }
 
   private func openFromPanel(_ path: String, line: Int?, pin: Bool) {

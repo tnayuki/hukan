@@ -374,19 +374,44 @@ extension Workspace {
   /// another — it records that it changed again in `refreshPending`, and the query, on finishing,
   /// runs exactly one more pass. At most one query plus one queued rerun per worktree, whatever
   /// the event rate.
-  func refreshFiles(worktreeID: UUID, moved: Set<String>? = nil) {
+  ///
+  /// `ownWrite` is hukan having done the writing — a save, one of the panel's own edits. git is
+  /// asked about those paths exactly as it is about anyone else's, but the open files are not
+  /// re-read: the buffer already holds what went to disk, and a re-read would only cost the
+  /// reader its selection.
+  func refreshFiles(worktreeID: UUID, moved: Set<String>? = nil, ownWrite: Bool = false) {
     guard worktree(id: worktreeID) != nil else { return }
     guard !refreshInFlight.contains(worktreeID) else {
       refreshPending.insert(worktreeID)
+      // The rerun folds the batches and re-reads what they name — `ownWrite` is not carried
+      // through it, so a save landing while a read is in flight costs that one file a re-read.
+      // It is a race of milliseconds now that a read is narrowed, and the direction that errs is
+      // the one that cannot leave anything stale.
       pendingPaths[worktreeID] = Workspace.union(pendingPaths[worktreeID] ?? .some([]), moved)
       return
     }
     guard let url = worktree(id: worktreeID)?.url else { return }
     let limit = worktree(id: worktreeID)?.historyLimit ?? Git.historyPage
+    // What git is asked about — nil for the whole worktree. An empty set is a question with no
+    // answer rather than a narrow one, and it must not be folded in as if it were narrow: that
+    // would keep every entry the whole read has just dropped. Neither can a batch carrying a
+    // `.gitignore`, which is the one file whose own content decides what *other* files are: ask
+    // only about the paths that moved and a file it has just stopped hiding is mentioned by
+    // nothing, while one it has started hiding stays listed.
+    let asked = moved.flatMap { paths -> Set<String>? in
+      if paths.isEmpty { return nil }
+      if paths.contains(where: { ($0 as NSString).lastPathComponent == ".gitignore" }) {
+        return nil
+      }
+      return paths
+    }
     refreshInFlight.insert(worktreeID)
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let changed = Git.changedFiles(at: url, since: "HEAD")
-      let tracked = Git.trackedFiles(at: url)
+      let changed = Git.changedFiles(at: url, since: "HEAD", paths: asked.map(Array.init))
+      // The index is a file inside git's own directory, so nothing that moved in the worktree
+      // can have moved it: a narrowed batch is by construction one git never saw. Reading it
+      // anyway is what a 400,000-entry index costs on every write an agent makes.
+      let tracked = asked == nil ? Git.trackedFiles(at: url) : nil
       // The commit that clears the changed set is the one that adds a row to the History
       // section, so the two are read together and compared together — a commit moves only the
       // second, and the equality test has to see that as a change or the section would keep
@@ -395,15 +420,22 @@ extension Workspace {
       DispatchQueue.main.async {
         guard let self else { return }
         self.refreshInFlight.remove(worktreeID)
-        if let worktree = self.worktree(id: worktreeID),
-          worktree.changedFiles != changed || worktree.trackedFiles != tracked
+        if let worktree = self.worktree(id: worktreeID) {
+          // A narrowed read answers for the paths it was given and for nothing else, so it is
+          // folded into what the worktree already holds rather than replacing it.
+          let files =
+            asked.map { Git.merged(changed, into: worktree.changedFiles, for: $0) }
+            ?? changed
+          let trackedFiles = tracked ?? worktree.trackedFiles
+          if worktree.changedFiles != files || worktree.trackedFiles != trackedFiles
             || worktree.history != history
-        {
-          worktree.changedFiles = changed
-          worktree.trackedFiles = tracked
-          worktree.history = history
-          worktree.hasLoadedFiles = true
-          self.onWorktreeFilesChanged?(worktreeID, moved)
+          {
+            worktree.changedFiles = files
+            worktree.trackedFiles = trackedFiles
+            worktree.history = history
+            worktree.hasLoadedFiles = true
+            self.onWorktreeFilesChanged?(worktreeID, ownWrite ? [] : moved)
+          }
         }
         // Whatever the result, git has just been asked — a branch move's re-read is satisfied.
         self.worktree(id: worktreeID)?.needsFileReload = false

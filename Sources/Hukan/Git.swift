@@ -23,13 +23,39 @@ enum Git {
   /// `git diff --numstat HEAD`, except that untracked files count as added, since a file nobody
   /// has run `git add` on is still the work (see `headDiff`). Binaries report 0/0, the way
   /// numstat's "-" read as zero.
-  static func changedFiles(at url: URL, since base: String) -> [ChangedFile] {
+  ///
+  /// `paths` narrows the question to the paths given — `git diff HEAD -- <paths>`, and what an
+  /// FSEvents batch names. The whole diff stats every file in the checkout, which on a very large
+  /// one is seconds; a narrowed one walks only what it was asked about (measured on a synthesized
+  /// 50,000-file repository: 97ms whole, 12ms for one path, nearly all of that the index read
+  /// both of them pay). What comes back answers for those paths *only*, so the caller has to fold
+  /// it into the set it narrowed from — see `merged`.
+  static func changedFiles(at url: URL, since base: String, paths: [String]? = nil) -> [ChangedFile]
+  {
     guard let repo = openRepository(at: url) else { return [] }
     defer { git_repository_free(repo) }
-    guard let diff = headDiff(repo, base: base) else { return [] }
+    guard let diff = headDiff(repo, base: base, paths: paths) else { return [] }
     defer { git_diff_free(diff) }
 
     return fileStats(in: diff)
+  }
+
+  /// A narrowed read, folded back into the set it was narrowed from. What the read names is what
+  /// those paths are now; a path it was asked about and did not name no longer differs from the
+  /// base at all, which is how a file edited back to what HEAD holds leaves the set.
+  ///
+  /// Byte order, because that is the order libgit2 hands its deltas over in and the result has to
+  /// be indistinguishable from a whole read's — the answers are compared to decide whether the UI
+  /// has anything to redraw, and a set that merely re-sorted itself would redraw everything.
+  static func merged(
+    _ answered: [ChangedFile], into existing: [ChangedFile], for asked: Set<String>
+  )
+    -> [ChangedFile]
+  {
+    var byPath: [String: ChangedFile] = [:]
+    for file in existing where !asked.contains(file.path) { byPath[file.path] = file }
+    for file in answered { byPath[file.path] = file }
+    return byPath.values.sorted { FileTree.precedesBytewise($0.path, $1.path) }
   }
 
   /// Which of these git would ignore. One repository open for the batch, because the caller asks
@@ -1024,7 +1050,9 @@ enum Git {
   /// The diff of `base`'s tree against the working tree with the index folded in — libgit2's
   /// stand-in for `git diff <base>`. The caller frees it with `git_diff_free`. nil when `base`
   /// has no tree yet (an unborn HEAD in a fresh repository), where `git diff HEAD` errored too.
-  private static func headDiff(_ repo: OpaquePointer, base: String) -> OpaquePointer? {
+  private static func headDiff(_ repo: OpaquePointer, base: String, paths: [String]? = nil)
+    -> OpaquePointer?
+  {
     var tree: OpaquePointer?
     guard git_revparse_single(&tree, repo, "\(base)^{tree}") == 0, let tree else { return nil }
     defer { git_object_free(tree) }
@@ -1042,8 +1070,26 @@ enum Git {
       UInt32(GIT_DIFF_INCLUDE_UNTRACKED.rawValue)
       | UInt32(GIT_DIFF_RECURSE_UNTRACKED_DIRS.rawValue)
       | UInt32(GIT_DIFF_SHOW_UNTRACKED_CONTENT.rawValue)
+    // A pathspec is a list of fnmatch patterns by default, and libgit2 applies it by *filtering*
+    // a diff it has already walked in full — neither of which is what a list of paths off
+    // FSEvents wants. `DISABLE_PATHSPEC_MATCH` is both halves at once: the strings become literal
+    // paths (a file actually named `g[a].txt` matches itself, and nothing else), and libgit2
+    // hands them to the two iterators as a pathlist, so the working tree is walked only where
+    // they point. Without the flag a narrowed read costs what the whole one costs.
+    var spec = (paths ?? []).map { strdup($0) }
+    defer {
+      for path in spec { free(path) }
+    }
+    if !spec.isEmpty { options.flags |= UInt32(GIT_DIFF_DISABLE_PATHSPEC_MATCH.rawValue) }
     var diff: OpaquePointer?
-    guard git_diff_tree_to_workdir_with_index(&diff, repo, tree, &options) == 0 else { return nil }
+    var result: Int32 = -1
+    spec.withUnsafeMutableBufferPointer { buffer in
+      if let strings = buffer.baseAddress {
+        options.pathspec = git_strarray(strings: strings, count: buffer.count)
+      }
+      result = git_diff_tree_to_workdir_with_index(&diff, repo, tree, &options)
+    }
+    guard result == 0 else { return nil }
     return diff
   }
 

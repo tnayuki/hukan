@@ -61,6 +61,22 @@ final class WorktreeSyncTests: XCTestCase {
     return (main, linked)
   }
 
+  /// Wait until the worktree's first read has landed and nothing else is in flight for it —
+  /// `loadFiles` reports twice (the tree, then the measuring) and a test that starts writing
+  /// after the first is racing the second.
+  private func settle(_ workspace: Workspace, worktreeID: UUID) {
+    let deadline = Date().addingTimeInterval(20)
+    while Date() < deadline {
+      let worktree = workspace.worktree(id: worktreeID)
+      if worktree?.hasLoadedFiles == true, !workspace.loadInFlight.contains(worktreeID),
+        !workspace.refreshInFlight.contains(worktreeID)
+      {
+        return
+      }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+    }
+  }
+
   private func openPaths(_ workspace: Workspace) -> [String] {
     workspace.worktrees.map { $0.url.standardizedFileURL.path }.sorted()
   }
@@ -298,6 +314,69 @@ final class WorktreeSyncTests: XCTestCase {
     git(["add", "a.txt"], in: linked)
     git(["commit", "-q", "-m", "Edit a"], in: linked)
     wait(for: [sawTheCommit], timeout: 20)
+  }
+
+  /// hukan's own write — a save, one of the files panel's edits. FSEvents carries `IgnoreSelf`,
+  /// so this process writing raises no event at all and the refresh is asked for by hand: git is
+  /// asked about the path written, exactly as it would be about anyone else's, and what the
+  /// readers are told moved is nothing, since the buffer already holds what went to disk and a
+  /// re-read would only cost them their selection.
+  func testHukansOwnWriteAsksGitAboutItWithoutReReadingIt() throws {
+    let (main, _) = try makeRepositoryWithWorktree()
+    let workspace = Workspace()
+    workspace.openRepository(main)
+    let worktree = try XCTUnwrap(workspace.worktree(atPath: main.path))
+
+    let refreshed = expectation(description: "git answers for the file written")
+    var reported: Set<String>??
+    workspace.onWorktreeFilesChanged = { id, moved in
+      guard id == worktree.id, !worktree.changedFiles.isEmpty else { return }
+      reported = moved
+      refreshed.fulfill()
+    }
+    try "hello\nagain\n".write(
+      to: main.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    workspace.refreshFiles(worktreeID: worktree.id, moved: ["a.txt"], ownWrite: true)
+
+    wait(for: [refreshed], timeout: 10)
+    XCTAssertEqual(worktree.changedFiles.map(\.path), ["a.txt"])
+    XCTAssertEqual(reported ?? nil, [], "nothing to re-read: the buffer is what was written")
+  }
+
+  /// A `.gitignore` is the one file whose own change is about other files. A read narrowed to
+  /// the paths that moved is asked about it and about nothing else, so a file it has just
+  /// stopped hiding would be mentioned by nothing — the ± scope, the diffstat and the rail all
+  /// read that one answer, and none of them would ever hear of it.
+  ///
+  /// The batch is handed over rather than left to FSEvents, so that what is under test is the
+  /// rule about a narrow question and not whichever shape a real batch happens to take.
+  func testAGitignoreChangeIsNotNarrowedToItself() throws {
+    let (main, _) = try makeRepositoryWithWorktree()
+    try "noise\n".write(
+      to: main.appendingPathComponent("noise.log"), atomically: true, encoding: .utf8)
+    try "*.log\n".write(
+      to: main.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+    git(["add", ".gitignore"], in: main)
+    git(["commit", "-q", "-m", "Ignore logs"], in: main)
+
+    let workspace = Workspace()
+    workspace.openRepository(main)
+    let worktree = try XCTUnwrap(workspace.worktree(atPath: main.path))
+    settle(workspace, worktreeID: worktree.id)
+    XCTAssertFalse(
+      worktree.changedFiles.contains { $0.path == "noise.log" }, "hidden to begin with")
+
+    let unmasked = expectation(description: "the file it stopped hiding shows up")
+    unmasked.assertForOverFulfill = false
+    workspace.onWorktreeFilesChanged = { id, _ in
+      guard id == worktree.id,
+        worktree.changedFiles.contains(where: { $0.path == "noise.log" })
+      else { return }
+      unmasked.fulfill()
+    }
+    try "".write(to: main.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+    workspace.refreshFiles(worktreeID: worktree.id, moved: [".gitignore"])
+    wait(for: [unmasked], timeout: 10)
   }
 
   /// The second watcher is only for the worktrees that need one — the main checkout keeps its
