@@ -36,6 +36,33 @@ final class ChangedPathsTests: XCTestCase {
     XCTAssertNil(Workspace.relativePaths([], under: root))
   }
 
+  /// The batch on the *other* watcher — a linked worktree's git directory, which lives outside
+  /// the worktree. A read of the whole worktree is what an answer of yes costs, so git's own
+  /// churn must not buy one: the object database, the reflog, the lock file every operation
+  /// takes and drops, the message an editor is handed, and another worktree's state.
+  func testTheGitDirectorysOwnBatchIsAskedPathByPath() {
+    let directory = "/tmp/repo/.git/worktrees/task"
+    XCTAssertTrue(Workspace.gitDirectoryMoved(["\(directory)/index"], under: directory))
+    XCTAssertTrue(Workspace.gitDirectoryMoved(["\(directory)/HEAD"], under: directory))
+    XCTAssertTrue(
+      Workspace.gitDirectoryMoved(["\(directory)/refs/heads/main"], under: directory))
+    XCTAssertTrue(
+      Workspace.gitDirectoryMoved(
+        ["\(directory)/logs/HEAD", "\(directory)/HEAD"], under: directory),
+      "one that matters carries the batch")
+
+    XCTAssertFalse(
+      Workspace.gitDirectoryMoved(
+        [
+          "\(directory)/logs/HEAD", "\(directory)/index.lock",
+          "\(directory)/COMMIT_EDITMSG", "\(directory)/ORIG_HEAD",
+          "\(directory)/objects/ab/cdef", "\(directory)/worktrees/other/index",
+        ], under: directory))
+    XCTAssertTrue(
+      Workspace.gitDirectoryMoved(["/somewhere/else"], under: directory),
+      "a batch nobody can place is not one to dismiss")
+  }
+
   /// FSEvents answers in the paths the filesystem calls canonical; the worktree's own URL may
   /// be spelled the other way. `/tmp` is the case in hand — it is a link to `/private/tmp`, and
   /// so is every temporary directory a test or an agent works in.

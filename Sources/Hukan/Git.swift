@@ -107,6 +107,32 @@ enum Git {
     return result
   }
 
+  /// Whether a write at this path *inside* git's directory moves what the worktree is measured
+  /// against. `path` is relative to that directory — `index`, `refs/heads/main`, `objects/ab/cd…`
+  /// — and it is the question both watchers ask of a batch that reached the repository rather
+  /// than the checkout.
+  ///
+  /// The answer starts a read of the whole worktree, so it errs towards yes: anything not
+  /// recognised here counts, and what is recognised is only what git writes constantly and
+  /// nothing hukan reads depends on. The object database is most of it — every `git add` writes
+  /// a blob, a `gc` rewrites the packs — then the reflog, which moves whenever a ref does and is
+  /// read off the ref instead, the lock file every one of those operations takes and drops, the
+  /// message files an editor is handed, and the hooks. Another worktree's directory is in the
+  /// list for a different reason: it holds that worktree's own HEAD and index, watched by that
+  /// worktree's own watcher, and while it counted here an agent working in a task worktree
+  /// re-read the main checkout from top to bottom on every command it ran.
+  static func movesTheWorkingSet(gitPath path: String) -> Bool {
+    if path.hasSuffix(".lock") { return false }
+    let churn = ["objects/", "logs/", "hooks/", "worktrees/"]
+    if churn.contains(where: { path.hasPrefix($0) }) { return false }
+    switch path {
+    case "COMMIT_EDITMSG", "MERGE_MSG", "SQUASH_MSG", "TAG_EDITMSG", "FETCH_HEAD", "ORIG_HEAD":
+      return false
+    default:
+      return true
+    }
+  }
+
   /// The one-file form, for the editor asking about the file it has open.
   static func isIgnored(at url: URL, file path: String) -> Bool {
     ignored(at: url, directories: [], files: [path]).contains(path)

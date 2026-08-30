@@ -350,9 +350,14 @@ extension Workspace {
         !gitDirectory.path.hasPrefix(worktree.url.standardizedFileURL.path + "/")
       {
         // Nothing here is a file anyone has open, but HEAD and the index moving changes what
-        // every open file is measured against — so this one says "everything", always.
+        // every open file is measured against — so what this one reports, it reports as
+        // "everything". What it reports at all is the narrower question: most of a batch in
+        // there is git's own churn, and a `git add` writing a dozen blobs must not re-read the
+        // worktree a dozen times.
+        let directory = gitDirectory.standardizedFileURL.path
         started.append(
-          DirectoryWatcher(url: gitDirectory) { [weak self] _ in
+          DirectoryWatcher(url: gitDirectory) { [weak self] paths in
+            guard Workspace.gitDirectoryMoved(paths, under: directory) else { return }
             self?.refreshFiles(worktreeID: id, moved: nil)
           })
       }

@@ -86,6 +86,19 @@ final class Workspace {
     return relative.isEmpty ? nil : relative
   }
 
+  /// Whether a batch inside git's own directory — the second watcher a linked worktree carries,
+  /// whose git directory is outside it — is one the worktree has to be read again for. A path
+  /// that cannot be placed under the directory counts, since a batch nobody can read is not one
+  /// to dismiss.
+  static func gitDirectoryMoved(_ paths: [String], under gitDirectory: String) -> Bool {
+    let roots = Set([gitDirectory, canonicalPath(gitDirectory)].compactMap { $0 })
+    return paths.contains { path in
+      let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+      guard let root = roots.first(where: { standardized.hasPrefix($0 + "/") }) else { return true }
+      return Git.movesTheWorkingSet(gitPath: String(standardized.dropFirst(root.count + 1)))
+    }
+  }
+
   /// What the filesystem calls this path, or nil if there is nothing there to ask about.
   ///
   /// `realpath` rather than `resolvingSymlinksInPath`, which answers a different question: it

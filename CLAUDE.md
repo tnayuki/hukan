@@ -667,6 +667,14 @@ Workspace (one window)
   other one differently**: a save and the files panel's edits raise no event at all (every watcher
   carries `IgnoreSelf`), so they say what they wrote and git is asked about exactly that — but
   nothing is re-read, the buffer already holding what went to disk.
+  **A linked worktree's repository is watched apart from it, and most of what is written there
+  moves nothing.** The answer costs a read of the whole worktree, so the batch is asked path by
+  path: the object database, the reflog, the lock file every operation takes and drops, the
+  message an editor is handed, the hooks — and another worktree's directory, which holds that
+  worktree's own HEAD and index and is watched on its own, so while it counted an agent working
+  on a task re-read the main checkout from top to bottom on every command it ran. Anything not
+  recognised as that churn counts, since what is being decided is whether to read, and a read
+  nobody needed is cheaper than a reading left stale.
 
 - **hukan observes worktrees, it does not act on them.** Work reaches main through a PR the
   agent opens itself; cleaning up a merged worktree is a plain `git worktree remove` any

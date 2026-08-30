@@ -379,6 +379,36 @@ final class WorktreeSyncTests: XCTestCase {
     wait(for: [unmasked], timeout: 10)
   }
 
+  /// The main checkout keeps its git directory inside the watched subtree, so everything git
+  /// writes there arrives as an ordinary path of the worktree — and most of it is churn hukan
+  /// drops. What must not be dropped with it is the commit itself: the index and the branch both
+  /// move, and the change has to leave the window. Real FSEvents, and made by another process,
+  /// since a write from this one raises no event at all.
+  func testACommitInTheMainCheckoutStillReachesTheWindow() throws {
+    let (main, _) = try makeRepositoryWithWorktree()
+    let workspace = Workspace()
+    workspace.openRepository(main)
+    let worktree = try XCTUnwrap(workspace.worktree(atPath: main.path))
+
+    let sawTheEdit = expectation(description: "the edit shows as a change")
+    sawTheEdit.assertForOverFulfill = false
+    workspace.onWorktreeFilesChanged = { id, _ in
+      guard id == worktree.id, !worktree.changedFiles.isEmpty else { return }
+      sawTheEdit.fulfill()
+    }
+    run(["sh", "-c", "echo edited >> a.txt"], in: main)
+    wait(for: [sawTheEdit], timeout: 20)
+
+    let sawTheCommit = expectation(description: "the commit clears the change")
+    sawTheCommit.assertForOverFulfill = false
+    workspace.onWorktreeFilesChanged = { id, _ in
+      guard id == worktree.id, worktree.changedFiles.isEmpty else { return }
+      sawTheCommit.fulfill()
+    }
+    run(["sh", "-c", "git add a.txt && git commit -q -m 'Edit a'"], in: main)
+    wait(for: [sawTheCommit], timeout: 20)
+  }
+
   /// The second watcher is only for the worktrees that need one — the main checkout keeps its
   /// git directory inside itself, where the first one already covers it.
   func testOnlyALinkedWorktreeIsWatchedTwice() throws {
