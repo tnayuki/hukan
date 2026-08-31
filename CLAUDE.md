@@ -492,6 +492,17 @@ Workspace (one window)
   arrangement belonging to a mode that will not be there next time, and the widths from before
   it are the ones that still mean something. `ToolbarRowFitsTests` measures both modes, and that
   the columns widen and hand the width back while the window stays open.
+- **A find is aimed by the focus.** ⌘F finds inside whatever is being read — the conversation,
+  or the desk's active tab — because "which column does this mean" is the question ⌃⌘M already
+  answers that way, and answering it any other way is what left the transcript with no find at
+  all: it was the desk's key whatever had the focus, so the one column with no tab strip to hang
+  a field off was also the one column nothing could search.
+  **The conversation's find opens what is folded and pulls in what is above, first.** A find bar
+  can only see the storage, and the transcript keeps two things out of it: the history above,
+  which arrives a slice at a time as the reader climbs, and the tail of every tool call, whose
+  folded line is a clipped summary and whose argument in full rides in an attribute. Both are
+  reading conveniences, and a reading convenience must never act as a filter on the search — the
+  rule the commit tab's find already follows when it opens its cards before searching them.
 - **One field over the tree, two operations, told apart by gesture.** Typing filters the tree by
   path — live, in memory, and the tree stays a tree. Return searches contents — off the main
   thread, over every file, and the panel becomes a result list until Escape. Running both off the

@@ -1934,11 +1934,30 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.clearActiveTerminal()
   }
 
-  /// Edit ▸ Find (⌘F). Finds within the active tab — a terminal's bar (SwiftTerm's own) or a
-  /// file's (the text view's) — scoped to the desk so it does not fight the rail's session search.
+  /// Edit ▸ Find (⌘F), and Find Next / Previous / Use Selection, which ride the same selector
+  /// with the action in the item's tag. Which column it means is where the focus is — the rule
+  /// ⌃⌘M already follows for the column it maximizes — so ⌘F finds in whatever is being read
+  /// rather than always in the desk, which is what left the conversation with no find at all.
   @objc func find(_ sender: Any?) {
-    files.findInActiveSurface(sender)
+    switch findTargetForFocus {
+    case .session: running.performFind(sender)
+    case .desk: files.findInActiveSurface(sender)
+    }
   }
+
+  /// Which column ⌘F means. The focus decides, through `maximizeTargetForFocus` — but where that
+  /// column has nothing to search and the other one has, the other one takes it: with only one
+  /// searchable column there is no ambiguity for the focus to settle, and a dead key beside a
+  /// readable conversation is the worse answer.
+  private var findTargetForFocus: MaximizedColumn {
+    let preferred = maximizeTargetForFocus
+    if preferred == .session, canFindInSession { return .session }
+    if preferred == .desk, files.canFind { return .desk }
+    return canFindInSession ? .session : .desk
+  }
+
+  /// Whether there is a conversation on screen to search.
+  private var canFindInSession: Bool { workspace.selectedSession != nil }
 
   /// View ▸ Back / Forward (⌘[ / ⌘]). The web tab's history, the keys Safari and Apple's own
   /// shortcut list use — not ⌘←/→, which Safari leaves to the responder chain so a text field on
@@ -2251,7 +2270,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     case #selector(clearTerminal(_:)):
       return files.hasActiveTerminal
     case #selector(find(_:)):
-      return files.canFind
+      return canFindInSession || files.canFind
     case #selector(browserGoBack(_:)):
       return files.canBrowserGoBack
     case #selector(browserGoForward(_:)):

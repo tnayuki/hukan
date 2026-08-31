@@ -246,10 +246,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     editMenu.addItem(
       withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     editMenu.addItem(.separator())
-    // Find in the active surface — a terminal's bar (SwiftTerm's own), a file's (the text view's),
-    // or the search tab's query. The tag is the sender field performFindPanelAction reads —
-    // showFindPanel opens the bar. Targets the controller (disabled over a browser or an empty
-    // desk) so it stays clear of the rail's session search.
+    // Find inside whatever is being read — the conversation, or the desk's active tab (a file's
+    // bar, a terminal's, the commit tab's field, the browser's). Which of the two it means is
+    // where the focus is, the same rule ⌃⌘M follows for the column it maximizes. The tag is the
+    // field every find bar reads its action from; the controller is the target so the key never
+    // reaches a stray text field.
     let find = editMenu.addItem(
       withTitle: "Find", action: #selector(WorkspaceWindowController.find(_:)),
       keyEquivalent: "f")

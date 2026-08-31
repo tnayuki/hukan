@@ -199,6 +199,42 @@ public final class TranscriptClickDelegate: NSObject, NSTextViewDelegate {
     return true
   }
 
+  /// Open every folded tool call in one pass, and report where `offset` ended up once the text
+  /// above it grew. What ⌘F runs before it searches: the folded line carries only the argument's
+  /// first 90 characters as text (the rest rides in `toolTokenKey`), so a search over a folded
+  /// transcript would answer for the summaries rather than for the conversation — a fold acting
+  /// as a filter, which is exactly what the commit tab's find already refuses to let it be.
+  ///
+  /// Walked from the end so the replacements never invalidate the ranges still to come, and
+  /// routed through `edit` like a clicked fold, so the session's own copy stays in step.
+  @discardableResult
+  public func expandAllFolds(in textView: NSTextView, preserving offset: Int = 0) -> Int {
+    guard let storage = textView.textStorage, storage.length > 0 else { return offset }
+    let whole = NSRange(location: 0, length: storage.length)
+    var folded: [(range: NSRange, token: ToolCallToken)] = []
+    var index = 0
+    while index < storage.length {
+      var range = NSRange(location: 0, length: 0)
+      let token =
+        storage.attribute(
+          Transcript.toolTokenKey, at: index, longestEffectiveRange: &range, in: whole)
+        as? ToolCallToken
+      if let token,
+        storage.attribute(Transcript.toolExpandedKey, at: index, effectiveRange: nil) == nil
+      {
+        folded.append((range, token))
+      }
+      index = max(NSMaxRange(range), index + 1)
+    }
+    var moved = offset
+    for fold in folded.reversed() {
+      let replacement = Transcript.toolCallExpandedRun(fold.token)
+      if NSMaxRange(fold.range) <= offset { moved += replacement.length - fold.range.length }
+      edit(storage, range: fold.range, replacement: replacement)
+    }
+    return moved
+  }
+
   private func edit(_ storage: NSTextStorage, range: NSRange, replacement: NSAttributedString) {
     if let mirror {
       mirror.editTranscript(in: range, with: replacement)
@@ -733,6 +769,11 @@ public func makeTranscriptTextView() -> (NSScrollView, TranscriptTextView) {
   textView.autoresizingMask = [.width]
   textView.textContainer?.widthTracksTextView = true
   textView.isEditable = false
+  // ⌘F in the conversation is the standard bar, the same one a file tab's editor shows — the
+  // transcript is one text view, so nothing here has to be built to get next, previous and
+  // "use selection" working. What it can only see is the storage, which is why `performFind`
+  // pulls the history above in and opens the folds before handing the action over.
+  textView.usesFindBar = true
   // Read-only, but the transcript is there to be quoted — the reply has to be copyable.
   // Selectable is the default, but a non-editable view is exactly where it gets turned off by
   // accident, so pin it.

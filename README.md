@@ -198,9 +198,13 @@ built-ins beside every skill and user command it found — filtered as you type,
 A table's cells are selectable — by character inside a cell, by whole cells once the drag leaves
 one — and copy as tab-separated text, which is what a spreadsheet and Slack read as a table.
 
-**Search.** One field for the rail, with the same two gestures as the panel's: typing filters the
-sessions by title, `⏎` searches the transcripts themselves, off the main thread. Opening a
-session under transcript results lands on its first match, highlighted.
+**Search.** Two questions, two places. *Which conversation* is the rail's field, with the same two
+gestures as the panel's: typing filters the sessions by title, `⏎` searches the transcripts
+themselves, off the main thread. Opening a session under transcript results lands on its first
+match, highlighted. *Where in this conversation* is the find bar over the transcript, which opens
+every folded tool call and pulls in the history above before it searches, so what it answers for
+is the conversation and not the part of it on screen. Which of the two a find means is where the
+focus is.
 
 **Notifications.** A banner the moment a session becomes your turn, and only while hukan is not
 frontmost. Tapping it jumps to that session, and one key does the same from anywhere. A turn

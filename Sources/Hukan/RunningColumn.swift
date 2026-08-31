@@ -361,6 +361,49 @@ final class RunningColumnViewController: NSViewController {
     applyTranscriptHighlight(scrollToFirst: true)
   }
 
+  /// ⌘F and its family in the conversation, once the focus says the transcript is what is being
+  /// read (see `WorkspaceWindowController.find`). Opening the bar pulls in everything the view is
+  /// holding back first — the history above, which otherwise arrives a slice at a time as the
+  /// reader climbs, and every folded tool call — because the bar can only find what is in the
+  /// storage, and an answer drawn from part of a conversation is not the conversation's answer.
+  func performFind(_ sender: Any?) {
+    loadViewIfNeeded()
+    guard NSFindPanelAction(rawValue: UInt((sender as? NSMenuItem)?.tag ?? 1)) == .showFindPanel
+    else {
+      textView.performFindPanelAction(sender)
+      return
+    }
+    if let attached, attached.hasPendingPrefix {
+      // The prefix lands asynchronously; `onPrepend` finishes the job when it does.
+      unfoldsWhenPrefixLands = true
+      attached.loadEarlierIfNeeded(all: true)
+    } else {
+      expandFolds()
+    }
+    view.window?.makeFirstResponder(textView)
+    textView.performFindPanelAction(sender)
+  }
+
+  /// Set while the history above is being pulled in for a find, so the unfold runs once, after it.
+  private var unfoldsWhenPrefixLands = false
+
+  /// Open every folded tool call, leaving the reader where they were — the folds that opened
+  /// above them move their offset, which is what `expandAllFolds` hands back. The rail's
+  /// highlight is repainted because the wash sits in the storage the unfold just rewrote.
+  private func expandFolds() {
+    guard let delegate = transcriptClickDelegate(of: textView) else { return }
+    let anchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView)
+    isRestoringAnchor = true
+    let moved = delegate.expandAllFolds(in: textView, preserving: anchor?.offset ?? 0)
+    if let anchor {
+      TranscriptScrollAnchor(offset: moved, within: anchor.within)
+        .restoreAfterPrefixGrowth(in: scrollView, of: textView)
+    }
+    isRestoringAnchor = false
+    scrollAnchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView)
+    applyTranscriptHighlight(scrollToFirst: false)
+  }
+
   /// What the last highlight pass painted: how many occurrences, and the character offset of the
   /// first (the one it scrolled to), or -1 when there is no match. Surfaced to scripting so the
   /// highlight is checkable without a screenshot — the app's screen-recording grant is not always
@@ -526,6 +569,11 @@ final class RunningColumnViewController: NSViewController {
       self.scrollAnchor = TranscriptScrollAnchor.capture(in: self.scrollView, of: self.textView)
       // A hit-jump that was waiting for the text above it may be satisfied now.
       self.applyPendingScroll()
+      // ⌘F asked for the whole conversation and this was the rest of it; open its folds.
+      if self.unfoldsWhenPrefixLands {
+        self.unfoldsWhenPrefixLands = false
+        self.expandFolds()
+      }
     }
     // A wholesale reload (history loaded, or an outside change) is like reopening the session:
     // land at the bottom — or, under an active search, on the first match instead (a detached
