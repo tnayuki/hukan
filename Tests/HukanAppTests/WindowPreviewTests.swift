@@ -190,9 +190,10 @@ final class WindowPreviewTests: XCTestCase {
     XCTAssertTrue(filter.isHidden, "a collapsed rail should take its filter with it")
   }
 
-  /// Both fields say the same word, and both say what ⏎ adds — but only while they have the
-  /// focus that makes ⏎ mean anything. The sentence used to be there all the time, where it was
-  /// too wide for the field and read as noise.
+  /// Each field says the verb typing runs and what it runs over — ⌘P and ⌘⇧P aim at one each, so
+  /// the two have to be told apart from the field itself. Both also say what ⏎ adds, but only
+  /// while they have the focus that makes ⏎ mean anything: that sentence used to be there all the
+  /// time, where it was too wide for the field and read as noise.
   func testFieldsNameTheirGestures() throws {
     let controller = WorkspaceWindowController(workspace: RailPreviewTests.sampleWorkspace())
     guard let window = controller.window else { return XCTFail("no window") }
@@ -205,8 +206,15 @@ final class WindowPreviewTests: XCTestCase {
 
     let fields = (window.toolbar?.items ?? []).compactMap { $0.view as? NSSearchField }
     XCTAssertEqual(fields.count, 2, "the rail's filter and the panel's")
+    XCTAssertEqual(
+      Set(fields.compactMap(\.placeholderString)), ["Filter Sessions", "Filter Files"],
+      "at rest, each names the live gesture and its subject")
     for field in fields {
-      XCTAssertEqual(field.placeholderString, "Filter", "at rest, both name the live gesture")
+      let room = field.frame.width - 34
+      let width = (field.placeholderString! as NSString)
+        .size(withAttributes: [.font: field.font ?? .systemFont(ofSize: NSFont.systemFontSize)])
+        .width
+      XCTAssertLessThan(width, room, "the placeholder has to fit the field it is in")
     }
 
     // The second gesture is named by the column, under the field, and only while the field has

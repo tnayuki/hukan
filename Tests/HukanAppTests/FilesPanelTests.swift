@@ -209,8 +209,7 @@ final class FilesPanelTests: XCTestCase {
     panel.show(worktree: searched)
     let outline = try XCTUnwrap(findOutline(in: panel.view))
 
-    panel.filterSearchField.stringValue = "needle"
-    panel.focusSearch()
+    panel.searchForScripting("needle")
     let listed = expectation(description: "the scan answers")
     DispatchQueue.main.async {
       // The scan runs on the panel's own queue and hops back to the main queue to show what it

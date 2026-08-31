@@ -255,16 +255,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Find", action: #selector(WorkspaceWindowController.find(_:)),
       keyEquivalent: "f")
     find.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
-    // Both land on the files panel's filter — one field over the tree, told apart by gesture —
-    // so "go to file" and "find in files" are the same place. Two items so both keys an editor
-    // hand reaches for (⌘P, ⌘⇧F) work, and they differ in which of the field's two operations
-    // they run: ⌘P puts the cursor in it, ⌘⇧F searches with what is already there.
+    editMenu.addItem(.separator())
+    // One key per field, and ⏎ inside it does the rest. Each item names what *typing* in the
+    // field does — narrow the tree by path, narrow the rail by title — because the escalation
+    // ⏎ carries (search the contents, search the transcripts) is a gesture the field announces
+    // itself while it has the focus. A menu item for it would be the same offer twice, which is
+    // what ⌘⇧F was.
     editMenu.addItem(
       withTitle: "Go to File…", action: #selector(WorkspaceWindowController.goToFile(_:)),
       keyEquivalent: "p")
     editMenu.addItem(
-      withTitle: "Find in Files…", action: #selector(WorkspaceWindowController.findInFiles(_:)),
-      keyEquivalent: "F")
+      withTitle: "Go to Session…", action: #selector(WorkspaceWindowController.goToSession(_:)),
+      keyEquivalent: "P")
     // Clear the active terminal's scrollback, where Terminal.app keeps its Cmd-K. Targets the
     // controller (not the responder chain), and disables unless a terminal is the active tab.
     editMenu.addItem(

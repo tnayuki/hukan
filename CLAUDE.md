@@ -503,6 +503,14 @@ Workspace (one window)
   folded line is a clipped summary and whose argument in full rides in an attribute. Both are
   reading conveniences, and a reading convenience must never act as a filter on the search — the
   rule the commit tab's find already follows when it opens its cards before searching them.
+  **The two index fields are aimed by keys of their own, and ⏎ is still the escalation.** The
+  rail's field and the files panel's are not that first key's business — they are indexes, not
+  something being read — so each gets one key that lands *in* it and does nothing else. A menu
+  item for the escalation was the same offer twice, since the field itself says what ⏎ adds for
+  as long as it has the focus; what the second item was actually costing was a key that ran the
+  expensive gesture over whatever happened to be left in the field. Each field now names the verb
+  and its subject, since a key aims at one of the two and the toolbar item's label is not drawn
+  in icon mode.
 - **One field over the tree, two operations, told apart by gesture.** Typing filters the tree by
   path — live, in memory, and the tree stays a tree. Return searches contents — off the main
   thread, over every file, and the panel becomes a result list until Escape. Running both off the

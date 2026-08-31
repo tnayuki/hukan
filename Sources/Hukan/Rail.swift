@@ -436,11 +436,12 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     // Typing filters by title: in memory, instant, no disk touched. Return searches the
     // transcripts themselves, which means reading every session's file, so it waits to be asked
     // for and runs off the main thread from the moment the key lands.
-    // The same word the files panel's field carries: what typing does is filter. Left unset,
-    // AppKit substitutes "Search", which names the wrong one of the two gestures — and what ⏎
-    // adds is said by `hintLabel`, for as long as the field has the focus that makes ⏎ mean
-    // anything.
-    searchField.placeholderString = "Filter"
+    // The verb typing runs, and what it runs over. Left unset, AppKit substitutes "Search", which
+    // names the wrong one of the two gestures; what ⏎ adds is said by `hintLabel`, for as long as
+    // the field has the focus that makes ⏎ mean anything. The noun is there because ⌘⇧P and ⌘P
+    // now aim at one of these two fields each, so which is which has to be readable from the
+    // field rather than from the toolbar item's label, which icon mode does not draw.
+    searchField.placeholderString = "Filter Sessions"
     searchField.onFocusChange = { [weak self] focused in self?.showSearchHint(focused) }
     searchField.delegate = self
     searchField.sendsWholeSearchString = false
@@ -658,6 +659,26 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     hits = result.hits
     reload()
     onSearchChanged?()
+  }
+
+  /// ⌘⇧P: the field, focused and ready to type. The window has already unfolded the rail. The
+  /// field rides a toolbar item that unhides with the column, so it may not be back in the window
+  /// on this turn of the run loop — chase it briefly rather than dropping the focus, the same as
+  /// the files panel's.
+  func focusFilter() {
+    loadViewIfNeeded()
+    var attempts = 20
+    func land() {
+      if let window = searchField.window {
+        window.makeFirstResponder(searchField)
+        searchField.selectText(nil)
+        return
+      }
+      guard attempts > 0 else { return }
+      attempts -= 1
+      DispatchQueue.main.async(execute: land)
+    }
+    land()
   }
 
   /// The field itself, for the toolbar's sidebar section to host in an `NSSearchToolbarItem` —

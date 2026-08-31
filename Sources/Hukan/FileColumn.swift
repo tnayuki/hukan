@@ -524,12 +524,6 @@ final class FileColumns {
   var hasHistory: Bool { panel.history.hasAnythingToShow }
   var isHistoryVisible: Bool { panel.isHistoryVisible }
 
-  /// ⌘⇧F: the same field, with what is already typed searched for in the files rather than
-  /// filtered by — the two keys differ in which operation they run, not in where they land.
-  func searchInFiles() {
-    panel.focusSearch()
-  }
-
   func reload() {
     guard let workspace else { return }
     let worktree = workspace.selectedWorktreeID.flatMap { workspace.worktree(id: $0) }

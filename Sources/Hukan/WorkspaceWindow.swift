@@ -1977,10 +1977,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.focusFilter()
   }
 
-  /// Edit ▸ Find in Files… (⌘⇧F). The same field, running its content search instead.
-  @objc func findInFiles(_ sender: Any?) {
-    revealFilesPanel()
-    files.searchInFiles()
+  /// Edit ▸ Go to Session… (⌘⇧P). The rail, shown if hidden, its filter focused — the pair of
+  /// ⌘P, and the same bargain: each item names what typing in the field does, and what ⏎
+  /// escalates to is the field's own gesture, said by the hint under it.
+  @objc func goToSession(_ sender: Any?) {
+    revealRail()
+    rail.focusFilter()
   }
 
   /// View ▸ Files (⌘⇧E), and the toolbar's trailing toggle. Show or hide the files panel on the
@@ -2154,6 +2156,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// it can put the focus in a field nobody can see.
   var isFilesPanelVisible: Bool { !filesPanelItem.isCollapsed }
 
+  /// Unfold the rail if it is folded, so ⌘⇧P has a field to land in — the pair of
+  /// `revealFilesPanel`, and it ends the maximized mode for the same reason.
+  private func revealRail() {
+    forgetMaximizedLayout()
+    guard railItem.isCollapsed else { return }
+    splitController.toggleSidebar(nil)
+    DispatchQueue.main.async { [weak self] in self?.updateRailToolbarItem() }
+  }
+
   private func revealFilesPanel() {
     // Asking for a column by name is arranging one by hand, the same as the toggle — so the mode
     // ends here too, or restoring would close the panel ⌘P had just opened.
@@ -2275,8 +2286,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       return files.canBrowserGoBack
     case #selector(browserGoForward(_:)):
       return files.canBrowserGoForward
-    case #selector(goToFile(_:)), #selector(findInFiles(_:)):
+    case #selector(goToFile(_:)):
       return workspace.selectedWorktreeID != nil
+    case #selector(goToSession(_:)):
+      return true
     case #selector(selectNextTab(_:)), #selector(selectPreviousTab(_:)):
       return files.hasMultipleTabs
     case #selector(selectTabAtIndex(_:)):

@@ -252,9 +252,10 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   }
 
   override func loadView() {
-    // The verb typing runs. What ⏎ adds is said by `hintLabel` while the field is focused —
-    // spelling both out in a placeholder did not survive the field being narrow.
-    filterField.placeholderString = "Filter"
+    // The verb typing runs, and what it runs over — see the rail's field, which names itself the
+    // same way. What ⏎ adds is said by `hintLabel` while the field is focused: spelling all three
+    // out in a placeholder did not survive the field being narrow.
+    filterField.placeholderString = "Filter Files"
     filterField.onFocusChange = { [weak self] focused in self?.showSearchHint(focused) }
     filterField.delegate = self
     filterField.sendsWholeSearchString = false
@@ -446,14 +447,6 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       DispatchQueue.main.async(execute: land)
     }
     land()
-  }
-
-  /// ⌘⇧F: the field, with whatever is typed already searched — the difference between "go to a
-  /// file" and "find in files" is which of the two the caller wants run, not a second field.
-  func focusSearch() {
-    loadViewIfNeeded()
-    if !filterField.stringValue.isEmpty { runSearch() }
-    focusFilter()
   }
 
   // MARK: Worktree
