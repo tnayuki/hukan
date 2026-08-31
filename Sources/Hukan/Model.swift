@@ -102,6 +102,9 @@ final class Worktree {
   /// What this worktree has committed past its base branch — the History section's list. Read on
   /// the same tick as the changed files, since the commit that empties one fills the other.
   var history = Git.History()
+  /// Where HEAD and the index stood when the last refresh read them — what decides whether that
+  /// refresh reports "everything moved" or only the paths it saw move. nil until the first read.
+  var measurementBase: Git.MeasurementBase?
   /// How far back the History section has been scrolled, in commits. It lives here rather than in
   /// the panel because every re-read goes through the worktree — a commit landing, a branch
   /// moving — and each of those has to return what has already been paged in rather than the

@@ -651,8 +651,14 @@ Workspace (one window)
   paths that moved rather than only that something did, and a refresh re-reads the open files
   named in them. Re-reading is not free — it is a whole-file parse and a highlight, and it takes
   the reader's selection with it — so one agent write must not cost every tab on the desk one.
-  What cannot be placed is not narrowed: a commit or a staging moves what every open file is
-  measured against while touching none of them, so it refreshes them all.
+  What cannot be placed is not narrowed — a commit or a staging moves what every open file is
+  measured against while touching none of them — but a wholesale *question* is no longer a
+  wholesale *report*: a refresh answers with what it observed, the entries that actually differ,
+  and claims "everything" only when HEAD or the index moved between this read and the last
+  (the index by the checksum git writes at its tail, so a rewrite with identical content is not
+  a move). Echoing the question was a race: a read asked for wholesale observes whatever lands
+  while it runs, so an edit made during one was reported as everything having moved and cost
+  every open tab a re-read.
   **The same batch narrows what git is asked, and that is where the size of a checkout is paid.**
   The working-tree diff stats every file there is, which on a very large one is seconds, and it
   ran per batch — so an agent's write cost a walk of the whole checkout. It is now

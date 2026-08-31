@@ -133,6 +133,57 @@ enum Git {
     }
   }
 
+  /// What every open file is measured against, reduced to two facts: where HEAD points, and
+  /// what the index holds. A refresh reads this beside the diff so its report can say what it
+  /// *observed* rather than what it was asked — a read asked for wholesale that finds both
+  /// unmoved has no grounds to claim everything moved, however it was started.
+  ///
+  /// The index is fingerprinted by the checksum git itself writes at the file's tail (plus its
+  /// size), not by mtime: a checkout that rewrites the index with identical content — switching
+  /// between two branches on one commit — moves the clock and not the measurement. HEAD is the
+  /// oid, not the ref name, for the same reason.
+  struct MeasurementBase: Equatable {
+    var head: String?
+    var index: Data?
+  }
+
+  static func measurementBase(at url: URL) -> MeasurementBase {
+    guard let repo = openRepository(at: url) else { return MeasurementBase() }
+    defer { git_repository_free(repo) }
+    var base = MeasurementBase()
+    var oid = git_oid()
+    if git_reference_name_to_id(&oid, repo, "HEAD") == 0 {
+      base.head = String(cString: git_oid_tostr_s(&oid))
+    }
+    var buffer = git_buf()
+    if git_repository_item_path(&buffer, repo, GIT_REPOSITORY_ITEM_INDEX) == 0 {
+      defer { git_buf_dispose(&buffer) }
+      if let pointer = buffer.ptr,
+        let handle = FileHandle(forReadingAtPath: String(cString: pointer)),
+        let size = try? handle.seekToEnd()
+      {
+        defer { try? handle.close() }
+        let tail: UInt64 = 32
+        try? handle.seek(toOffset: size > tail ? size - tail : 0)
+        base.index = (try? handle.readToEnd()).map { checksum in
+          checksum + withUnsafeBytes(of: size) { Data($0) }
+        }
+      }
+    }
+    return base
+  }
+
+  /// The paths whose entries differ between two answers — present in one only, or counted
+  /// differently. What a refresh reports as having moved when the measurement base has not.
+  static func differingPaths(_ old: [ChangedFile], _ new: [ChangedFile]) -> Set<String> {
+    let before = Dictionary(old.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+    let after = Dictionary(new.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+    var paths: Set<String> = []
+    for (path, file) in before where after[path] != file { paths.insert(path) }
+    for path in after.keys where before[path] == nil { paths.insert(path) }
+    return paths
+  }
+
   /// The one-file form, for the editor asking about the file it has open.
   static func isIgnored(at url: URL, file path: String) -> Bool {
     ignored(at: url, directories: [], files: [path]).contains(path)

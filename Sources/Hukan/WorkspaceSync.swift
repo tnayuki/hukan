@@ -243,9 +243,13 @@ extension Workspace {
       // linked worktree. "Changed" is what has not been committed yet, not the whole branch.
       let changed = Git.changedFiles(at: url, since: "HEAD")
       let history = Git.history(at: url, limit: limit)
+      // Recorded here so the first watcher refresh has something to measure against — without
+      // it that refresh cannot tell "HEAD moved" from "never looked", and reports everything.
+      let base = Git.measurementBase(at: url)
       DispatchQueue.main.async { [weak self] in
         worktree.changedFiles = changed
         worktree.history = history
+        worktree.measurementBase = base
         completion()
         guard let self else { return }
         self.loadInFlight.remove(worktreeID)
@@ -322,6 +326,12 @@ extension Workspace {
     watchers = watchers.filter { live.contains($0.key) }
     for worktree in worktrees where watchers[worktree.id] == nil {
       let id = worktree.id
+      // Observation begins when the watcher does, so the baseline is recorded here: where HEAD
+      // and the index stand at this moment. Without one, a refresh cannot tell "moved under me"
+      // from "never looked" and its first report claims everything moved. Anything that moved
+      // *before* this moment needs no report — nothing was watching, so nothing was shown that
+      // could have gone stale.
+      worktree.measurementBase = Git.measurementBase(at: worktree.url)
       // Watch the whole worktree subtree: an edit, and — in the main checkout, whose `.git` is
       // inside it — the commit that clears those edits away, a change worth noticing just the
       // same. The re-query is where ignored churn (a build writing into `node_modules`)
@@ -381,9 +391,17 @@ extension Workspace {
   /// the event rate.
   ///
   /// `ownWrite` is hukan having done the writing — a save, one of the panel's own edits. git is
-  /// asked about those paths exactly as it is about anyone else's, but the open files are not
-  /// re-read: the buffer already holds what went to disk, and a re-read would only cost the
+  /// asked about those paths exactly as it is about anyone else's, but they are subtracted from
+  /// the report: the buffer already holds what went to disk, and a re-read would only cost the
   /// reader its selection.
+  ///
+  /// What the report *says* moved is what the read observed, never the scope it was asked with.
+  /// `moved` decides the question put to git; the answer is reported as the paths whose entries
+  /// actually differ — and as "everything" only when HEAD or the index moved between this read
+  /// and the last (`Git.MeasurementBase`), which is the one case where files the diff never
+  /// names are measured against something new. The two used to be the same value, and that was
+  /// a race: a read asked for wholesale observes whatever lands while it runs, so an edit made
+  /// during one was reported as "everything moved" and cost every open file a re-read.
   func refreshFiles(worktreeID: UUID, moved: Set<String>? = nil, ownWrite: Bool = false) {
     guard worktree(id: worktreeID) != nil else { return }
     guard !refreshInFlight.contains(worktreeID) else {
@@ -422,6 +440,7 @@ extension Workspace {
       // second, and the equality test has to see that as a change or the section would keep
       // drawing the list from before it.
       let history = Git.history(at: url, limit: limit)
+      let base = Git.measurementBase(at: url)
       DispatchQueue.main.async {
         guard let self else { return }
         self.refreshInFlight.remove(worktreeID)
@@ -432,6 +451,20 @@ extension Workspace {
             asked.map { Git.merged(changed, into: worktree.changedFiles, for: $0) }
             ?? changed
           let trackedFiles = tracked ?? worktree.trackedFiles
+          // The report: everything, if what files are measured against moved under this read
+          // (or nothing has ever been read); otherwise exactly what was seen to move — the
+          // entries that differ, plus the paths git was asked about, less the ones hukan wrote
+          // itself. `moved` is not consulted: the scope of the question is not an observation.
+          let reported: Set<String>?
+          if let recorded = worktree.measurementBase, recorded == base {
+            var observed = Git.differingPaths(worktree.changedFiles, files)
+            if let asked { observed.formUnion(asked) }
+            if ownWrite { observed.subtract(asked ?? []) }
+            reported = observed
+          } else {
+            reported = nil
+          }
+          worktree.measurementBase = base
           if worktree.changedFiles != files || worktree.trackedFiles != trackedFiles
             || worktree.history != history
           {
@@ -439,7 +472,7 @@ extension Workspace {
             worktree.trackedFiles = trackedFiles
             worktree.history = history
             worktree.hasLoadedFiles = true
-            self.onWorktreeFilesChanged?(worktreeID, ownWrite ? [] : moved)
+            self.onWorktreeFilesChanged?(worktreeID, reported)
           }
         }
         // Whatever the result, git has just been asked — a branch move's re-read is satisfied.

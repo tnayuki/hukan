@@ -20,9 +20,9 @@ final class Workspace {
   /// and the working set actually changed. Carries the worktree id so the window can refresh
   /// just that one's rail badge, and the file column too when it is the one on screen. Set by
   /// the window that owns this workspace.
-  /// The worktree-relative paths that moved, or nil when what moved could not be placed — a
-  /// commit, a staging, anything under git's own directory — and everything a reader has open
-  /// has to be re-read.
+  /// The worktree-relative paths the refresh observed moving, or nil when what open files are
+  /// measured against moved — HEAD, the index — and everything a reader has open has to be
+  /// re-read. An observation, not an echo of the FSEvents batch: see `refreshFiles`.
   var onWorktreeFilesChanged: ((UUID, Set<String>?) -> Void)?
   /// The worktree's index read again the directories an FSEvents batch touched, and these are
   /// they — nil for all of them, which is a batch that could not be placed or the index's first
