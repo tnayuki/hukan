@@ -231,7 +231,8 @@ since a linked worktree leaves the rail with its sessions when git stops listing
 agent, the way *Stop Session* does, and destroys nothing: the transcript stays exactly where it
 was, *Unarchive* brings the row back, and the next message resumes it. A session
 that starts working or asks for you comes back out on its own, so nothing waiting on you is ever
-hidden. Several rows can be selected at once, so a batch of finished attempts is one gesture. A
+hidden — and one you send a message to leaves the fold for good, since instructing a session is
+deciding you are not done with it. Several rows can be selected at once, so a batch of finished attempts is one gesture. A
 worktree's rows leave when git stops listing it, or when its repository is closed.
 
 ---

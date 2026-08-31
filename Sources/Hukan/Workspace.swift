@@ -208,6 +208,20 @@ final class Workspace {
     return moved
   }
 
+  /// You instructed a session, so it is not one you are done with: an archive flag comes off.
+  /// Archiving stops the engine and the next send resumes it, which makes a send the same decision
+  /// reversed — and the only way to reverse it that is not the menu item. Without this the
+  /// working-or-waiting rule above brought the row out for the length of the turn and dropped it
+  /// back under the fold the moment the agent answered: the conversation you are in being put away
+  /// while you watch it, with the flag still set to do the same thing on the next send.
+  ///
+  /// Says whether anything moved, the way `setArchived` does, so a caller knows whether the rail
+  /// has anything to redraw.
+  @discardableResult
+  func noteInstruction(from session: AgentSession) -> Bool {
+    setArchived(false, for: [session])
+  }
+
   /// How wide each column was left: rail, running agent, and the file column's own sidebar.
   /// Empty until the layout has been arranged once.
   ///

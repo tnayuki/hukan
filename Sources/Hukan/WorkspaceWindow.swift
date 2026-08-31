@@ -1554,6 +1554,16 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     session.onRecencyChange = { [weak self] in self?.scheduleRailReload() }
     session.onLoginRequested = { [weak self] verb in self?.runLogin(verb, for: session) }
     session.onNeedsStart = { [weak self] in self?.startSession(session) }
+    session.onInstructed = { [weak self] in self?.unarchiveOnInstruction(session) }
+  }
+
+  /// A send takes a session out of the archive (see `Workspace.noteInstruction`), which the rail
+  /// has to be told about: the row moves out of the folded section, and the flag rides in the
+  /// window's restorable state.
+  private func unarchiveOnInstruction(_ session: AgentSession) {
+    guard workspace.noteInstruction(from: session) else { return }
+    reload()
+    window?.invalidateRestorableState()
   }
 
   /// Spawn `claude` for a session that has none yet — the deferred start, reached from the first

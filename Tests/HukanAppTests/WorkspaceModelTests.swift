@@ -115,6 +115,30 @@ final class WorkspaceModelTests: XCTestCase {
     XCTAssertFalse(workspace.setArchived(false, for: sessions))
   }
 
+  /// Instructing an archived session takes the flag off, rather than the working-or-waiting rule
+  /// lending the row a turn's worth of daylight and the fold taking it back when the agent
+  /// answers. Archiving stops the engine and the send is what resumes it, so the send is that
+  /// decision reversed.
+  func testASendUnarchivesTheSessionForGood() {
+    let (workspace, _, sessions) = workspaceWithSessions(2)
+    XCTAssertTrue(workspace.setArchived(true, for: [sessions[0]]))
+
+    XCTAssertTrue(workspace.noteInstruction(from: sessions[0]))
+    XCTAssertFalse(workspace.archivedSessionIDs.contains(sessions[0].id))
+    // And it stays out once the turn it opened is over, which is the whole complaint: under the
+    // working-or-waiting rule alone the row was out only while the agent had something to say.
+    sessions[0].state = .needsAttention
+    XCTAssertFalse(workspace.isArchived(sessions[0]))
+    sessions[0].state = .idle
+    XCTAssertFalse(workspace.isArchived(sessions[0]))
+    XCTAssertEqual(workspace.railRepositories[0].main!.archived.count, 0)
+    XCTAssertEqual(workspace.railRepositories[0].main!.sessions.count, 2)
+
+    // A session that was not archived has nothing to move, so nothing is reported and the rail
+    // is not asked to redraw on every send.
+    XCTAssertFalse(workspace.noteInstruction(from: sessions[1]))
+  }
+
   // MARK: ages
 
   /// The unit steps up at each boundary and never shows two; a never-instructed session shows

@@ -495,7 +495,13 @@ Workspace (one window)
   ends it takes the worktree off the rail with its sessions, so nothing accumulates there; the long
   tail is main's alone, the one-shot questions asked where you happened to be standing. **A
   session that is working or waiting on you comes back out** — the flag stays, the showing is what
-  the rule overrides — because a pulsing row must never be behind a fold. **Archiving stops the
+  the rule overrides — because a pulsing row must never be behind a fold. **A message you send it
+  takes the flag off outright**, which is the difference between coming out and staying out: a
+  send is what resumes an archived session, so it is the archiving decided the other way, and the
+  only way to decide it that is not the menu item. Under the showing rule alone, a message sent
+  to an archived session lent its row the length of the turn and the fold took it back the moment
+  the agent answered — the conversation you are in being put away while you watch it, and the flag
+  still set to do the same thing on the next send. **Archiving stops the
   engine**: archived means done with, and a process kept alive for a row below the fold is one
   nobody is watching — while without the stop a working session took the flag and stayed on the
   rail until its turn ended, so archiving it looked like nothing had happened. It is the same act

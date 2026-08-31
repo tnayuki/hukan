@@ -708,6 +708,10 @@ final class AgentSession {
     // last engaged this session, not the agent's own chatter. `/login` and the signed-out drop
     // returned above, so neither reorders anything.
     lastInstructedAt = Date()
+    // And it is your decision about this session, not just a timestamp: a send is what takes an
+    // archived one back out of the fold. Fired before the start below, so the row is already out
+    // when the engine's first state change reloads the rail.
+    onInstructed?()
     // Start is deferred to the first send, so a new or merely-viewed session spawns no `claude`
     // until you actually talk to it. Bring the process up now; bail if it could not start —
     // already owned by another process, in which case `start` left a note. The engine's outbox
@@ -1207,6 +1211,11 @@ final class AgentSession {
   /// fragment while a turn runs, and the only thing that depends on it is the rail's order, so
   /// the subscriber can throttle and reload just that.
   var onRecencyChange: (() -> Void)?
+
+  /// You instructed this session. `onRecencyChange` is the agent speaking and fires per fragment;
+  /// this is your send, and it fires once — which is what makes it the seam the archive flag hangs
+  /// off (see `Workspace.noteInstruction`).
+  var onInstructed: (() -> Void)?
 
   /// Bump the rail's sort key: this session just did something. The one way `updatedAt` moves.
   private func touch() {
