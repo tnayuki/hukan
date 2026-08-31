@@ -195,7 +195,14 @@ final class HeaderPicker: NSButton {
 
 /// Shown when there is nothing to display.
 final class EmptyStateView: NSView {
-  init(symbol: String, title: String, message: String, actionTitle: String?, action: Selector?) {
+  /// `secondary` is a pull-down beside the button, for a state whose way out is a list rather than
+  /// one act — the empty rail's Open Recent. Its menu supplies its own first item as the title,
+  /// since a pull-down never chooses that one and a menu built on demand has to survive being
+  /// emptied.
+  init(
+    symbol: String, title: String, message: String, actionTitle: String?, action: Selector?,
+    secondary: NSMenu? = nil
+  ) {
     super.init(frame: .zero)
 
     let image = NSImageView()
@@ -214,10 +221,23 @@ final class EmptyStateView: NSView {
     messageLabel.preferredMaxLayoutWidth = 260
 
     var views: [NSView] = [image, titleLabel, messageLabel]
+    var buttons: [NSView] = []
     if let actionTitle, let action {
       let button = NSButton(title: actionTitle, target: nil, action: action)
       button.bezelStyle = .rounded
-      views.append(button)
+      buttons.append(button)
+    }
+    if let secondary {
+      let pullDown = NSPopUpButton(frame: .zero, pullsDown: true)
+      pullDown.bezelStyle = .rounded
+      pullDown.menu = secondary
+      buttons.append(pullDown)
+    }
+    if !buttons.isEmpty {
+      let row = NSStackView(views: buttons)
+      row.orientation = .horizontal
+      row.spacing = 8
+      views.append(row)
     }
 
     let stack = NSStackView(views: views)

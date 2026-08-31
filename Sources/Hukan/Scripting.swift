@@ -283,6 +283,28 @@ final class TabsCommand: NSScriptCommand {
   }
 }
 
+/// `recents` reports what Open Recent would offer this window, one line per entry — the title the
+/// row would carry and the path it would open. Hidden, like the rest of the checking verbs, and for
+/// the same reason `files menu` is: two of the three places it hangs are context menus, which
+/// cannot be opened at all without a right-click at coordinates. `opening "<path>"` takes one, the
+/// way clicking the row would.
+@objc(RecentsCommand)
+final class RecentsCommand: NSScriptCommand {
+  override func performDefaultImplementation() -> Any? {
+    guard let controller = frontController() else { return fail("no window") }
+    if let path = evaluatedArguments?["opening"] as? String, !path.isEmpty {
+      let item = NSMenuItem()
+      item.representedObject = path
+      controller.openRecentRepository(item)
+      return nil
+    }
+    let open = Set(controller.workspace.repositories.map(\.id))
+    let entries = RecentRepositories.shared.entries(excluding: open)
+    guard !entries.isEmpty else { return "(no recent repositories)" }
+    return entries.map { "\($0.title)  \($0.path)" }.joined(separator: "\n")
+  }
+}
+
 /// `browser "<address>"` opens or focuses a web tab on the selected worktree's desk, taking the
 /// address bar's own reading of the text — so a script exercises the same address-or-search rule a
 /// person does. With nothing to open it reports the worktree's web tabs, one line each. Hidden,

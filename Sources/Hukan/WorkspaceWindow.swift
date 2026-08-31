@@ -51,6 +51,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   static let windowIdentifier = NSUserInterfaceItemIdentifier("dev.tnayuki.hukan.workspace")
   static private(set) var all: [WorkspaceWindowController] = []
 
+  /// The window an act with no window of its own lands in — the key one when it is a workspace
+  /// window, else the first. The same rule the scripting surface applies to a command that names
+  /// no window; what needs it here is the Open Recent menu, which has to know what the window it
+  /// would add to already holds.
+  static var front: WorkspaceWindowController? {
+    if let key = NSApp.keyWindow?.windowController as? WorkspaceWindowController { return key }
+    return all.first
+  }
+
   /// The app-wide cascade point, threaded through successive New Windows the way
   /// NSDocumentController does its own: the first window centres and seeds this, and each
   /// window after steps down-right from the last instead of landing on top of it. `nil`
@@ -1706,6 +1715,21 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     guard panel.runModal() == .OK, let url = panel.url else { return }
     workspace.selectedWorktreeID = workspace.openRepository(url).id
     reload()
+  }
+
+  /// File ▸ Open Recent, the rail's submenu and the empty state's pull-down, all one act: open a
+  /// repository this app has had open before, in this window. It goes through `openPath` — the
+  /// resolution every outside hand-off shares — so a directory git has since stopped knowing about
+  /// opens as the degenerate repository the model already has rather than being refused.
+  @objc func openRecentRepository(_ sender: Any?) {
+    guard let path = (sender as? NSMenuItem)?.representedObject as? String else { return }
+    guard openPath(URL(fileURLWithPath: path)) != nil else {
+      // Gone between the menu opening and the click — the list prunes what is missing when it is
+      // built, so this is a race and not a stale list. Drop it and say nothing more than a beep.
+      RecentRepositories.shared.forget(path)
+      NSSound.beep()
+      return
+    }
   }
 
   /// Where every outside hand-off lands — a Finder drop, the command line, a terminal's

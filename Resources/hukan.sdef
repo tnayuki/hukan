@@ -320,6 +320,14 @@
             <result type="text"/>
         </command>
 
+        <command name="recents" code="HuknRcnt" hidden="yes" description="Report what Open Recent would offer this window, one line per entry, for automated checks">
+            <cocoa class="RecentsCommand"/>
+            <parameter name="opening" code="Open" type="text" optional="yes" description="open this recent repository, the way clicking its row would">
+                <cocoa key="opening"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
         <command name="fold" code="HuknFold" hidden="yes" description="Inspect or drive the tool-call fold in the selected transcript, for automated checks">
             <cocoa class="FoldCommand"/>
             <direct-parameter type="text" optional="yes" description="status (default), expand, or collapse"/>

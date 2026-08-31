@@ -1782,6 +1782,13 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
         title: "Open Repository…",
         action: #selector(WorkspaceWindowController.openRepository(_:)),
         keyEquivalent: ""))
+    // Reopening in the place you closed from. This is what a closed repository left as a dimmed
+    // row on the rail would have bought, without the row: a repository that is closed has no
+    // worktrees, no sessions and nothing measured, so it would sit here saying nothing for good —
+    // on the one column whose job is to show what is waiting on you.
+    let recent = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+    recent.submenu = RecentRepositoriesMenu(title: "Open Recent")
+    menu.addItem(recent)
   }
 
   @objc private func closeClickedRepository(_ sender: NSMenuItem) {

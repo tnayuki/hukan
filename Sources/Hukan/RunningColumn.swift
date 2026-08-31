@@ -856,12 +856,17 @@ final class RunningColumnViewController: NSViewController {
       attach(nil)
       scrollView.isHidden = true
       bottomArea.isHidden = true
+      // Open Recent beside the panel: an empty window is where the list is worth most, since
+      // what it offers is exactly what this window has not got.
+      let recent = RecentRepositoriesMenu(title: "Open Recent")
+      recent.pullDownTitle = "Open Recent"
       let empty = EmptyStateView(
         symbol: "square.stack.3d.up",
         title: "No repositories yet",
         message: "Add a repository to start running agents in its worktrees.",
         actionTitle: "Open Repository…",
-        action: #selector(WorkspaceWindowController.openRepository(_:)))
+        action: #selector(WorkspaceWindowController.openRepository(_:)),
+        secondary: recent)
       empty.translatesAutoresizingMaskIntoConstraints = false
       body.addSubview(empty)
       empty.pin(to: body)

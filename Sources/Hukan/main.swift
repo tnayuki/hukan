@@ -116,6 +116,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     WorkspaceWindowController(workspace: Workspace()).showWindow(nil)
   }
 
+  /// Open Recent ▸ Clear Menu. App-global, like the list itself, so it lives here rather than on a
+  /// window — and it still answers with no window open, which is where a menu the user is tidying
+  /// may well be reached from.
+  @objc func clearRecentRepositories(_ sender: Any?) {
+    RecentRepositories.shared.clear()
+  }
+
   /// The app outlives its last window (see above), so clicking the Dock icon — or otherwise
   /// reopening — with nothing on screen has to put a window back, or the app is stuck alive and
   /// invisible with no way in. With a window already up, let AppKit do its usual unminiaturize.
@@ -192,6 +199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     fileMenu.addItem(
       withTitle: "Open Repository…",
       action: #selector(WorkspaceWindowController.openRepository(_:)), keyEquivalent: "O")
+    // Beside the panel it saves a trip through, and offered again on the rail's right-click and in
+    // the empty state — the same three places Open Repository… is reached from. No key equivalent:
+    // it is a submenu, and the entries under it are not stable enough to bind.
+    let recent = fileMenu.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "")
+    recent.submenu = RecentRepositoriesMenu(title: "Open Recent")
     fileMenu.addItem(.separator())
     // Both are a worktree's, so both need one selected and disable without it. ⌘T is the
     // browser's: hukan's shell work is the agent's, so the terminal a person opens by hand is the

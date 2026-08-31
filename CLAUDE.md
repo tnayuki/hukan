@@ -34,6 +34,31 @@ Workspace (one window)
   the `git worktree remove` a session runs once its task has landed, noticed on the next return
   to the window. Closing the repository takes the rest, the main checkout included: git will not
   remove that one, so nothing but a decision can.
+- **What was open and is not is a list, not a row.** Open Recent — in the File menu, on the rail's
+  right-click and beside the empty window's button, the three places Open Repository… is already
+  reached from — offers the repositories this app has had open that the window it would add to has
+  not. The alternative was leaving a closed repository on the rail as a dimmed row, which is where
+  you closed it and so where you would look; refused because such a row has nothing to say and
+  never will. A closed repository has no worktrees, no sessions and nothing measured — git is not
+  being enumerated for it — so it would sit permanently mute on the one column whose job is to show
+  what is waiting on you. The archived session it would be modelled on is not the same case: an
+  archived session still has a transcript, a history and a resume, and it comes back out of the
+  fold the moment it is working. A closed repository can never come back out, because closing it
+  stopped everything in it. The rail is also per-window, and the window that held a repository is
+  exactly what is gone by the time you want it back.
+  **So it is hukan's one app-global store**, a list of paths in the defaults — not a preference
+  (there is no settings window, and nothing in it is a choice) and not master data (every entry is
+  a path git answers for, and losing the list costs one trip through the open panel). An entry is a
+  *repository* id, the path git's common dir sits under, so opening a linked worktree records the
+  repository and reopening lands on the open/close unit. It is noted when a repository is opened
+  *and* when it is closed — closing is what usually fills the menu, but a repository carried across
+  restarts until a quit would otherwise never be noted at all — and noted in the model rather than
+  at the menu items, so every route in lands in it. Restoration is pointedly not one of those
+  routes: a repository coming back is the same one carrying on. Ten places, the length every Open
+  Recent on this machine is; an entry that is no longer a directory is dropped from the store on
+  the next read, since a repository that has been deleted or moved is gone rather than recent and
+  must not hold a place for good; and a name that repeats in the offered list carries the directory
+  it sits in, since two rows both reading `hukan` name nothing.
 - **Where a session is, is read off `EnterWorktree` and `ExitWorktree` — and the engine is asked
   to use them.** The engine's process is what moves: `EnterWorktree` switches its working
   directory and relocates its transcript, `ExitWorktree` puts both back. Their results are the one
@@ -1058,6 +1083,7 @@ osascript -e 'tell application "Hukan Dev" to get history of worktree "main" of 
 osascript -e 'tell application "Hukan Dev" to commit "<full oid>"'   # then: commit / commit toggling 3 / commit finding "…"'
 osascript -e 'tell application "Hukan Dev" to tabs'
 osascript -e 'tell application "Hukan Dev" to completions typing "/co"'   # then: completions moving 1 / completions accepting true
+osascript -e 'tell application "Hukan Dev" to recents'   # then: recents opening "<path>"
 ```
 
 The session verbs address the session as the receiver — `stop session X`, or `tell session X to
@@ -1084,7 +1110,10 @@ buttons, and otherwise only reachable by clicking at coordinates. `completions` 
 kind: the command list is rows on a panel floating over the window, so checking that a `/` opened
 it — and that `⏎` took the row the arrows had reached — is otherwise a click at coordinates.
 `typing` goes through the text view's own edit path rather than a shortcut only a script can
-take, so what it exercises is the list a person would get. `selected sessions` is the last of them, and
+take, so what it exercises is the list a person would get. `recents` is one of the same kind: Open Recent hangs in three places, two of them
+context menus that cannot be opened without a right-click at coordinates, so the verb reports what
+a row would say and what it would open, and `opening` takes one the way clicking it would.
+`selected sessions` is the last of them, and
 it reads *and writes*: a multi-selection is rows on a list with nothing to read back, and a
 property that could only be read would leave the half worth checking — that a batch survives the
 reload every FSEvents batch triggers — reachable only by ⌘-clicking at coordinates.

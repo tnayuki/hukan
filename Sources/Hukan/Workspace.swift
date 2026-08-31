@@ -457,6 +457,9 @@ final class Workspace {
   /// transcripts stay where Claude Code put them, so reopening brings it all back.
   func closeRepository(_ repositoryID: String) {
     guard let repo = repositories.first(where: { $0.id == repositoryID }) else { return }
+    // Closing is what usually puts a repository in Open Recent, and it goes to the head of that
+    // list: the one you just closed is the one you are likeliest to want back.
+    RecentRepositories.shared.note(repositoryID)
     dropWorktrees(repo.worktrees)
     repositories.removeAll { $0.id == repositoryID }
   }
@@ -565,9 +568,16 @@ final class Workspace {
   /// Open a repository: register its checkout and pull in whatever git and Claude Code
   /// already know about it. Adding is the only moment worth paying for the git queries —
   /// doing it on every redraw would spawn processes constantly.
+  ///
+  /// Noting it as recent happens here rather than at the menu items, so every route in — the open
+  /// panel, a Finder drop, the command line, the `edit` verb, Open Recent itself — lands in the
+  /// list without each of them having to remember to. Restoration is pointedly not one of them:
+  /// `decodeState` builds its worktrees inline, and a repository coming back is the same one
+  /// carrying on rather than a repository being opened.
   @discardableResult
   func openRepository(_ url: URL) -> Worktree {
     let worktree = addWorktree(url)
+    RecentRepositories.shared.note(worktree.repositoryID)
     discoverSessions()
     return worktree
   }
