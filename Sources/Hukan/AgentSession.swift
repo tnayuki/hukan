@@ -342,9 +342,64 @@ final class AgentSession {
   /// Where the assistant's current text block started, so its rendered span can be replaced in
   /// place as more of it streams in.
   private var streamStart: Int?
-  /// The raw markdown streamed so far for the current block. Kept because formatting needs the
-  /// whole run, not one token — the span is re-rendered from this on every delta.
-  private var streamSource = ""
+  /// Deltas received and not yet rendered. Rendering per SSE chunk re-parsed the accumulated
+  /// message per token — O(n²) over a long reply, and enough main-thread time near the end of
+  /// one to make scrolling stutter — so deltas pool here and land together, at most every
+  /// `streamFlushInterval`. Anything that reads or moves the transcript between flushes calls
+  /// `flushStreamRender` first, so the two copies' offsets never see a half-applied run.
+  private var pendingStreamText = ""
+  private var streamFlushScheduled = false
+  /// The incremental renderer's carry, and how much of the streamed span it has settled — a
+  /// length relative to `streamStart`, so an edit above the run shifts both together.
+  private var streamState = Transcript.MarkdownStreamState()
+  private var streamStableLength = 0
+  /// ~2 deltas per flush at the API's usual chunk rate, and well under what a reader notices.
+  static let streamFlushInterval: TimeInterval = 1.0 / 30.0
+
+  private func scheduleStreamFlush() {
+    guard !streamFlushScheduled else { return }
+    streamFlushScheduled = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.streamFlushInterval) { [weak self] in
+      guard let self else { return }
+      self.streamFlushScheduled = false
+      self.flushStreamRender()
+    }
+  }
+
+  /// Land the pooled deltas: render the accumulated run so far and replace the part of the
+  /// streamed span that could still change. The run is rendered as markdown while it streams so
+  /// formatting shows before the block closes — a lone token can't be formatted ("**bo" is not
+  /// bold yet), but the run so far can: unclosed markup renders literally until it closes, then
+  /// snaps to formatted, the usual streaming look. `markdownStream` keeps the re-rendered part
+  /// to the open tail, so a flush costs the tail and not the message.
+  func flushStreamRender() {
+    guard !pendingStreamText.isEmpty else { return }
+    let delta = pendingStreamText
+    // Cleared before `markTime`: the separator lands through `append`, which flushes first,
+    // and must not find this flush's own text still pending.
+    pendingStreamText = ""
+    if streamStart == nil {
+      markTime()
+      streamStart = transcript.length
+      streamState = Transcript.MarkdownStreamState()
+      streamStableLength = 0
+    }
+    touch()  // streaming is activity; keep the rail's recency fresh
+    let location = streamStart! + streamStableLength
+    guard location <= transcript.length else {
+      // The transcript moved under the run without the run being reset — nothing sane to
+      // replace. Drop the pool; the buffered `assistant` event carries the whole text anyway.
+      streamStart = nil
+      return
+    }
+    let range = NSRange(location: location, length: transcript.length - location)
+    let (stable, volatile) = Transcript.markdownStream(&streamState, appending: delta)
+    let formatted = NSMutableAttributedString(attributedString: stable)
+    formatted.append(volatile)
+    transcript.replaceCharacters(in: range, with: formatted)
+    onReplace?(range, formatted)
+    streamStableLength += stable.length
+  }
 
   /// When the last block went in, for deciding whether the conversation paused.
   private var lastStamp: Date?
@@ -422,8 +477,10 @@ final class AgentSession {
         self.pendingPrefix = prefix
         self.noteUserMessageUUIDs(in: records)
         // Inserted at the front, not appended: a session that resumed on the same
-        // click may already have produced live output while this was being read.
+        // click may already have produced live output while this was being read — in which
+        // case the streamed span just moved down by the insertion.
         self.transcript.insert(rendered, at: 0)
+        if let start = self.streamStart { self.streamStart = start + rendered.length }
         if let title = history.title { self.title = title }
         self.costUSD = history.cost.usd
         self.costApproximate = history.cost.approximate
@@ -478,6 +535,8 @@ final class AgentSession {
         self.pendingPrefix = remaining
         self.isLoadingEarlier = false
         self.transcript.insert(rendered, at: 0)
+        // The reader is scrolled up, but the agent may still be streaming below them.
+        if let start = self.streamStart { self.streamStart = start + rendered.length }
         self.onPrepend?(rendered)
       }
     }
@@ -840,6 +899,10 @@ final class AgentSession {
   /// than gone.
   private func applyRollBack(to anchor: String, keeping prefixLength: Int) {
     lastRecordUUID = anchor
+    // The cut may take the streamed span with it; whatever streams next must open a fresh run
+    // rather than replace through a document that no longer holds this one.
+    streamStart = nil
+    pendingStreamText = ""
     let length = min(max(prefixLength, 0), transcript.length)
     transcript.deleteCharacters(in: NSRange(location: length, length: transcript.length - length))
     // The cut message and everything after it are unreachable now, so their uuids would only
@@ -1224,6 +1287,9 @@ final class AgentSession {
   }
 
   private func append(_ fragment: NSAttributedString) {
+    // Whatever this is, it goes after the streamed text, so the pooled deltas land first. A
+    // no-op inside a flush's own `markTime`, whose separator belongs *before* the run.
+    flushStreamRender()
     // Fresh content is the session speaking, so it counts as activity for the rail's order.
     // History replayed from disk uses `insert`, not this, so loading the past never reorders.
     touch()
@@ -1237,6 +1303,8 @@ final class AgentSession {
   /// itself an offset into this transcript, shifts with any edit made before it.
   /// (`TranscriptStorageMirror`: this is what the Kit's click delegate routes fold edits through.)
   func editTranscript(in range: NSRange, with replacement: NSAttributedString) {
+    // The pooled deltas' replace and this edit shift each other's offsets — one document first.
+    flushStreamRender()
     guard NSMaxRange(range) <= transcript.length else { return }
     if let start = streamStart, NSMaxRange(range) <= start {
       streamStart = start + replacement.length - range.length
@@ -1253,6 +1321,9 @@ final class AgentSession {
   /// other way: `content_block_start` has empty arguments, so the buffered `assistant`
   /// block — which has them filled in — is the one used.
   func apply(_ event: ClaudeEvent) {
+    // Anything but another delta may read the transcript or land beside the streamed span, and
+    // the pooled deltas' replace is computed against it — put them in first.
+    if event.type != "stream_event" { flushStreamRender() }
     switch event.type {
     case "stream_event":
       guard let inner = event.payload["event"] as? [String: Any] else { return }
@@ -1261,21 +1332,11 @@ final class AgentSession {
         delta["type"] as? String == "text_delta",
         let text = delta["text"] as? String
       {
-        // Render the accumulated run as markdown on every delta so formatting shows while
-        // it streams, not only once the block closes. A lone token can't be formatted
-        // ("**bo" is not bold yet), but the whole run so far can: unclosed markup renders
-        // literally until it closes, then snaps to formatted — the usual streaming look.
-        if streamStart == nil {
-          markTime()
-          streamStart = transcript.length
-          streamSource = ""
-        }
-        streamSource += text
-        touch()  // streaming is activity; keep the rail's recency fresh
-        let range = NSRange(location: streamStart!, length: transcript.length - streamStart!)
-        let formatted = Transcript.markdown(streamSource)
-        transcript.replaceCharacters(in: range, with: formatted)
-        onReplace?(range, formatted)
+        // Pooled, not rendered here: one render per SSE chunk cost the whole accumulated
+        // run each time (see `flushStreamRender`, which is where the look of the streaming
+        // render is decided).
+        pendingStreamText += text
+        scheduleStreamFlush()
       }
 
     case "assistant":
@@ -1411,6 +1472,10 @@ final class AgentSession {
       pendingApproval = nil
       pendingQuestion = nil
       state = .idle
+      // A turn cut short can end without the `assistant` close that normally retires the run;
+      // left set, the next turn's first delta would replace from the dead run's start, taking
+      // the notes appended below with it.
+      streamStart = nil
       // A backstop for the card: a task tool whose result never reached the loop above (a turn
       // cut short, a shape the stream did not spell the usual way) still leaves the store right,
       // and the end of the turn is when a stale card would start to mislead.

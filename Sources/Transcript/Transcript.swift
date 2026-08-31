@@ -237,6 +237,83 @@ public enum Transcript {
     return rendered
   }
 
+  // MARK: - Streaming markdown
+
+  /// The carry between two `markdownStream` calls: the source of the tail whose look the next
+  /// delta could still change, always beginning at a line the block loop above would start a
+  /// fresh block at.
+  public struct MarkdownStreamState {
+    var rest = ""
+    public init() {}
+  }
+
+  /// Render a streaming run incrementally: `stable` is the rendering of the source no future
+  /// delta can reshape, `volatile` the rendering of the rest. Appending each call's `stable`
+  /// once and re-replacing only the volatile tail reproduces `markdown` of the whole
+  /// accumulated source exactly — the cut falls only on boundaries the block loop cannot join
+  /// across — while the work per call is bounded by the open tail rather than the message.
+  /// Rendering the whole run per delta was O(n²) over a long reply, and long replies are
+  /// exactly where it showed: the re-parse alone passed a frame's budget per delta by ~50 KB.
+  ///
+  /// What stays volatile is the trailing run the next characters could still extend or
+  /// reclassify: an unclosed fence, a quote run, a table (or a lone line of cells that the
+  /// next line could crown as a table's header), and always the line still missing its newline.
+  public static func markdownStream(
+    _ state: inout MarkdownStreamState, appending delta: String, base: NSFont = prose
+  ) -> (stable: NSAttributedString, volatile: NSAttributedString) {
+    let source = state.rest + delta
+    var lines = source.components(separatedBy: "\n")
+    let openLine = lines.removeLast()
+    let cut = stableLineCount(lines)
+    let stableSource = lines[..<cut].map { $0 + "\n" }.joined()
+    state.rest = lines[cut...].map { $0 + "\n" }.joined() + openLine
+    return (markdown(stableSource, base: base), markdown(state.rest, base: base))
+  }
+
+  /// How many leading complete lines are settled — safe to render once and never revisit.
+  /// Mirrors `markdown`'s branch order (fence, then table, then quote), so what it walks past
+  /// is exactly a block that loop would also have closed by here.
+  private static func stableLineCount(_ lines: [String]) -> Int {
+    var index = 0
+    while index < lines.count {
+      let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+      if trimmed.hasPrefix("```") {
+        // A fence swallows everything until its closer; unclosed, it swallows the future too.
+        var end = index + 1
+        while end < lines.count,
+          !lines[end].trimmingCharacters(in: .whitespaces).hasPrefix("```")
+        {
+          end += 1
+        }
+        guard end < lines.count else { return index }
+        index = end + 1
+        continue
+      }
+      if let table = Table(lines: lines, start: index) {
+        // Rows keep joining while lines parse as cells, so a table touching the end is
+        // still growing.
+        guard table.end < lines.count else { return index }
+        index = table.end
+        continue
+      }
+      // A lone trailing line of cells is one delimiter row away from becoming a header.
+      if index == lines.count - 1, Table.cells(lines[index]) != nil { return index }
+      if trimmed.hasPrefix(">") {
+        var end = index + 1
+        while end < lines.count,
+          lines[end].trimmingCharacters(in: .whitespaces).hasPrefix(">")
+        {
+          end += 1
+        }
+        guard end < lines.count else { return index }
+        index = end
+        continue
+      }
+      index += 1
+    }
+    return lines.count
+  }
+
   // MARK: - Block builders
 
   private static func codeBlock(_ body: [String]) -> NSAttributedString {
@@ -363,8 +440,9 @@ public enum Transcript {
     }
 
     /// A row is `| a | b |`, with the outer pipes optional. Escaped pipes are left alone
-    /// rather than split on.
-    private static func cells(_ line: String) -> [String]? {
+    /// rather than split on. Not private: `stableLineCount` asks the same question to know
+    /// whether a trailing line could still become a table's header.
+    static func cells(_ line: String) -> [String]? {
       var trimmed = line.trimmingCharacters(in: .whitespaces)
       guard trimmed.contains("|") else { return nil }
       if trimmed.hasPrefix("|") { trimmed.removeFirst() }

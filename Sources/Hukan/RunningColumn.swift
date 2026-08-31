@@ -1043,6 +1043,37 @@ final class RunningColumnViewController: NSViewController {
     queuedCard.isHidden = queued.isEmpty
     queuedCardTopInset.constant = queued.isEmpty ? 0 : queuedCardPadding
     queuedCardBottomInset.constant = queued.isEmpty ? 0 : -queuedCardPadding
+
+    settleAfterTurnIfNeeded(session)
+  }
+
+  /// The attached session's id and whether its turn was under way at the last reload — the
+  /// falling edge `settleAfterTurnIfNeeded` watches for.
+  private var turnObserved: (session: UUID, active: Bool)?
+
+  /// A turn just ended: lay the whole document out once and firm its heights up.
+  ///
+  /// Streaming deliberately never runs a full layout pass (per token it would be O(n²) — see
+  /// `scrollTranscriptToBottom`), so a long turn leaves much of the transcript on TextKit 2's
+  /// estimates, and scrolling back up through those jumps as each one is corrected — which is
+  /// why the jerkiness used to clear only on a session switch, the one other act that runs
+  /// this pass. The reader is anchored across it, so the fix for a scroll problem is not
+  /// itself a scroll.
+  private func settleAfterTurnIfNeeded(_ session: AgentSession?) {
+    let active = session?.isTurnActive == true
+    defer { turnObserved = session.map { ($0.id, active) } }
+    guard let session, let observed = turnObserved, observed.session == session.id,
+      observed.active, !active
+    else { return }
+    isRestoringAnchor = true
+    if isTranscriptPinnedToBottom {
+      scrollTranscriptToBottom(ensuringLayout: true)
+    } else if let anchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView) {
+      anchor.restore(in: scrollView, of: textView)
+    } else {
+      TranscriptScrollAnchor.layOutWholeDocument(of: textView)
+    }
+    isRestoringAnchor = false
   }
 
   /// One held type-ahead line: its text, then send-now / edit / delete. The buttons carry their
