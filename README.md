@@ -165,6 +165,14 @@ the lines it replaced. Lines never wrap.
 A double-click takes the whole token — a hash, a path, a URL, an option — here and in the
 transcript alike, on a Japanese line as readily as an English one.
 
+**Opening from outside.** `open -a hukan <path>` — or a Finder drop — opens a directory in the
+worktree that contains it, its repository first when none does, and a file as a lasting tab; a
+path that does not exist says so instead of exiting clean. The bundled CLI does the same from any
+shell (`…/Hukan.app/Contents/Resources/hukan`, one `ln -s` away from a PATH of your choosing),
+and `--wait` returns when the tab closes — which is what hukan's own terminals ship as
+`$EDITOR`: `git commit` opens its message as a tab, caret on line one, ⌘S ⌘W commits, and closing
+without saving aborts. A profile that exports its own `EDITOR` still wins.
+
 **Cost & usage.** A per-session cost estimate in the conversation header (the "if it were
 API-metered" figure) and, beside it, how full that session's context window is — amber past three
 quarters, red past nine tenths, with the breakdown by category in the tooltip. The account-wide

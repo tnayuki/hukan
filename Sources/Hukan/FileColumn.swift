@@ -180,7 +180,7 @@ final class FileContentViewController: NSViewController {
   /// is an unsaved edit to a real file.
   func save() {
     guard isDirty, textView.isEditable, let worktree, let path else { return }
-    let url = worktree.url.appendingPathComponent(path)
+    let url = Self.fileURL(worktree: worktree, path: path)
     do {
       try textView.string.write(to: url, atomically: true, encoding: .utf8)
       isDirty = false
@@ -246,10 +246,10 @@ final class FileContentViewController: NSViewController {
           attributes: [.font: monospace]))
       return
     }
-    let url = worktree.url
+    let url = Self.fileURL(worktree: worktree, path: path)
     let restoreOrigin = preservingScroll ? scrollView.contentView.bounds.origin : nil
     DispatchQueue.global(qos: .userInitiated).async {
-      let rendered = Self.renderSource(Git.fileContents(at: url, path: path) ?? "")
+      let rendered = Self.renderSource((try? String(contentsOf: url, encoding: .utf8)) ?? "")
       DispatchQueue.main.async { [weak self] in
         guard let self, self.path == path else { return }
         self.textView.textStorage?.setAttributedString(rendered)
@@ -265,6 +265,9 @@ final class FileContentViewController: NSViewController {
           self.scrollView.contentView.scroll(to: restoreOrigin)
           self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
         } else {
+          // The caret goes to the top with the scroll: `setAttributedString` leaves the
+          // insertion point at the end, and a commit message is typed at line one.
+          self.textView.setSelectedRange(NSRange(location: 0, length: 0))
           self.scrollView.scrollToLeadingEdge(y: 0)
         }
         if let pending = self.pendingReveal {
@@ -305,6 +308,14 @@ final class FileContentViewController: NSViewController {
     textView.showFindIndicator(for: target)
   }
 
+  /// Put the keyboard in the buffer — what an outside hand-off wants: a `git commit` message
+  /// lands ready to type, not behind a click. Safe mid-load: the text view exists from init,
+  /// and the async load only turns editing on under the caret already placed here.
+  func focus() {
+    loadViewIfNeeded()
+    view.window?.makeFirstResponder(textView)
+  }
+
   /// ⌘F: the text view's find bar.
   func performFind(_ sender: Any?) {
     view.window?.makeFirstResponder(textView)
@@ -315,7 +326,8 @@ final class FileContentViewController: NSViewController {
   /// once it lands. Off the main thread, like every other git question; a stale answer for a
   /// since-switched file is dropped.
   private func loadFileBase() {
-    guard let worktree, let path else {
+    // An outside file (absolute-keyed — see `fileURL`) has no git base, so no bars.
+    guard let worktree, let path, !path.hasPrefix("/") else {
       fileBase = Git.FileBase()
       gutter?.lineChanges = Git.LineChanges()
       return
@@ -359,6 +371,14 @@ final class FileContentViewController: NSViewController {
         self.gutter?.lineChanges = changes
       }
     }
+  }
+
+  /// Where the buffer lives on disk. Nearly always the path relative to the worktree — the
+  /// buffer's identity — but a file no worktree contains (a COMMIT_EDITMSG under `.git`, an
+  /// `$EDITOR` hand-off from outside every checkout) rides keyed by its absolute path, which
+  /// this is the one place allowed to read literally.
+  static func fileURL(worktree: Worktree, path: String) -> URL {
+    path.hasPrefix("/") ? URL(fileURLWithPath: path) : worktree.url.appendingPathComponent(path)
   }
 
   private static func renderSource(_ raw: String) -> NSAttributedString {
@@ -405,6 +425,9 @@ final class FileColumns {
     // otherwise keep listing the line just fixed.
     desk.onFileSaved = { [weak self] worktreeID, path in
       guard let self else { return }
+      // An outside file (absolute-keyed) is not the worktree's contents: git has nothing to
+      // re-measure for it, and `moved` expects relative paths.
+      guard !path.hasPrefix("/") else { return }
       self.workspace?.refreshFiles(worktreeID: worktreeID, moved: [path], ownWrite: true)
       self.panel.filesChangedOnDisk()
       self.onNeedsReload?()

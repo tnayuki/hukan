@@ -381,3 +381,67 @@ final class StatusCommand: NSScriptCommand {
     AgentSession.age(since: date, at: now) ?? "—"
   }
 }
+
+/// `edit "<path>"` — the verb behind the CLI helper and the terminals' `$EDITOR`. The resolution
+/// is `openPath`'s, shared with the Finder drop and the command line; what only this verb adds is
+/// `waiting`, which holds the Apple event's reply until the tab closes — the whole of what makes
+/// `git commit` in a hukan terminal work, since git's editor is done when it exits.
+///
+/// Unguarded deliberately: it opens tabs, the same reach `commit` and `browser` already have. The
+/// guarded verbs stand in for human decisions, and showing a file is not one.
+@objc(EditCommand)
+final class EditCommand: NSScriptCommand {
+  override func performDefaultImplementation() -> Any? {
+    guard let text = directParameter as? String, text.hasPrefix("/") else {
+      return fail("an absolute path is required")
+    }
+    // Who asked, when a hukan terminal did: the id is the TERM_SESSION_ID the terminal was
+    // spawned with, and it also names the window — the front one is only the fallback.
+    var terminalID: UUID?
+    var controller: WorkspaceWindowController?
+    if let key = argument("fromTerminal", as: String.self), !key.isEmpty {
+      for candidate in WorkspaceWindowController.all {
+        guard let terminal = candidate.workspace.terminals.first(where: { $0.sessionID == key })
+        else { continue }
+        terminalID = terminal.id
+        controller = candidate
+        break
+      }
+    }
+    guard let controller = controller ?? frontController() else { return fail("no window") }
+    guard let opened = controller.openPath(URL(fileURLWithPath: text), terminalID: terminalID)
+    else { return fail("no such path: \(text)") }
+    guard case .file(let worktreeID, let tabPath) = opened,
+      argument("waiting", as: Bool.self) == true
+    else { return "opened" }
+    // Held, not blocked: the reply is suspended and the run loop goes on. The desk resumes it
+    // when the tab closes (`onFileTabClosed`); the caller's own timeout is the only clock.
+    EditWaiters.wait(worktreeID: worktreeID, path: tabPath, command: self)
+    return nil
+  }
+}
+
+/// The suspended `edit … waiting true` replies, keyed by the tab identity the desk closes with.
+/// The command objects are retained here — the one requirement `suspendExecution` documents —
+/// and a rename moves a key with its tab, so a waited-on file that is renamed still resumes.
+enum EditWaiters {
+  private static var pending: [(worktreeID: UUID, path: String, command: NSScriptCommand)] = []
+
+  static func wait(worktreeID: UUID, path: String, command: NSScriptCommand) {
+    command.suspendExecution()
+    pending.append((worktreeID, path, command))
+  }
+
+  static func fileClosed(worktreeID: UUID, path: String) {
+    let done = pending.filter { $0.worktreeID == worktreeID && $0.path == path }
+    guard !done.isEmpty else { return }
+    pending.removeAll { $0.worktreeID == worktreeID && $0.path == path }
+    for waiter in done { waiter.command.resumeExecution(withResult: "closed") }
+  }
+
+  static func fileRenamed(worktreeID: UUID, from: String, to: String) {
+    pending = pending.map {
+      $0.worktreeID == worktreeID && $0.path == from ? (worktreeID, to, $0.command) : $0
+    }
+  }
+}

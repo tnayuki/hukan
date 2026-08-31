@@ -335,6 +335,14 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.panel.onScopeChanged = { [weak self] in self?.updateFilesToolbarItem() }
     // The desk's + button opens a terminal in the selected worktree, same as ⌃⌘T.
     files.onNewTerminal = { [weak self] cwd in self?.newTerminal(at: cwd) }
+    // The `edit … waiting true` verbs behind the terminals' $EDITOR suspend until the tab they
+    // opened closes; the desk says when, and a rename moves the key with its tab.
+    files.desk.onFileTabClosed = { worktreeID, path in
+      EditWaiters.fileClosed(worktreeID: worktreeID, path: path)
+    }
+    files.desk.onFileTabRenamed = { worktreeID, from, to in
+      EditWaiters.fileRenamed(worktreeID: worktreeID, from: from, to: to)
+    }
     // A watched worktree's files moved: refresh in place, no full reload.
     workspace.onWorktreeFilesChanged = { [weak self] id, changed in
       self?.worktreeFilesChanged(id, changed: changed)
@@ -1665,6 +1673,119 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     guard panel.runModal() == .OK, let url = panel.url else { return }
     workspace.selectedWorktreeID = workspace.openRepository(url).id
     reload()
+  }
+
+  /// Where every outside hand-off lands — a Finder drop, the command line, a terminal's
+  /// `$EDITOR` file, the `edit` verb behind both. One resolution for all of them.
+  enum OpenedPath {
+    /// A directory: the worktree now showing it.
+    case worktree(UUID)
+    /// A file: the tab's identity — the worktree whose desk holds it, and the path the tab is
+    /// keyed by (relative inside the checkout, absolute for a file no worktree may claim).
+    case file(worktreeID: UUID, tabPath: String)
+  }
+
+  /// Open `raw` — a directory or a file — against the open worktrees, opening its repository
+  /// first when none contains it. nil only when the path does not exist, which is reported
+  /// rather than swallowed: a file handed to `open -a hukan` used to exit 0 with nothing on
+  /// screen, which read as "nothing happened" — the failure the browser's error page fixed.
+  ///
+  /// `terminalID` is who asked, when a terminal did: a file that belongs to no worktree — a
+  /// COMMIT_EDITMSG under `.git`, a `crontab -e` scratch file — opens on the desk of the
+  /// worktree the request came from, not on whichever one happened to be selected.
+  @discardableResult
+  func openPath(_ raw: URL, terminalID: UUID? = nil) -> OpenedPath? {
+    let url = raw.standardizedFileURL.resolvingSymlinksInPath()
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+      return nil
+    }
+    return isDirectory.boolValue ? openDirectory(url) : openFile(url, terminalID: terminalID)
+  }
+
+  private func openDirectory(_ url: URL) -> OpenedPath? {
+    // Inside an open worktree: select it, and hand the directory itself to the panel — the
+    // sub-worktree part of the path is what was pointed at, not just the checkout around it.
+    func showContaining() -> OpenedPath? {
+      guard let (worktree, relative) = workspace.worktreeContaining(url.path) else { return nil }
+      workspace.selectedWorktreeID = worktree.id
+      reload()
+      if !relative.isEmpty, !Workspace.isRepositoryInternal(relative) {
+        files.panel.reveal(path: relative)
+      }
+      return .worktree(worktree.id)
+    }
+    if let shown = showContaining() { return shown }
+    // Its repository, not the directory that was typed: `hukan src/foo` from a subdirectory
+    // must not register `foo` as a worktree of its own — which is exactly what it did. A
+    // directory git does not know opens as itself, the degenerate non-git repository the model
+    // already has.
+    workspace.openRepository(
+      Git.discoverRepository(containing: url).map { URL(fileURLWithPath: $0) } ?? url)
+    reload()
+    return showContaining()
+  }
+
+  private func openFile(_ url: URL, terminalID: UUID?) -> OpenedPath? {
+    // Inside a checkout: the containing worktree's desk, keyed by the relative path — buffer
+    // identity, the model's first rule. Under a worktree's `.git` instead, the file is the
+    // repository's, not the checkout's — a commit message, a rebase todo — and for a linked
+    // worktree those live under *main's* `.git/worktrees/<name>/`, so the checkout containing
+    // the bytes is not the task being committed. Those open as outside files, on the desk of
+    // whoever asked.
+    func attempt() -> OpenedPath? {
+      guard let (worktree, relative) = workspace.worktreeContaining(url.path) else { return nil }
+      if Workspace.isRepositoryInternal(relative) {
+        return openOutsideFile(url, terminalID: terminalID)
+      }
+      return show(file: relative, in: worktree)
+    }
+    if let opened = attempt() { return opened }
+    if let root = Git.discoverRepository(containing: url.deletingLastPathComponent()) {
+      // A file of a repository that is not open yet: open the repository, then resolve again —
+      // the second pass also lands gitdir files, the main checkout having arrived with it.
+      workspace.openRepository(URL(fileURLWithPath: root))
+      reload()
+      return attempt() ?? openOutsideFile(url, terminalID: terminalID)
+    }
+    // No git anywhere near it (`crontab -e`): the caller's desk, as an outside file — unless
+    // the window is empty, where there is no desk to put it on and the parent directory opens
+    // as the degenerate repository instead.
+    if workspace.worktrees.isEmpty {
+      workspace.openRepository(url.deletingLastPathComponent())
+      reload()
+      return attempt()
+    }
+    return openOutsideFile(url, terminalID: terminalID)
+  }
+
+  /// A file no worktree may claim, on the desk of the worktree that asked for it — the
+  /// requesting terminal's, or the selected one. Keyed by its absolute path: it has no
+  /// relative one, and no twin in another worktree for the `(Worktree, relative path)` rule
+  /// to guard against.
+  private func openOutsideFile(_ url: URL, terminalID: UUID?) -> OpenedPath? {
+    let home =
+      terminalID.flatMap { id in
+        workspace.terminals.first { $0.id == id }
+          .flatMap { workspace.worktree(id: $0.worktreeID) }
+      } ?? workspace.selectedWorktreeID.flatMap { workspace.worktree(id: $0) }
+      ?? workspace.worktrees.first
+    guard let home else { return nil }
+    return show(file: url.path, in: home)
+  }
+
+  /// Put the tab up. Never the preview slot: a path handed in from outside is an act, not a
+  /// browse, and a preview would be discarded by the panel's next single click. A tab already
+  /// showing the file re-reads it — the second `git commit`'s message must not arrive under
+  /// the first one's text.
+  private func show(file path: String, in worktree: Worktree) -> OpenedPath {
+    workspace.selectedWorktreeID = worktree.id
+    reload()
+    let existing = files.desk.openFilePaths.contains(path)
+    files.desk.openFile(worktree: worktree, path: path, preview: false)
+    if existing { files.desk.activeFileContent?.refreshCurrent() }
+    files.desk.activeFileContent?.focus()
+    return .file(worktreeID: worktree.id, tabPath: path)
   }
 
   /// File ▸ Save (Cmd+S). Writes the open source file back to disk; a no-op with nothing edited.

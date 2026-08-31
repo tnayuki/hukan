@@ -89,6 +89,19 @@ final class TerminalSession: LocalProcessTerminalViewDelegate {
     var environment = Terminal.getEnvironmentVariables(termName: "xterm-256color")
     environment.append("TERM_PROGRAM=Apple_Terminal")
     environment.append("TERM_SESSION_ID=\(sessionID)")
+    // The terminal's editor is hukan itself: the bundled helper by absolute path, so nothing
+    // is installed on PATH, quoted because the Dev bundle has a space in its name. `git commit`
+    // lands its message as a tab and returns when the tab closes (`edit … waiting`, matching
+    // the `$EDITOR` contract: done when the editor exits). Injected, not forced — a profile
+    // that exports its own EDITOR runs later and wins, the register-not-write rule again.
+    // HUKAN_TERMINAL_ID is how the helper knows it is inside hukan (a self-addressed Apple
+    // event, exempt from the automation prompt) and which worktree's desk an outside file
+    // lands on.
+    environment.append("HUKAN_TERMINAL_ID=\(sessionID)")
+    if let helper = Bundle.main.resourceURL?.appendingPathComponent("hukan").path {
+      environment.append("EDITOR='\(helper)' --wait")
+      environment.append("VISUAL='\(helper)' --wait")
+    }
     // The user's login shell — execName "-zsh" makes it a login shell so the usual profile runs.
     let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
     terminal.startProcess(

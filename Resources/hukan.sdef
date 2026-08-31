@@ -230,6 +230,21 @@
             <result type="text"/>
         </command>
 
+        <!-- The verb behind the CLI helper and the terminals' $EDITOR: one resolution for every
+             outside path (openPath). Waiting is what makes `git commit` work — the reply is held
+             until the tab closes, so the helper's exit is the editor closing. -->
+        <command name="edit" code="HuknEdit" description="Open a path: a directory selects the worktree containing it (opening its repository first if need be), a file opens as a tab on that worktree's desk">
+            <cocoa class="EditCommand"/>
+            <direct-parameter type="text" description="Absolute path to open"/>
+            <parameter name="waiting" code="EdWt" type="boolean" optional="yes" description="reply only once the file's tab has closed — what makes hukan usable as $EDITOR">
+                <cocoa key="waiting"/>
+            </parameter>
+            <parameter name="from terminal" code="EdTm" type="text" optional="yes" description="the hukan terminal asking (its TERM_SESSION_ID), so a file outside every worktree lands on that terminal's desk">
+                <cocoa key="fromTerminal"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
         <!-- The development-harness verbs and probes are hidden: they keep working (the dev loop
              in the charter depends on them) but stay out of the public dictionary. -->
 

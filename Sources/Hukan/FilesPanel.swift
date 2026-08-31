@@ -141,6 +141,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   /// A file just made, waiting for the row it will appear on so the naming can start. The make
   /// is announced and git is re-read off the main thread, so the row is a turn or two away.
   private var pendingEdit: String?
+  /// A row to select once the tree can name it — an outside hand-off (`hukan src/foo`) landing
+  /// before git has answered about a just-opened worktree. Applied and cleared by `refresh`.
+  private var pendingRevealPath: String?
   private let listScroll = NSScrollView()
   /// The panel's second half: what this worktree has committed. Its own controller, since the
   /// tree and the history answer different questions and only share a column.
@@ -466,6 +469,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     updateHistoryVisibility()
     if worktree !== self.worktree {
       self.worktree = worktree
+      pendingRevealPath = nil
       filterField.stringValue = ""
       isShowingResults = false
       results = []
@@ -631,6 +635,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       // refresh with nothing to rebuild is still the one that has to start naming it. Left out,
       // the row is made and never handed the field, which reads as New File having done nothing.
       startPendingNaming()
+      applyPendingReveal()
       return
     }
     builtFrom = inputs
@@ -674,6 +679,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     updateEmptyLabel()
     onScopeChanged?()
     startPendingNaming()
+    applyPendingReveal()
   }
 
   /// Put `roots` on screen. A narrowed tree is small and its point is to be read at a glance, so
@@ -760,6 +766,25 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   /// name a directory, which is a row like any other.
   private func select(path: String) {
     guard let node = node(at: path) else { return }
+    selectItem(node, announce: false)
+  }
+
+  /// Select `path`'s row, opening the directories above it — the outside hand-offs' landing
+  /// (a directory dropped on the app, `hukan src/foo`). Deferred when the tree cannot name it
+  /// yet: a worktree opened for the hand-off answers its file list a beat later.
+  func reveal(path: String) {
+    loadViewIfNeeded()
+    if let node = node(at: path) {
+      selectItem(node, announce: false)
+    } else {
+      pendingRevealPath = path
+    }
+  }
+
+  /// The reveal `reveal(path:)` had to hold until the tree could name the row.
+  private func applyPendingReveal() {
+    guard let pending = pendingRevealPath, let node = node(at: pending) else { return }
+    pendingRevealPath = nil
     selectItem(node, announce: false)
   }
 

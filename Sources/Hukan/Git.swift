@@ -1127,6 +1127,21 @@ enum Git {
       .deletingLastPathComponent().standardizedFileURL.path
   }
 
+  /// The same identity, found by walking upward the way the CLI does. `git_repository_open`
+  /// answers only at a root, which is all `repository(at:)`'s callers ever hand it — but an
+  /// outside path (`hukan src/foo`, a `$EDITOR` file) arrives pointing anywhere inside a
+  /// checkout, or inside a gitdir, and discovery is what `rev-parse` would have done there.
+  /// nil where no repository contains the path.
+  static func discoverRepository(containing url: URL) -> String? {
+    var buf = git_buf()
+    guard git_repository_discover(&buf, url.path, 0, nil) == 0 else { return nil }
+    defer { git_buf_dispose(&buf) }
+    guard let found = buf.ptr else { return nil }
+    // Discovery answers the gitdir — `…/.git/`, or a linked worktree's under it — which
+    // `repository(at:)` opens like any other handle and reads the common dir's parent from.
+    return repository(at: URL(fileURLWithPath: String(cString: found)))
+  }
+
   /// Every worktree of the repository — the main checkout first, then each linked one — matching
   /// `git worktree list`, which leads with the main worktree whichever one you opened. The main
   /// checkout is the common dir's parent; the linked ones come from git by name.

@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		AC000000000000000000000E /* hukan.sdef in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000000D /* hukan.sdef */; };
+		AC0000000000000000000021 /* hukan in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000020 /* hukan */; };
 		AC000000000000000000001B /* hukan.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001A /* hukan.icns */; };
 		AC000000000000000000001F /* hukan-dev.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001E /* hukan-dev.icns */; };
 		AC000000000000000000001D /* TreeSitter in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001C /* TreeSitter */; };
@@ -32,6 +33,7 @@
 /* Begin PBXFileReference section */
 		AC0000000000000000000003 /* Hukan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hukan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AC000000000000000000000D /* hukan.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = hukan.sdef; sourceTree = "<group>"; };
+		AC0000000000000000000020 /* hukan */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = hukan; sourceTree = "<group>"; };
 		AC000000000000000000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AC000000000000000000001A /* hukan.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = hukan.icns; sourceTree = "<group>"; };
 		AC000000000000000000001E /* hukan-dev.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = "hukan-dev.icns"; sourceTree = "<group>"; };
@@ -108,6 +110,7 @@
 			children = (
 				AC000000000000000000000F /* Info.plist */,
 				AC000000000000000000000D /* hukan.sdef */,
+				AC0000000000000000000020 /* hukan */,
 				AC000000000000000000001A /* hukan.icns */,
 				AC000000000000000000001E /* hukan-dev.icns */,
 				AC000000000000000000001C /* TreeSitter */,
@@ -217,6 +220,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AC000000000000000000000E /* hukan.sdef in Resources */,
+				AC0000000000000000000021 /* hukan in Resources */,
 				AC000000000000000000001B /* hukan.icns in Resources */,
 				AC000000000000000000001F /* hukan-dev.icns in Resources */,
 				AC000000000000000000001D /* TreeSitter in Resources */,

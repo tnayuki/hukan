@@ -217,6 +217,24 @@ Workspace (one window)
   these rows *are* files, and being good in the Finder and in any editor is a side effect worth
   having. Copy only, in and out of the window: an index must never be able to move the file it
   points at.
+- **An outside path opens inside the worktree that contains it.** One resolution for every
+  hand-off — a Finder drop, the CLI helper, a terminal's `$EDITOR` file, the `edit` verb behind
+  both: the deepest open worktree containing the path claims it, its repository is opened first
+  when none does, and a directory git does not know opens as itself, the degenerate case the
+  model already has. What is under `.git` is the repository, not the checkout — a COMMIT_EDITMSG
+  must not become a phantom row of the checkout it configures, and a linked worktree's lives
+  under *main's* gitdir — so those open as outside files, keyed by absolute path (no twin exists
+  for the `(Worktree, relative path)` rule to guard against), on the desk of the worktree that
+  *asked*: the requesting terminal's, which is why the request carries who asked at all. A path
+  that does not exist is refused out loud — a file handed to `open` used to be swallowed with a
+  clean exit, the same "Return did nothing" the browser's error page fixed.
+- **The terminal's `$EDITOR` is hukan itself, and closing the tab is the editor exiting.** The
+  bundled helper by absolute path — nothing installed on PATH, and the Dev build's terminals
+  reach the Dev app — riding one public verb, `edit`, whose `waiting` holds the Apple event's
+  reply until the tab closes. Injected as a default, not forced: a profile exporting its own
+  editor runs later and wins. Inside hukan's terminals the event is self-addressed, so the
+  automation prompt never appears; outside them a plain open goes through `open(1)`, and only
+  `--wait` costs the one-time prompt.
 - **What has changed includes what git has never seen.** The working-tree diff carries untracked
   files, counted as added — `git status`'s reading of the question rather than
   `git diff HEAD`'s — because a file nobody has run `git add` on is the whole of what a brand-new

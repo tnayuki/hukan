@@ -215,6 +215,11 @@ final class WorktreeDeskViewController: NSViewController {
   /// A file tab wrote itself back to disk, naming its worktree and the path in it — the column
   /// re-asks git about that file so the change shows in the diffstat.
   var onFileSaved: ((UUID, String) -> Void)?
+  /// A file tab left the desk — closed, or its file deleted under it. What the `edit … waiting`
+  /// verb listens for: the path is the tab's identity, so a waiter keyed on it can resume.
+  var onFileTabClosed: ((UUID, String) -> Void)?
+  /// A file tab's identity moved with a rename, so a waiter keyed on the old path follows it.
+  var onFileTabRenamed: ((_ worktreeID: UUID, _ from: String, _ to: String) -> Void)?
   /// Ask the window for the whole width, or to put the other columns back. The desk is a column
   /// and the columns are the window's, so maximizing is asked for here, never done here.
   var onSetMaximized: ((Bool) -> Void)?
@@ -866,9 +871,11 @@ final class WorktreeDeskViewController: NSViewController {
       else { return true }
       // A pending edit gets Save / Don't Save / Cancel before the tab goes.
       guard tabs[index].content.confirmLeavingCurrentFile() else { return false }
+      let closed = tabs[index].path
       tabs[index].content.removeFromParent()
       tabs.remove(at: index)
       fileTabsByWorktree[worktreeID] = tabs
+      onFileTabClosed?(worktreeID, closed)
       return true
     case .commit(let id):
       guard let worktreeID, var tabs = commitTabsByWorktree[worktreeID],
@@ -911,8 +918,10 @@ final class WorktreeDeskViewController: NSViewController {
     var moved = false
     for tab in fileTabsByWorktree[worktreeID] ?? [] {
       guard let path = Self.repath(tab.path, from: from, to: to) else { continue }
+      let previous = tab.path
       tab.path = path
       tab.content.renamed(to: path)
+      onFileTabRenamed?(worktreeID, previous, path)
       moved = true
     }
     guard moved else { return }
@@ -931,6 +940,7 @@ final class WorktreeDeskViewController: NSViewController {
     let gone = Set(doomed.map(\.id))
     tabs.removeAll { gone.contains($0.id) }
     fileTabsByWorktree[worktreeID] = tabs
+    for tab in doomed { onFileTabClosed?(worktreeID, tab.path) }
     reconcileSurface(previous: previous)
     rebuildTabBar()
     applySurface()

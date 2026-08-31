@@ -1,0 +1,66 @@
+#!/bin/zsh
+# hukan — open paths in the hukan window; -w/--wait returns when the tab closes.
+#
+# Lives in the app bundle (Contents/Resources), so the terminals' $EDITOR can name it by
+# absolute path with nothing installed on PATH — and so the Dev build's terminals reach the
+# Dev app: the bundle id is read from the bundle this copy sits in, never hard-coded.
+#
+# Inside a hukan terminal (HUKAN_TERMINAL_ID is set) everything goes through the `edit`
+# Apple-event verb: the sender's responsible process is hukan itself, so the event is
+# self-addressed and the automation prompt never appears. Outside one, a plain open goes
+# through open(1) — Launch Services, which TCC does not gate — and only --wait falls back to
+# the Apple event, which is where an external terminal may see the one-time automation prompt.
+#
+# The event is spelled in raw codes («event HuknEdit»), not terminology: the target is
+# `application id` held in a variable, and AppleScript resolves terminology only against a
+# literal application — `edit`/`waiting` would be a compile error here. Raw codes also keep
+# the path in argv, never interpolated into script source.
+set -eu
+
+wait_flag=false
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+    -w|--wait) wait_flag=true ;;
+    -*) print -u2 "hukan: unknown option: $arg"; exit 64 ;;
+    *) paths+=("$arg") ;;
+  esac
+done
+
+script_path="${0:A}"
+bundle="${script_path%/Contents/Resources/*}"
+bundle_id="$(defaults read "$bundle/Contents/Info" CFBundleIdentifier 2>/dev/null || print dev.tnayuki.Hukan)"
+
+if (( ${#paths} == 0 )); then
+  exec open -b "$bundle_id"
+fi
+
+abs=()
+for p in "${paths[@]}"; do
+  if [[ ! -e "$p" ]]; then
+    print -u2 "hukan: no such path: $p"
+    exit 1
+  fi
+  abs+=("${p:A}")
+done
+
+if [[ -z "${HUKAN_TERMINAL_ID:-}" && "$wait_flag" == false ]]; then
+  exec open -b "$bundle_id" "${abs[@]}"
+fi
+
+for p in "${abs[@]}"; do
+  osascript - "$bundle_id" "$p" "$wait_flag" "${HUKAN_TERMINAL_ID:-}" > /dev/null <<'APPLESCRIPT'
+on run argv
+  set bundleId to item 1 of argv
+  set thePath to item 2 of argv
+  set shouldWait to (item 3 of argv is "true")
+  set termId to item 4 of argv
+  -- Apple events reply within two minutes by default; a commit message is written on no clock.
+  with timeout of 86400 seconds
+    tell application id bundleId
+      «event HuknEdit» thePath given «class EdWt»:shouldWait, «class EdTm»:termId
+    end tell
+  end timeout
+end run
+APPLESCRIPT
+done

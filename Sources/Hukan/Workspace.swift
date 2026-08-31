@@ -569,6 +569,38 @@ final class Workspace {
     return worktree
   }
 
+  /// The deepest open worktree whose checkout contains `path`, with the path read relative to
+  /// it — the one resolution every outside hand-off shares (a Finder drop, the CLI helper, a
+  /// `$EDITOR` file). Deepest, because a linked worktree may sit inside another checkout's
+  /// subtree and the nearer root is the one whose desk the path belongs to. `path` must arrive
+  /// standardized and symlink-resolved; the roots are resolved the same way here, since /tmp is
+  /// a symlink and the engine's realpath answers taught `returnSession` the same lesson.
+  ///
+  /// Containment is a string question, not a git one: whether the path is *interesting* to git
+  /// is the caller's next question (`isRepositoryInternal`), and asking git per candidate would
+  /// put a repository open on every keystroke of every caller.
+  func worktreeContaining(_ path: String) -> (worktree: Worktree, relativePath: String)? {
+    var best: (worktree: Worktree, root: String)?
+    for worktree in worktrees {
+      let root = worktree.url.standardizedFileURL.resolvingSymlinksInPath().path
+      guard path == root || path.hasPrefix(root + "/") else { continue }
+      if best == nil || root.count > best!.root.count { best = (worktree, root) }
+    }
+    guard let best else { return nil }
+    let relative = path == best.root ? "" : String(path.dropFirst(best.root.count + 1))
+    return (best.worktree, relative)
+  }
+
+  /// Whether a path relative to a worktree names the repository rather than the checkout's
+  /// contents. Everything under `.git` is the repository — the line the files panel and the
+  /// watchers already draw — so a COMMIT_EDITMSG there must not become a phantom row of the
+  /// checkout it configures: it opens as an outside file instead (see
+  /// `WorkspaceWindowController.openPath`). For a linked worktree the same files live under the
+  /// *main* checkout's `.git/worktrees/<name>/`, which this rule reaches through main's root.
+  static func isRepositoryInternal(_ relativePath: String) -> Bool {
+    relativePath == ".git" || relativePath.hasPrefix(".git/")
+  }
+
   // MARK: - Restoration
 
   /// Only "which worktrees are open" and a little UI state are ours to keep. Worktrees belong

@@ -38,17 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       WorkspaceWindowController(workspace: Workspace()).showWindow(nil)
     }
 
-    // `hukan ~/src/foo ~/src/bar` opens with those worktrees.
+    // `hukan ~/src/foo ~/src/bar` opens with those paths — the same resolution as a Finder
+    // drop or the `edit` verb: a directory lands in the worktree containing it, a file opens
+    // as a tab (see `openPath`).
     let paths = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
     if !paths.isEmpty, let controller = WorkspaceWindowController.all.first {
       for path in paths {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-          isDirectory.boolValue
-        else { continue }
-        controller.workspace.openRepository(URL(fileURLWithPath: path))
+        controller.openPath(URL(fileURLWithPath: path))
       }
-      controller.reload()
     }
 
     // Restoration is finished by now, so the restored windows finally know how wide their
@@ -117,9 +114,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return true
   }
 
-  /// A directory arriving through `open` — the Standard Suite verb (`open POSIX file "…"`),
-  /// a Finder drop, or Launch Services — opens as a repository in the front workspace window,
-  /// the same move as File ▸ Open Repository.
+  /// A path arriving through `open` — the Standard Suite verb (`open POSIX file "…"`), a
+  /// Finder drop, or Launch Services — lands through `openPath`: a directory in the worktree
+  /// containing it (its repository opening first when none does), a file as a tab.
   func application(_ application: NSApplication, open urls: [URL]) {
     let controller: WorkspaceWindowController
     if let existing = (NSApp.keyWindow?.windowController as? WorkspaceWindowController)
@@ -130,17 +127,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       controller = WorkspaceWindowController(workspace: Workspace())
       controller.showWindow(nil)
     }
-    var opened: Worktree?
+    // Files included — one dropped on the Dock used to be swallowed with a clean exit, which
+    // read as "nothing happened". `openPath` selects and reloads as it goes; a path that does
+    // not exist is the one thing it declines.
     for url in urls {
-      var isDirectory: ObjCBool = false
-      guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-        isDirectory.boolValue
-      else { continue }
-      opened = controller.workspace.openRepository(url)
+      controller.openPath(url)
     }
-    guard let opened else { return }
-    controller.workspace.selectedWorktreeID = opened.id
-    controller.reload()
   }
 
   private static func makeMainMenu() -> NSMenu {
