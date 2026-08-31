@@ -49,6 +49,7 @@ jobs:
             -skip-testing:HukanAppTests/CommitSnapshotTests \
             -skip-testing:HukanAppTests/HistorySnapshotTests \
             -skip-testing:HukanAppTests/CompletionSnapshotTests \
+            -skip-testing:HukanAppTests/BrowserSnapshotTests \
             -skip-testing:HukanAppTests/EmphasisTests/testEmphasisIsDrawnOnTheWordAndOnlyTheWord \
             -skip-testing:HukanAppTests/EmphasisTests/testItalicSlantsTheWordWithoutMovingIt \
             -skip-testing:HukanAppTests/TranscriptReaderTests/testTheBottomStaysTheBottomAcrossAMaximize \

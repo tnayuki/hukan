@@ -828,11 +828,11 @@ Workspace (one window)
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
-- **Browser** — still open on the tab itself: a favicon in place of the one globe, and a snapshot
-  of the chrome, which is the one pane not pinned. Measured with a WKWebView harness (2026-08): SSO redirect chains and
-  Kolide device trust **work**; passkeys and iCloud Keychain autofill **do not** (browser-vendor
-  entitlements) — which is what the error page's Open in Safari is for; sharing Safari's login
-  state is officially impossible (plan B: inject `Cookies.binarycookies`, needs Full Disk Access).
+- **Browser** — what is left open is the login state: sharing Safari's is officially impossible
+  (plan B: inject `Cookies.binarycookies`, needs Full Disk Access). Measured with a WKWebView
+  harness (2026-08): SSO redirect chains and Kolide device trust **work**; passkeys and iCloud
+  Keychain autofill **do not** (browser-vendor entitlements) — which is what the error page's
+  Open in Safari is for.
 
 ---
 
@@ -1064,7 +1064,10 @@ because that is where a summary truncates, and the commit tab by `CommitSnapshot
 standing behind them. Both draw through `displayIgnoringOpacity` into their own context rather
 than `cacheDisplay`, which fills an opaque background and drops layer-backed subviews (it returned
 the History rows under a blank strip where the header's title should have been).
-The command list is pinned by `CompletionSnapshotTests` (`completions.png`, `…PREVIEW=completions`).
+The command list is pinned by `CompletionSnapshotTests` (`completions.png`, `…PREVIEW=completions`),
+and the web tab's chrome by `BrowserSnapshotTests` (`browser.png`, `…PREVIEW=browser`) — the bar
+and nothing under it, in the three states it is ever in, since a rendered page is WebKit's work
+and pinning it would be pinning a browser engine rather than hukan.
 
 **CI runs everything but these.** The runner draws on a 1× 1024×768 virtual display where this
 machine is 2×, and its twelve modes are all non-HiDPI — a resolution can be raised, a backing
