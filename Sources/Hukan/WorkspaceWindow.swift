@@ -78,6 +78,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   private let running = RunningColumnViewController()
   private let files = FileColumns()
 
+  /// The stack behind everything in the window that types into the shared field editor — the two
+  /// filters, the address bar, a name typed on a row. One between them, which is what the window
+  /// vended for the whole window before the places that own a stack started answering for
+  /// themselves (see `windowWillReturnUndoManager`).
+  private let fieldEditorUndoManager = UndoManager()
+
   /// The files panel, for the scripting surface — the panel is rows, which the object model does
   /// not address.
   var filesPanelForScripting: FilesPanelViewController { files.panel }
@@ -1209,6 +1215,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       fileTabs: files.desk.restorableFileTabs, commitTabs: files.desk.restorableCommitTabs,
       tabOrder: files.desk.restorableTabOrder,
       selectedTabIndex: files.desk.restorableSelectedTabIndex)
+  }
+
+  /// ⌘Z is aimed by the focus, the way ⌘F is — and this is the whole of what aims it. A menu
+  /// item with a nil target resolves `undo:` against the key window's responder chain, where
+  /// nothing between a text view and the window answers, so the window is the target and the
+  /// manager it vends here is the stack the key reaches. Its own is one stack for the whole
+  /// window: a prompt typed after a file edit put the composer on top of it, and ⌘Z in the
+  /// editor emptied the composer while the source sat unchanged — the same collision the other
+  /// way round let ⌘Z in the composer revert a file nobody was looking at. So the focused view
+  /// answers for itself when it owns a stack. Everything else shares the one below, which is
+  /// what the window would have handed out anyway: the field editors behind the rail's filter,
+  /// the panel's, the address bar and a name being typed on a row.
+  func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+    (window.firstResponder as? UndoStackOwner)?.ownUndoManager ?? fieldEditorUndoManager
   }
 
   /// Closing the window closes every tab in it, so it owes each unsaved edit the prompt a closing

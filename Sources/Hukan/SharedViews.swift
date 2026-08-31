@@ -17,6 +17,19 @@ extension NSView {
   }
 }
 
+/// A text view that keeps an undo stack of its own, rather than sharing the window's.
+///
+/// One window holds several places to type, and `NSTextView` registers every edit with whatever
+/// undo manager the responder chain hands it — which is the window's one manager, since nothing
+/// between a text view and the window has one. So the stacks piled into each other: ⌘Z undid
+/// whatever was typed last *anywhere in the window*, and a prompt typed between two edits of a
+/// file was enough to make ⌘Z in the editor empty the composer while the source sat unchanged.
+/// The views that own a stack say so here, and the window hands back the focused one's (see
+/// `windowWillReturnUndoManager`), so registration and ⌘Z agree on which stack is meant.
+protocol UndoStackOwner: AnyObject {
+  var ownUndoManager: UndoManager { get }
+}
+
 /// The header strip at the top of a column, with a hairline separator beneath it.
 /// The rail's and the panel's field: one field, two operations told apart by the gesture that
 /// runs them. Its placeholder names the one typing runs — filter — and `onFocusChange` lets the

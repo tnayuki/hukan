@@ -2,7 +2,13 @@ import AppKit
 
 /// The composer's text view. A bare Return sends; Shift+Return (or Option) puts a newline in the
 /// message. Kept off the single-line field editor so instructions can span several lines.
-final class ComposerTextView: NSTextView {
+final class ComposerTextView: NSTextView, UndoStackOwner {
+  /// The message being typed has an undo stack of its own — the window's was shared with every
+  /// file open on the desk, so ⌘Z here could revert a source file nobody was looking at (see
+  /// `UndoStackOwner`).
+  let ownUndoManager = UndoManager()
+  override var undoManager: UndoManager? { ownUndoManager }
+
   var onSend: (() -> Void)?
   var onChange: (() -> Void)?
   /// Files/images dropped or pasted in. The wrapper turns each path into an attachment chip.

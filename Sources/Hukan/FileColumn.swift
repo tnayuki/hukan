@@ -5,8 +5,8 @@ import AppKit
 /// a layout delegate that lays every paragraph out as a `BlockBackgroundFragment`, a click
 /// delegate that owns the `NSTextViewDelegate` slot to fold tool calls, and an `NSTextView`
 /// subclass that reads every double-click as a possible fold re-toggle. None of that means
-/// anything to a source file — only `WordSelectingTextView` underneath it does, which is why
-/// that is what this instantiates — and the fragment widens every line's rendering surface to the
+/// anything to a source file — only `WordSelectingTextView` underneath it does, which is what
+/// `EditorTextView` is built on — and the fragment widens every line's rendering surface to the
 /// column's full width — which here, where nothing wraps, is the width of the longest line in
 /// the file. Ten lines of duplicated AppKit boilerplate is the cheaper side of the trade.
 ///
@@ -14,7 +14,7 @@ import AppKit
 /// split that line across rows. Long lines scroll sideways, and wrapped reading stays the
 /// transcript's, for prose — which is what `EditorScrollView` is for.
 func makeEditorTextView() -> (NSScrollView, NSTextView) {
-  let textView = WordSelectingTextView(usingTextLayoutManager: true)
+  let textView = EditorTextView(usingTextLayoutManager: true)
   let scrollView = EditorScrollView()
   scrollView.documentView = textView
   textView.minSize = .zero
@@ -49,6 +49,18 @@ func makeEditorTextView() -> (NSScrollView, NSTextView) {
 }
 
 private nonisolated(unsafe) var emphasisTableKey = 0
+
+/// The source pane's text view: `WordSelectingTextView`'s reading of a double-click, and an undo
+/// stack belonging to the file rather than to the window (see `UndoStackOwner`).
+///
+/// The stack is answered here rather than only through the window, so an edit registers against
+/// the file whether or not the pane holds the focus at the time — a drop, a scripted `edit`, or a
+/// rename arriving while the panel is focused all reach the buffer, and each of them belongs to
+/// the file's own ⌘Z.
+final class EditorTextView: WordSelectingTextView, UndoStackOwner {
+  let ownUndoManager = UndoManager()
+  override var undoManager: UndoManager? { ownUndoManager }
+}
 
 // MARK: - Right: files (the editable source)
 
