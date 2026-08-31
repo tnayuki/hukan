@@ -329,6 +329,10 @@ enum Git {
     /// The walk stopped at `limit` — there is more history below, which is what the section pages
     /// in as it is scrolled.
     var truncated = false
+    /// Every tag in the repository, by the commit it points at — annotated ones peeled, so both
+    /// kinds answer as the commit a reader would look for. Repository-wide rather than page-wide,
+    /// which is what makes paging free: the map already covers whatever the next page reaches.
+    var tags: [String: [String]] = [:]
     /// A rebase, merge or cherry-pick this worktree is in the middle of, if any — see `Operation`.
     var operation: Operation?
   }
@@ -368,7 +372,16 @@ enum Git {
   /// First-parent only: a task branch is nearly always linear, and a lane graph on top of it
   /// would be decoration rather than information — what the reader needs from the shape is where
   /// the task began, and that is one rule in the list rather than a second column of ancestry.
-  static func history(at url: URL, limit: Int = historyPage) -> History {
+  /// Tags are read only when `tags` is nil, and the caller hands back what it already holds
+  /// otherwise. A ref lives inside git's own directory, so a batch narrowed to paths in the
+  /// working tree cannot have moved one — the same reasoning that already keeps the index from
+  /// being re-read on a narrowed refresh. It matters because the scan is the one part of this
+  /// read that grows with the *repository* rather than the page: measured against a checkout with
+  /// 1462 tags and 4871 refs, 8.4ms on top of the 0.06ms the base lookups cost, and a refresh
+  /// runs per FSEvents batch for every open worktree.
+  static func history(at url: URL, limit: Int = historyPage, tags: [String: [String]]? = nil)
+    -> History
+  {
     guard let repo = openRepository(at: url) else { return History() }
     defer { git_repository_free(repo) }
 
@@ -400,6 +413,7 @@ enum Git {
     }
 
     result.operation = operation(in: repo)
+    result.tags = tags ?? tagsByCommit(repo)
 
     // The upstream is only ever consulted for the pushed marker — never as the base. A pushed
     // task still has a history worth reading; that is when it is being reviewed.
@@ -504,6 +518,56 @@ enum Git {
       return (short, target.pointee)
     }
     return nil
+  }
+
+  /// Every tag in the repository, by the hex oid of the commit it names.
+  ///
+  /// Glob-restricted iteration, which is not a detail: the same answer through `git_tag_foreach`
+  /// costs 28ms on a checkout with 1462 tags, and through `git_reference_foreach` 25ms, against
+  /// 8.4ms here — the first two walk every ref in the repository and look each one up again,
+  /// where this walks the packed table's `refs/tags/` run once. An annotated tag is peeled to its
+  /// commit, so both kinds of tag answer as the row a reader would find them on; a tag on a tree
+  /// or a blob names no commit and is left out.
+  private static func tagsByCommit(_ repo: OpaquePointer) -> [String: [String]] {
+    var iterator: OpaquePointer?
+    guard git_reference_iterator_glob_new(&iterator, repo, "refs/tags/*") == 0, let iterator else {
+      return [:]
+    }
+    defer { git_reference_iterator_free(iterator) }
+
+    var found: [String: [String]] = [:]
+    var reference: OpaquePointer?
+    while git_reference_next(&reference, iterator) == 0, let tag = reference {
+      if let name = git_reference_shorthand(tag).map({ String(cString: $0) }),
+        let commit = tagTarget(repo, of: tag)
+      {
+        found[commit, default: []].append(name)
+      }
+      git_reference_free(tag)
+    }
+    // Sorted so two tags on one commit read the same way twice — the row is drawn from this.
+    // Numerically, which is the Finder's ordering rather than the dictionary's: plain sorting
+    // puts `v0.10.0` above `v0.9.0`, and a release list that reads out of order is worse than
+    // one that is not sorted at all.
+    return found.mapValues { $0.sorted { $0.compare($1, options: .numeric) == .orderedAscending } }
+  }
+
+  /// The commit a tag ref names, peeling an annotated tag's object to get there.
+  private static func tagTarget(_ repo: OpaquePointer, of tag: OpaquePointer) -> String? {
+    guard var oid = git_reference_target(tag)?.pointee else { return nil }
+    var object: OpaquePointer?
+    guard git_object_lookup(&object, repo, &oid, GIT_OBJECT_ANY) == 0, let object else {
+      return nil
+    }
+    defer { git_object_free(object) }
+    if git_object_type(object) == GIT_OBJECT_COMMIT {
+      return String(cString: git_oid_tostr_s(&oid))
+    }
+    var peeled: OpaquePointer?
+    guard git_object_peel(&peeled, object, GIT_OBJECT_COMMIT) == 0, let peeled else { return nil }
+    defer { git_object_free(peeled) }
+    guard var target = git_object_id(peeled)?.pointee else { return nil }
+    return String(cString: git_oid_tostr_s(&target))
   }
 
   /// The tip of HEAD's upstream branch, when it has one.

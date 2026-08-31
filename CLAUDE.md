@@ -351,7 +351,20 @@ Workspace (one window)
   the last row would be claiming to know where a branch began when the walk never got there. No
   lane graph still: a task branch is nearly always linear, and the one structural fact worth
   having is that rule. The upstream is consulted only for the unpushed dot, never as the base: a
-  pushed task is exactly the one being reviewed, so pushing must not empty the list. **A commit
+  pushed task is exactly the one being reviewed, so pushing must not empty the list. **A tag is a
+  rule too, above the commit it names** — the same idiom and the same reading as the fork point,
+  which is that the ref below the line is what everything above it is not in yet. It is the one
+  structural fact the *main* checkout has, where the fork rule never draws (a branch in sync with
+  its base has nothing of its own to divide), and it says what the release commit's summary does
+  not: that the tag exists at all. It carries a tag glyph, or two rules in a row would be two
+  facts drawn identically. What it cannot say is whether the tag was pushed: a tag lives in
+  `refs/tags` whichever side it came from, so unlike a commit's dot there is no local answer, and
+  libgit2 is built here without the network to ask for one — whether a release actually went out
+  stays the GitHub question the TODO covers. Several tags on one commit are one rule naming the
+  first and counting the rest, with the whole list in the tooltip: running the names out to an
+  ellipsis instead squeezed the rules and then the glyph out of the row, leaving a line of grey
+  text that read as no kind of row at all. Ordered numerically rather than lexically, the
+  Finder's rule, since the dictionary's puts `v0.10.0` above `v0.9.0`. **A commit
   opens as a read-only tab**, which is where the diff hukan removed from the file pane is allowed
   back: that pane's Diff/Source switch failed because a coloured diff cannot be edited and the
   files carrying one are the ones you want to correct — but a commit is finished, so the coloured
@@ -435,7 +448,16 @@ Workspace (one window)
   full list), against the 1.3ms of everything else a refresh does — and a refresh runs per
   FSEvents batch for every open worktree, which is the shape that buried the machine when these
   reads were subprocesses; one walk of `upstream..HEAD` answers the same question exactly, in
-  1.2ms. And a commit tab built its text whatever the commit's size: a 5000-file vendor drop took
+  1.2ms. The tags are the same shape of question and were bounded the same way: the scan grows
+  with the *repository*, not the page, so it runs only on a wholesale refresh — a ref lives in
+  git's own directory, so a batch narrowed to paths in the working tree cannot have moved one,
+  which is the reasoning that already keeps the index out of a narrowed read — and it is read
+  through a glob-restricted ref iterator, which is not a detail: on a checkout with 1462 tags and
+  4871 refs the same answer costs 28ms through `git_tag_foreach` and 25ms through
+  `git_reference_foreach`, both of which walk every ref and look each one up again, against 8.4ms
+  for the one that walks the packed table's `refs/tags/` run once. The map is repository-wide
+  rather than page-wide, which is what makes paging free: a page reaching further back is already
+  answered. And a commit tab built its text whatever the commit's size: a 5000-file vendor drop took
   363ms to read and 812ms to lay out, the second of those on the main thread. Capping the *commit*
   was the first answer and it was not an honest one — the cap counted changed lines, while what
   gets laid out is the patch, which carries every hunk's context too (measured at 4.5× the

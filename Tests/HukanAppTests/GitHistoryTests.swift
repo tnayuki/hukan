@@ -287,6 +287,48 @@ final class GitHistoryTests: XCTestCase {
     XCTAssertEqual(history.commits.first?.summary, "Step 5")
   }
 
+  /// Both kinds of tag name the commit a reader would look for: a lightweight tag points at it
+  /// already, an annotated one points at a tag object that has to be peeled first. git is the
+  /// oracle for which commit that is, the same as everywhere else here.
+  func testATagNamesItsCommitWhicheverKindItIs() throws {
+    makeRepository()
+    try commit("Base")
+    try commit("Shipped")
+    git(["tag", "v1.0"])
+    git(["tag", "-a", "-m", "release", "v1.0-annotated"])
+    try commit("After the release")
+
+    let history = Git.history(at: root)
+    XCTAssertEqual(history.tags[git(["rev-parse", "HEAD~1"])], ["v1.0", "v1.0-annotated"])
+    XCTAssertNil(history.tags[git(["rev-parse", "HEAD"])], "nothing names the newest commit")
+  }
+
+  /// Numerically, which is the Finder's ordering: the dictionary's puts `v0.10.0` above
+  /// `v0.9.0`, and a release list that reads out of order is worse than an unsorted one.
+  func testTagsOnOneCommitAreOrderedNumerically() throws {
+    makeRepository()
+    try commit("Base")
+    for name in ["v0.9.0", "v0.10.0", "v0.2.0"] { git(["tag", name]) }
+
+    let history = Git.history(at: root)
+    XCTAssertEqual(history.tags[git(["rev-parse", "HEAD"])], ["v0.2.0", "v0.9.0", "v0.10.0"])
+  }
+
+  /// The scan is the one part of this read that grows with the repository rather than with the
+  /// page, so a caller that already holds the map says so and it is not run again — which is what
+  /// keeps a narrowed refresh, the one an agent's every write raises, from paying for it.
+  func testTagsTheCallerAlreadyHoldsAreNotReRead() throws {
+    makeRepository()
+    try commit("Base")
+    git(["tag", "v1.0"])
+
+    XCTAssertFalse(Git.history(at: root).tags.isEmpty, "asked for, they are read")
+    XCTAssertEqual(
+      Git.history(at: root, tags: [:]).tags, [:], "handed back, the refs are left alone")
+    let held = ["cafe": ["from the caller"]]
+    XCTAssertEqual(Git.history(at: root, tags: held).tags, held)
+  }
+
   /// A repository with no base branch to measure against still reads, running back to the root.
   func testARepositoryWithNoBaseWalksToTheRoot() throws {
     makeRepository()

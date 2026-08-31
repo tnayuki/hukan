@@ -72,6 +72,52 @@ final class HistoryPanelTests: XCTestCase {
     XCTAssertEqual(summary, "Step 2", "the third commit, one row further down for the rule")
   }
 
+  /// A tag is drawn as a rule too, directly above the commit it names — where the fork rule
+  /// already sits relative to the base tip, so both read as "the ref below this is what
+  /// everything above is not in yet". It is a caption like the other one, so the arrows step
+  /// over it and the commits below keep their own rows.
+  @MainActor
+  func testATagRuleNamesTheCommitBelowIt() throws {
+    let panel = HistoryPanelViewController()
+    var list = history(3, forkIndex: 0)
+    list.tags = [list.commits[1].oid: ["v1.0"]]
+    panel.show(history: list)
+    let table = try XCTUnwrap(findTable(in: panel.view))
+
+    XCTAssertEqual(table.numberOfRows, 4, "three commits and the tag rule")
+    let rule = try XCTUnwrap(
+      panel.tableView(table, viewFor: table.tableColumns.first, row: 1) as? NSStackView)
+    XCTAssertEqual(rule.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }, ["v1.0"])
+    XCTAssertFalse(panel.tableView(table, shouldSelectRow: 1))
+    XCTAssertTrue(
+      rule.arrangedSubviews.contains { $0 is NSImageView },
+      "and it carries the glyph that tells it from the fork point")
+
+    let below = try XCTUnwrap(
+      panel.tableView(table, viewFor: table.tableColumns.first, row: 2) as? NSStackView)
+    let summary = below.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }.last
+    XCTAssertEqual(summary, "Step 2", "the tagged commit, one row down for its own rule")
+  }
+
+  /// Several tags on one commit are one rule, and past two the row counts the rest rather than
+  /// running the names out to an ellipsis: at the panel's width that took the rules and the glyph
+  /// with it, leaving a line of grey text reading as no kind of row at all. The whole list is
+  /// still in the tooltip.
+  @MainActor
+  func testSeveralTagsOnOneCommitAreOneRuleAndACount() throws {
+    let panel = HistoryPanelViewController()
+    var list = history(2, forkIndex: 0)
+    list.tags = [list.commits[0].oid: ["v1.0", "v1.0-rc.1", "release-1"]]
+    panel.show(history: list)
+    let table = try XCTUnwrap(findTable(in: panel.view))
+
+    let rule = try XCTUnwrap(
+      panel.tableView(table, viewFor: table.tableColumns.first, row: 0) as? NSStackView)
+    XCTAssertEqual(
+      rule.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }, ["v1.0 +2"])
+    XCTAssertEqual(rule.toolTip, "Tagged v1.0, v1.0-rc.1, release-1")
+  }
+
   /// A checkout with nothing of its own — in sync with its remote — has nothing to divide, so it
   /// is all log and no rule. This is the case that used to empty the section altogether.
   @MainActor

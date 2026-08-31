@@ -5,7 +5,8 @@ import XCTest
 /// Pins the History section's look the way `EditorSnapshotTests` pins the editor's — drawn at the
 /// panel's real width, with the states that have to stay legible there: an unpushed row beside a
 /// pushed one, a summary long enough to truncate, the fork-point rule with log on both sides of
-/// it, and the banner for a rebase this worktree is stopped in the middle of. Same recording
+/// it, a tag rule and one standing for several tags at once, and the banner for a rebase this
+/// worktree is stopped in the middle of. Same recording
 /// flow:
 /// `TEST_RUNNER_HUKAN_RECORD=1` re-records, `TEST_RUNNER_HUKAN_PREVIEW=history` writes
 /// /tmp/hukan-preview-history.png and leaves the reference alone.
@@ -36,13 +37,21 @@ final class HistorySnapshotTests: XCTestCase {
     // Two of its own, then the rule, then the history it was cut from — the section's two halves
     // on one screen.
     base: "origin/main", forkIndex: 2,
+    // The section's second rule, in both the states it has: one tag naming the commit under it,
+    // which has to read as a different fact from the fork point right above it, and a commit
+    // several tags name, where the row counts the rest rather than truncating the names — the
+    // case that used to squeeze the rules and the glyph out of the row altogether.
+    tags: [
+      "6f15f5100000000000000000000000000000000c": ["v0.3.0"],
+      "9a20b3d00000000000000000000000000000000d": ["v0.2.2", "v0.2.2-rc.1", "release-1"],
+    ],
     // And the banner, pinned over the rows: a worktree stopped mid-rebase is the state the
     // section has to explain rather than merely survive.
     operation: Git.Operation(kind: .rebase, branch: "task", step: 1, total: 2))
 
   /// The section no longer measures itself — the panel's divider does, so it is drawn at the
   /// height a person would have dragged it to: the banner, the hairline and every row.
-  private static let height: CGFloat = 1 + 18 + 5 * 20
+  private static let height: CGFloat = 1 + 18 + 7 * 20
 
   @MainActor
   func testHistoryMatchesSnapshot() throws {

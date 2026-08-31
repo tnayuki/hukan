@@ -28,6 +28,19 @@ final class HistoryPanelViewController: NSViewController {
   private var base: String?
   private var forkIndex = 0
   private var truncated = false
+  private var tags: [String: [String]] = [:]
+  /// What the table draws, commits and the rules between them, in the order they are drawn. Built
+  /// once per list rather than worked out per row: with two kinds of rule in it the arithmetic
+  /// that mapped a row to a commit stops being an offset and starts being a map.
+  private var rows: [Row] = []
+
+  /// A row of the section: a commit, or one of the two rules drawn between commits — the fork
+  /// point, and a tag naming the commit directly below it.
+  private enum Row: Equatable {
+    case commit(Int)
+    case fork
+    case tags([String])
+  }
   /// How many commits were on the list when a page was asked for, or nil when none is
   /// outstanding. A page is *outstanding* until one that answers it arrives, which is what the
   /// count is for: the section is redrawn constantly — every FSEvents batch, and once more from
@@ -60,21 +73,35 @@ final class HistoryPanelViewController: NSViewController {
   private var showsForkPoint: Bool {
     base != nil && forkIndex > 0 && (forkIndex < commits.count || !truncated)
   }
-  private var rowCount: Int { commits.count + (showsForkPoint ? 1 : 0) }
+  private var rowCount: Int { rows.count }
 
-  /// The commit a row shows, or nil for the fork-point rule sitting between two of them.
+  /// The rows, laid out once: each commit, preceded by a tag rule when the repository names it
+  /// and by the fork-point rule where the branch's own work stops. A tag sits *above* the commit
+  /// it names, which is where the fork rule already sits relative to the base tip — the line
+  /// reads "the ref below this is what everything above is not in yet".
+  private func layOutRows() {
+    var laid: [Row] = []
+    for index in commits.indices {
+      if showsForkPoint && index == forkIndex { laid.append(.fork) }
+      if let names = tags[commits[index].oid] { laid.append(.tags(names)) }
+      laid.append(.commit(index))
+    }
+    // A fork point at the very end of what was read has no commit under it, and still marks
+    // where the branch's work stopped.
+    if showsForkPoint && forkIndex == commits.count { laid.append(.fork) }
+    rows = laid
+  }
+
+  /// The commit a row shows, or nil for a rule sitting between two of them.
   private func commitIndex(forRow row: Int) -> Int? {
     // Not a guard against paranoia: `selectedRow` is -1 when nothing is selected, and that is
     // what this is asked about after every refresh.
-    guard row >= 0 else { return nil }
-    guard showsForkPoint else { return commits.indices.contains(row) ? row : nil }
-    if row == forkIndex { return nil }
-    let index = row > forkIndex ? row - 1 : row
-    return commits.indices.contains(index) ? index : nil
+    guard rows.indices.contains(row), case .commit(let index) = rows[row] else { return nil }
+    return index
   }
 
   private func row(forCommit index: Int) -> Int {
-    showsForkPoint && index >= forkIndex ? index + 1 : index
+    rows.firstIndex(of: .commit(index)) ?? index
   }
 
   private var selectedCommit: Git.Commit? {
@@ -154,7 +181,7 @@ final class HistoryPanelViewController: NSViewController {
     loadViewIfNeeded()
     let changed =
       history.commits != commits || history.base != base || history.forkIndex != forkIndex
-      || history.operation != operation
+      || history.operation != operation || history.tags != tags
     // Which commit is under the selection — read against the list the selection was made in, and
     // so before that list is replaced. Reading it afterwards is reading a new list at an old
     // index, which is the same mistake as restoring by index, one step earlier.
@@ -164,6 +191,8 @@ final class HistoryPanelViewController: NSViewController {
     forkIndex = history.forkIndex
     truncated = history.truncated
     operation = history.operation
+    tags = history.tags
+    layOutRows()
     updateOperationBanner()
     // Only a list that actually grew — or one that has reached the end — answers the page. The
     // request stands until then, whatever else redraws the section in the meantime.
@@ -238,8 +267,20 @@ extension HistoryPanelViewController: NSTableViewDataSource, NSTableViewDelegate
   }
 
   func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
-    guard let index = commitIndex(forRow: row) else {
-      return showsForkPoint && row == forkIndex ? forkPointRow() : nil
+    guard rows.indices.contains(row) else { return nil }
+    let index: Int
+    switch rows[row] {
+    case .fork: return ruleRow(label: base ?? "", tooltip: "Branched from \(base ?? "")")
+    case .tags(let names):
+      // Two names fit the panel at its narrowest; past that the row counts the rest rather than
+      // running the list out to an ellipsis, which took the rules and the glyph with it and left
+      // a line of grey text reading as no kind of row at all. The whole list is in the tooltip.
+      let text =
+        names.count <= 2
+        ? names.joined(separator: ", ") : "\(names[0]) +\(names.count - 1)"
+      return ruleRow(
+        label: text, tooltip: "Tagged \(names.joined(separator: ", "))", symbol: "tag")
+    case .commit(let commitIndex): index = commitIndex
     }
     let commit = commits[index]
 
@@ -276,22 +317,42 @@ extension HistoryPanelViewController: NSTableViewDataSource, NSTableViewDelegate
     onSelect?(commit.oid)
   }
 
-  /// `──── origin/main ────`: where this worktree's work parts from what it was branched off.
-  private func forkPointRow() -> NSView {
-    let label = NSTextField(labelWithString: base ?? "")
+  /// `──── origin/main ────`, and `──── ⌸ v0.2.2 ────`: a ref naming the commit below it. The
+  /// fork point says where this worktree's work parts from what it was branched off; a tag says
+  /// what the commit under it was released as, and carries a glyph so the two rules cannot be
+  /// read for each other.
+  private func ruleRow(label text: String, tooltip: String, symbol: String? = nil) -> NSView {
+    let label = NSTextField(labelWithString: text)
     label.font = .systemFont(ofSize: 10)
     label.textColor = .tertiaryLabelColor
+    label.lineBreakMode = .byTruncatingTail
     label.setContentHuggingPriority(.required, for: .horizontal)
+
+    var middle: [NSView] = [label]
+    if let symbol,
+      let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+    {
+      let glyph = NSImageView(image: image)
+      glyph.symbolConfiguration = .init(pointSize: 9, weight: .regular)
+      glyph.contentTintColor = .tertiaryLabelColor
+      glyph.setContentHuggingPriority(.required, for: .horizontal)
+      // It is what says the row is a tag rather than the fork point, so it is the last thing the
+      // row may give up — a squeezed stack dropped it before the name it belongs to.
+      glyph.setContentCompressionResistancePriority(.required, for: .horizontal)
+      middle.insert(glyph, at: 0)
+    }
 
     let leading = rule()
     let trailing = rule()
-    let row = NSStackView(views: [leading, label, trailing])
+    let row = NSStackView(views: [leading] + middle + [trailing])
     row.orientation = .horizontal
     row.alignment = .centerY
-    row.spacing = 6
+    row.spacing = 4
     row.distribution = .fill
     row.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
-    row.toolTip = "Branched from \(base ?? "")"
+    row.setCustomSpacing(6, after: leading)
+    row.setCustomSpacing(6, after: label)
+    row.toolTip = tooltip
     // Both halves take the slack, or the stack hands it all to one and the name slides to an edge.
     leading.widthAnchor.constraint(equalTo: trailing.widthAnchor).isActive = true
     return row

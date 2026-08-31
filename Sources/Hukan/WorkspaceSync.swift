@@ -282,8 +282,11 @@ extension Workspace {
     let url = worktree.url
     worktree.historyLimit += Git.historyPage
     let limit = worktree.historyLimit
+    // The tag map covers the whole repository, so a page reaching further back is already
+    // answered by the one the section holds — paging re-reads the log, never the refs.
+    let tags = worktree.history.tags
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let history = Git.history(at: url, limit: limit)
+      let history = Git.history(at: url, limit: limit, tags: tags)
       DispatchQueue.main.async {
         self?.historyInFlight.remove(worktreeID)
         guard let worktree = self?.worktree(id: worktreeID), worktree.history != history else {
@@ -452,6 +455,11 @@ extension Workspace {
     // where it already differed. Captured on this side of the hop, so the background block
     // measures from what the last landed read actually recorded.
     let recordedHead = worktree(id: worktreeID)?.measurementBase?.head
+    // A ref lives in git's own directory, so a batch narrowed to paths in the working tree
+    // cannot have moved a tag — the same reasoning that keeps the index out of a narrowed read,
+    // and what keeps a repository with thousands of tags from paying for the scan on every file
+    // an agent writes.
+    let knownTags = asked == nil ? nil : worktree(id: worktreeID)?.history.tags
     let alreadyChanged = Set(worktree(id: worktreeID)?.changedFiles.map(\.path) ?? [])
     refreshInFlight.insert(worktreeID)
     readSequence += 1
@@ -473,7 +481,7 @@ extension Workspace {
       // section, so the two are read together and compared together — a commit moves only the
       // second, and the equality test has to see that as a change or the section would keep
       // drawing the list from before it.
-      let history = Git.history(at: url, limit: limit)
+      let history = Git.history(at: url, limit: limit, tags: knownTags)
       let base = Git.measurementBase(at: url)
       DispatchQueue.main.async {
         guard let self else { return }

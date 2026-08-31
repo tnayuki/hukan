@@ -245,13 +245,17 @@ final class SDWorktree: NSObject {
   @objc var branch: String? { worktreeModel?.branch }
 
   /// What the panel's History section lists, as text — one line per commit, `●` marking one the
-  /// upstream does not carry yet. Read live rather than off the worktree's cache: a script may
+  /// upstream does not carry yet and `[v1.0]` the tags naming it. Read live rather than off the worktree's cache: a script may
   /// ask about a worktree this window has never drawn, and this is the surface that stands in for
   /// looking at the section (see the GUI-verification note in CLAUDE.md).
   @objc var history: String {
     guard let url = worktreeModel?.url else { return "" }
-    return Git.history(at: url).commits
-      .map { "\($0.isPushed == false ? "●" : " ") \($0.shortOID) \($0.summary)" }
+    let history = Git.history(at: url)
+    return history.commits
+      .map { commit in
+        let tags = history.tags[commit.oid].map { " [\($0.joined(separator: ", "))]" } ?? ""
+        return "\(commit.isPushed == false ? "●" : " ") \(commit.shortOID) \(commit.summary)\(tags)"
+      }
       .joined(separator: "\n")
   }
 
