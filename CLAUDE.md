@@ -58,7 +58,9 @@ Workspace (one window)
   Recent on this machine is; an entry that is no longer a directory is dropped from the store on
   the next read, since a repository that has been deleted or moved is gone rather than recent and
   must not hold a place for good; and a name that repeats in the offered list carries the directory
-  it sits in, since two rows both reading `hukan` name nothing.
+  it sits in, since two rows both reading `hukan` name nothing. **The open panel takes several at
+  once** for the same reason the menu exists: it is one trip, and a morning that starts with three
+  repositories open was three trips through it.
 - **Where a session is, is read off `EnterWorktree` and `ExitWorktree` — and the engine is asked
   to use them.** The engine's process is what moves: `EnterWorktree` switches its working
   directory and relocates its transcript, `ExitWorktree` puts both back. Their results are the one

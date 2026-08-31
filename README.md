@@ -69,10 +69,10 @@ stored. The main checkout is the repository's own rail row, naming its branch; t
 under a *Worktrees* heading beneath it, each folding away with its sessions. An agent moving worktree (`EnterWorktree`)
 takes its session with it, and leaving it (`ExitWorktree`) brings the session back to the worktree
 it was started from. Dragging a repository's heading puts it somewhere else in the rail, worktrees
-and all — the insertion line falls only between repositories, never inside one. *Open Recent*
-offers the repositories this app has had open and this window has not — in the File menu, on the
-rail's right-click, and beside the empty window's button. An entry that is no longer a directory
-drops itself.
+and all — the insertion line falls only between repositories, never inside one. The open panel
+takes several at once, and *Open Recent* offers the ones this app has had open and this window has
+not — in the File menu, on the rail's right-click, and beside the empty window's button. An entry
+that is no longer a directory drops itself.
 
 **Change review.** Branch and diffstat against `HEAD` in the toolbar, the changed files in the
 panel's ± scope, the changed lines in the open file's gutter. A file git has never seen counts as

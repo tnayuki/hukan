@@ -1706,14 +1706,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     DispatchQueue.main.async { [weak self] in self?.updateRailToolbarItem() }
   }
 
+  /// Several at once: the panel is one trip, and a morning that starts with three repositories
+  /// open is three trips through it otherwise. They land in the order the panel hands them over
+  /// and the first one is selected, which is where a single pick already left the window.
   @objc func openRepository(_ sender: Any?) {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
-    panel.allowsMultipleSelection = false
+    panel.allowsMultipleSelection = true
     panel.prompt = "Open Repository"
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-    workspace.selectedWorktreeID = workspace.openRepository(url).id
+    guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+    let opened = panel.urls.map { workspace.openRepository($0) }
+    workspace.selectedWorktreeID = opened.first?.id
     reload()
   }
 
