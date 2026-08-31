@@ -529,6 +529,13 @@ Workspace (one window)
   `.caseInsensitive` is most of what made a whole-worktree scan take ten seconds. What it gives
   up is accented Latin (`CAFÉ` no longer answers to `café`); a query with no case of its own,
   Japanese included, is matched exactly as before.
+- **The expensive gesture has to visibly take.** ⏎ empties the list it is asked from — the files
+  panel's, and now the rail's — before anything is read. Leaving the rows up through the scan is
+  showing the answer to the *other* question while this one is being read, and on the rail it also
+  suppressed the note that would have said so: that note draws over an empty list, so a title
+  filter with one hit was enough to hide it for the whole scan. An emptied list says nothing at all
+  until the note is due, since calling it "no matches" for that beat would be answering a question
+  still being read.
 - **Neither gesture may be a wait you cannot leave.** The scan reads every file in the worktree,
   so it says that it is searching, and a query typed over it *drops* the one still out rather
   than letting it run to the end while the next waits behind it — an agent writing files re-runs

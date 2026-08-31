@@ -165,3 +165,76 @@ final class TranscriptFindTests: XCTestCase {
       "which the rendered transcript alone could never have answered for")
   }
 }
+
+/// ⏎ on the rail's field is the expensive gesture, and it has to look like it happened. The rail
+/// used to keep the title filter's rows up for the whole scan — the answer to the other question,
+/// with the note that would have said so suppressed, because that note only ever drew over an
+/// empty rail.
+final class RailSearchFeedbackTests: XCTestCase {
+  override class func setUp() {
+    super.setUp()
+    _ = NSApplication.shared
+  }
+
+  @MainActor
+  func testReturnEmptiesTheRailAndSaysNothingUntilItHasAnAnswer() throws {
+    let rail = SessionRailViewController()
+    rail.workspace = RailPreviewTests.sampleWorkspace()
+    rail.loadViewIfNeeded()
+    rail.reload()
+
+    // Typing narrows by title, in memory — the rows that survive are what the scan replaces.
+    let field = rail.filterSearchField
+    field.stringValue = "session"
+    rail.controlTextDidChange(
+      Notification(name: NSControl.textDidChangeNotification, object: field))
+    XCTAssertFalse(rail.filteredSessionIDs.isEmpty, "the title filter has something to show")
+
+    let label = try XCTUnwrap(note(in: rail.view))
+    _ = rail.control(
+      field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:)))
+
+    XCTAssertTrue(rail.filteredSessionIDs.isEmpty, "⏎ clears the rail, so the gesture takes")
+    XCTAssertTrue(
+      label.isHidden,
+      "and says nothing at all until the note fires — an emptied rail is not 'no matches' yet")
+
+    // These sessions have no transcripts on disk, so the scan answers from the titles alone, and
+    // quickly. The rows come back when it does.
+    settle()
+    XCTAssertFalse(rail.filteredSessionIDs.isEmpty, "the answer refills the rail")
+    XCTAssertTrue(label.isHidden, "and nothing is said over rows there are")
+
+    // A query nothing answers to is where the note belongs, and only once the scan is in.
+    field.stringValue = "zzzz-no-session-says-this"
+    rail.controlTextDidChange(
+      Notification(name: NSControl.textDidChangeNotification, object: field))
+    _ = rail.control(
+      field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:)))
+    settle()
+
+    XCTAssertTrue(rail.filteredSessionIDs.isEmpty, "nothing matched")
+    XCTAssertFalse(label.isHidden, "so the rail says why it is empty")
+    XCTAssertEqual(label.stringValue, "No matching sessions")
+  }
+
+  /// Let the scan land and the reload that follows it run.
+  private func settle() {
+    let landed = expectation(description: "the scan answers")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { landed.fulfill() }
+    wait(for: [landed], timeout: 3)
+  }
+
+  /// The rail's own note, which is the label that is centred over its list.
+  private func note(in view: NSView) -> NSTextField? {
+    if let label = view as? NSTextField, label.alignment == .center, !label.isEditable,
+      label.font?.pointSize == 12
+    {
+      return label
+    }
+    for subview in view.subviews {
+      if let found = note(in: subview) { return found }
+    }
+    return nil
+  }
+}

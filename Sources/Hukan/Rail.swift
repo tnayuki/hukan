@@ -582,6 +582,11 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
 
   /// Return: search the transcripts. Kicked off at once — no debounce, since the gesture *is*
   /// the commit — and the reading happens on `searchQueue`, so the field stays live throughout.
+  ///
+  /// The rail empties the moment the key lands, the way the files panel's list does: the gesture
+  /// has to visibly take, and leaving the title filter's rows up through the scan showed the
+  /// answer to the *other* question while this one was being read — with the note that would have
+  /// said so suppressed, because it only ever appeared over an empty rail.
   private func runTranscriptSearch() {
     pendingSearch?.cancel()
     guard !Self.terms(searchField.stringValue).isEmpty else {
@@ -591,6 +596,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     isSearchingTranscripts = true
     isScanning = true
     collapsedResultSessions = []
+    matches = []
+    hits = [:]
     scanNote?.cancel()
     showsScanNote = false
     let note = DispatchWorkItem { [weak self] in
@@ -952,11 +959,13 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
           groupRepositoryID: repo.repositoryID)
       }
     }
-    // The "nothing matched" note, shown only when a query is live and cleared everything.
-    // "Searching…" while a transcript scan is out, so an empty rail mid-scan does not read as
-    // "nothing matched"; the no-match note takes over once the answer is in.
+    // The "nothing matched" note, shown only when a query is live and cleared everything, and
+    // "Searching transcripts…" in its place while a scan is out. A scan the note has not fired
+    // for yet says nothing at all: the rail emptied when the key landed, and calling that
+    // "no matching sessions" for the beat before the note appears would be answering a question
+    // still being read — which is the whole reason the note waits.
     emptyLabel.stringValue = showsScanNote ? "Searching transcripts…" : "No matching sessions"
-    emptyLabel.isHidden = !((isSearching || showsScanNote) && nodes.isEmpty)
+    emptyLabel.isHidden = !(nodes.isEmpty && (showsScanNote || (isSearching && !isScanning)))
 
     isUpdatingSelection = true
     defer {
