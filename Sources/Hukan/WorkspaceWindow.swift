@@ -1065,7 +1065,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
   private func refreshSystemUsage() {
     applySystemUsage(
-      systemUsageSampler.sample(engines: Set(workspace.sessions.compactMap(\.enginePID))))
+      systemUsageSampler.sample(
+        engines: Set(workspace.sessions.compactMap(\.enginePID)),
+        shells: Set(workspace.terminals.compactMap(\.shellPID))))
   }
 
   private func applySystemUsage(_ snapshot: SystemUsageSampler.Snapshot) {
@@ -1101,7 +1103,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     segment(symbol: "cpu", value: cpu)
     segment(symbol: "memorychip", value: memory)
     systemUsageLabel.attributedStringValue = line
-    // The label carries the whole-tree total, so the tooltip is the split behind it: our own pid
+    // The label carries this window's total, so the tooltip is the split behind it: our own pid
     // (Hukan), the engines, what the engines spawned, and the terminals — the last only while
     // there is one, since a line saying none is noise on a desk with no terminal. Each share but
     // Hukan's says how many processes it is. No total line — it is already on screen above.

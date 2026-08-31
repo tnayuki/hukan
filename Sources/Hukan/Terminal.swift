@@ -63,6 +63,12 @@ final class TerminalSession: LocalProcessTerminalViewDelegate {
   var isSpawned: Bool { spawned != nil }
   /// Whether the shell is alive. False before the view spawns and after the process exits.
   var isRunning: Bool { spawned?.process.running ?? false }
+  /// The live shell's pid, or nil before it spawns and after it exits. What the footprint reading
+  /// needs to tell this window's terminal branch of the process tree from another window's.
+  var shellPID: pid_t? {
+    guard let spawned, spawned.process.running else { return nil }
+    return spawned.process.shellPid
+  }
 
   /// The terminal view, spawning the shell on first access (forkpty). Retained here so the shell
   /// survives tab and worktree switches; the owner adds and removes it from the view hierarchy.

@@ -1,13 +1,21 @@
 import Darwin
 import Foundation
 
-/// Hukan's footprint — the app process *plus every descendant it spawned*: the `claude` sessions,
-/// whatever those run, and the terminals' shells with what runs in them. The AppKit shell alone
-/// is nearly idle, and the heavy in-process work (libgit2, FSEvents, transcript rendering) aside,
-/// the load that matters lives in those children — so the figure that answers "am I burying the
-/// machine running all this?" is the whole process tree, not just our own pid. It sits next to
-/// the account-wide Claude usage because it is the same kind of number: global to the app, not
-/// tied to any one worktree.
+/// Hukan's footprint — the app process *plus the descendants this window put there*: its `claude`
+/// sessions, whatever those run, and its terminals' shells with what runs in them. The AppKit
+/// shell alone is nearly idle, and the heavy in-process work (libgit2, FSEvents, transcript
+/// rendering) aside, the load that matters lives in those children — so the figure that answers
+/// "am I burying the machine running all this?" is the process tree, not just our own pid. It
+/// sits next to the account-wide Claude usage because it is the same kind of number: true of the
+/// whole window, not of any one worktree.
+///
+/// **The window is the scope, and the tree is the app's**, which is the one thing this has to
+/// reconcile: a second window's engines are branches off the same root, so a reading that knew
+/// only which pids *this* window was running took every one of them for a terminal — the tooltip
+/// said `Terminals (4)` on a desk with one terminal, and charged another window's agents' memory
+/// to it. So both of this window's sets are named — the engines and the terminals' shells — and a
+/// branch in neither is not ours to report. The root is the exception: one process serves every
+/// window, and nothing can split it, so each window's figure carries the app's own pid whole.
 ///
 /// Each figure also splits four ways, so the tooltip can say where the load actually sits: our
 /// own pid (Hukan), the engines themselves (Claude Code), what the engines spawned (a build, a
@@ -37,8 +45,7 @@ struct SystemUsageSampler {
     case engine
     /// Anything below an engine: the tools it runs.
     case spawned
-    /// A direct child of the root that is not an engine — a terminal's shell — and everything
-    /// under it.
+    /// One of this window's terminals — the shell it opened, and everything running under it.
     case terminal
   }
 
@@ -54,7 +61,7 @@ struct SystemUsageSampler {
   struct Snapshot {
     let buckets: [Kind: Bucket]
     subscript(kind: Kind) -> Bucket { buckets[kind] ?? Bucket() }
-    /// The whole tree.
+    /// This window's share of the tree, root included.
     var cpuPercent: Double { buckets.values.reduce(0) { $0 + $1.cpuPercent } }
     var memoryBytes: UInt64 { buckets.values.reduce(0) { $0 + $1.memoryBytes } }
   }
@@ -72,14 +79,16 @@ struct SystemUsageSampler {
     return Double(info.numer) / Double(info.denom)
   }()
 
-  /// Take a reading. `engines` is the pids of the sessions' running engines, which is what tells
-  /// an engine's branch of the tree from a terminal's. The first call has no baseline, so every
-  /// `cpuPercent` is 0; memory is always real. Cheap enough to run on the main thread on a timer
-  /// (one process-table copy plus a handful of per-pid syscalls for our own subtree).
-  mutating func sample(engines: Set<pid_t>) -> Snapshot {
+  /// Take a reading of one window's share. `engines` is the pids of that window's running engines
+  /// and `shells` its terminals' — together they say which branches of the app's tree are this
+  /// window's, and what each one is. The first call has no baseline, so every `cpuPercent` is 0;
+  /// memory is always real. Cheap enough to run on the main thread on a timer (one process-table
+  /// copy plus a handful of per-pid syscalls for our own subtree).
+  mutating func sample(engines: Set<pid_t>, shells: Set<pid_t>) -> Snapshot {
     let now = DispatchTime.now().uptimeNanoseconds
     let root = getpid()
-    let kinds = Self.classify(parents: Self.processTree(root: root), root: root, engines: engines)
+    let kinds = Self.classify(
+      parents: Self.processTree(root: root), root: root, engines: engines, shells: shells)
 
     var currentCPU: [pid_t: UInt64] = [:]
     var buckets: [Kind: Bucket] = [:]
@@ -111,10 +120,13 @@ struct SystemUsageSampler {
 
   /// Which share each process of the tree belongs to, from the tree's parent links: the root is
   /// Hukan, and everything else is what its branch off the root is — the branch's own pid being
-  /// an engine makes the branch the engine's, and any other branch is a terminal's.
-  static func classify(parents: [pid_t: pid_t], root: pid_t, engines: Set<pid_t>)
-    -> [pid_t: Kind]
-  {
+  /// one of this window's engines makes the branch that engine's, one of its shells makes the
+  /// branch that terminal's. A branch that is neither is another window's, and is left out
+  /// rather than guessed at: the sets name what this window is running, so anything they do not
+  /// name is something it is not.
+  static func classify(
+    parents: [pid_t: pid_t], root: pid_t, engines: Set<pid_t>, shells: Set<pid_t>
+  ) -> [pid_t: Kind] {
     var kinds: [pid_t: Kind] = [:]
     for pid in parents.keys {
       guard pid != root else {
@@ -125,7 +137,7 @@ struct SystemUsageSampler {
       while let parent = parents[branch], parent != root { branch = parent }
       if engines.contains(branch) {
         kinds[pid] = pid == branch ? .engine : .spawned
-      } else {
+      } else if shells.contains(branch) {
         kinds[pid] = .terminal
       }
     }
