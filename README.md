@@ -137,8 +137,13 @@ end, a drag puts one wherever it is dropped, and closing the active one lands on
 neighbour. Past the point where the tabs stop fitting, it scrolls sideways instead of squeezing
 every label at once, and whichever tab is picked is scrolled back into sight; `+` keeps the
 trailing edge, outside the scroll. A click previews and a double-click promotes: a preview
-becomes lasting, and a lasting tab takes the whole window. Closing the window — and quitting —
-asks about every unsaved edit first, the way closing one tab asks about one.
+becomes lasting, and a lasting tab takes the whole window.
+
+The strip comes back after a relaunch — every kind of tab, on its worktree, in the order it stood
+in, open at the tab that was showing. Nothing is read until its tab is looked at, so a desk of a
+dozen tabs costs the one on screen. A tab whose file or worktree is gone by then does not come
+back. Unsaved edits are not carried across: closing the window, and quitting, ask about each one
+first — Save, Don't Save or Cancel — the way closing a tab does.
 
 A web tab's field is an address bar and a search box at once, and the text decides which: a
 scheme, a slash or a dot makes it an address, anything else is a search. A load that fails says
@@ -148,9 +153,8 @@ default browser, ⌘-click sends it out, and a bare URL is a link (code, quoted 
 The tab does what a page expects of its browser: popups open as tabs and close themselves when
 done, a file picker, dialogs, downloads (into Downloads, the Dock stack bouncing) and a name-and-
 password or client-certificate challenge all get the system's panels, a swipe goes back, and ⌘F
-finds in the page. Web tabs come back after a relaunch, on their worktrees, with their history —
-in the order they and the terminals stood on the strip —
-each loading only once it is looked at.
+finds in the page. A web tab comes back after a relaunch with its history, and its address is
+what it is found again by before the page has loaded.
 
 ![A web tab open on the desk beside the commit tab it was opened next to, showing a repository
 page under the tab strip's own address bar, with the conversation still running in the column to

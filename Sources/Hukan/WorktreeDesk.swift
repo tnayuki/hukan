@@ -193,6 +193,23 @@ private final class TabLabelButton: NSButton, NSDraggingSource {
   func ignoreModifierKeys(for session: NSDraggingSession) -> Bool { true }
 }
 
+/// What a file tab keeps across a relaunch: its worktree, and the path relative to it. That pair
+/// *is* a buffer's identity, so it is the whole of the tab. Nothing of the text rides along — an
+/// unsaved edit is answered for before the window goes (see `confirmClosingWindow`), so the tab
+/// comes back on the file as it stands on disk.
+struct FileTabState: Equatable {
+  var worktreeID: UUID
+  var path: String
+}
+
+/// What a commit tab keeps: the oid, and the worktree it was opened from. The oid is the tab's
+/// identity — a commit belongs to the repository, not the worktree — and the worktree is which
+/// desk it stands on.
+struct CommitTabState: Equatable {
+  var worktreeID: UUID
+  var oid: String
+}
+
 /// The right column's content area: this worktree's open files, web tabs and terminals, side by
 /// side as tabs. Each navigates inside itself — a file by its find bar, a browser by its address
 /// bar, a terminal by its prompt; getting *to* a file is the files panel beside this, and getting
@@ -245,6 +262,9 @@ final class WorktreeDeskViewController: NSViewController {
     /// single-clicked file. Cleared (pinned) by a double-click or the first edit, after which it
     /// stays like any other tab. Mirrors VS Code's preview tab.
     var isPreview: Bool
+    /// A restored tab nobody has looked at yet: the path is known, but the file is unread and the
+    /// pane unbuilt until the tab is shown. See `realize`.
+    var isPending = false
     let content = FileContentViewController()
     init(path: String, isPreview: Bool) {
       self.path = path
@@ -269,6 +289,9 @@ final class WorktreeDeskViewController: NSViewController {
     var oid: String
     /// The preview slot, single-clicked from the History section — the file tabs' rule, kept.
     var isPreview: Bool
+    /// Unread until looked at, like a restored file tab's — and the tab is where a commit git no
+    /// longer has says so, since nothing cheap answers that without reading it.
+    var isPending = false
     let content = CommitContentViewController()
     init(oid: String, isPreview: Bool) {
       self.oid = oid
@@ -404,13 +427,12 @@ final class WorktreeDeskViewController: NSViewController {
     return known + present.filter { !known.contains($0) }
   }
 
-  /// The strip order of the tabs that come back after a relaunch — web tabs and terminals — as
-  /// one row per tab across every worktree, in strip order. The desk's contribution to the
-  /// window's restorable state beside the tabs themselves: the two saved lists are written in
-  /// this order too (see `restorableBrowserTabs`, and the window for the terminals), so a row
-  /// need only say which kind it is for `restoreTabOrder` to know which tab it names. Files and
-  /// commits are not saved, so their places are not either; a restored strip is the saved tabs in
-  /// the order they stood, and what is opened after them goes to the end as it always does.
+  /// The strip order of the tabs that come back after a relaunch, as one row per tab across every
+  /// worktree, in strip order. The desk's contribution to the window's restorable state beside the
+  /// tabs themselves: the four saved lists are written in this order too (see
+  /// `restorableBrowserTabs`, `restorableFileTabs`, `restorableCommitTabs`, and the window for the
+  /// terminals), so a row need only say which kind it is for `restoreTabOrder` to know which tab
+  /// it names.
   var restorableTabOrder: [Workspace.RestoredTabOrder] {
     guard let workspace else { return [] }
     return workspace.worktrees.flatMap { worktree in
@@ -419,10 +441,125 @@ final class WorktreeDeskViewController: NSViewController {
           switch surface {
           case .browser: return .init(worktreeID: worktree.id, kind: .browser)
           case .terminal: return .init(worktreeID: worktree.id, kind: .terminal)
-          case .file, .commit, .none: return nil
+          case .file: return .init(worktreeID: worktree.id, kind: .file)
+          case .commit: return .init(worktreeID: worktree.id, kind: .commit)
+          case .none: return nil
           }
         }
     }
+  }
+
+  /// Where the strip was standing: the showing tab's place in the showing worktree's strip, or a
+  /// negative when the desk is empty. Only the one worktree's — the desk does not remember a tab
+  /// per worktree, so there is nothing else to save.
+  var restorableSelectedTabIndex: Int {
+    guard surface != .none else { return -1 }
+    return orderedSurfaces.firstIndex(of: surface) ?? -1
+  }
+
+  /// Every file tab, across every worktree, in strip order — the order `restoreFileTabs` puts
+  /// them back in. A preview tab is here like any other: it is on the strip, and it is very often
+  /// the one being read.
+  var restorableFileTabs: [FileTabState] {
+    fileTabsByWorktree.flatMap { worktreeID, tabs in
+      inStripOrder(tabs, in: worktreeID, surface: { .file($0.id) })
+        .map { FileTabState(worktreeID: worktreeID, path: $0.path) }
+    }
+  }
+
+  /// Every commit tab, across every worktree, in strip order.
+  var restorableCommitTabs: [CommitTabState] {
+    commitTabsByWorktree.flatMap { worktreeID, tabs in
+      inStripOrder(tabs, in: worktreeID, surface: { .commit($0.id) })
+        .map { CommitTabState(worktreeID: worktreeID, oid: $0.oid) }
+    }
+  }
+
+  /// One worktree's tabs of a kind, in strip order rather than the order they were opened — a
+  /// dragged tab must not spring back on relaunch. A tab the order has not met (there is always
+  /// one, briefly) keeps its opened position, at the end.
+  private func inStripOrder<Tab: AnyObject>(
+    _ tabs: [Tab], in worktreeID: UUID, surface: (Tab) -> Surface
+  ) -> [Tab] {
+    let order = tabOrderByWorktree[worktreeID] ?? []
+    return tabs.enumerated().sorted { a, b in
+      (order.firstIndex(of: surface(a.element)) ?? .max, a.offset)
+        < (order.firstIndex(of: surface(b.element)) ?? .max, b.offset)
+    }.map(\.element)
+  }
+
+  /// Put last run's file tabs back on their worktrees. Like the web tabs, none is read until its
+  /// tab is looked at (see `realize`): a restored desk costs the one file on screen, not every
+  /// file that was open. A tab whose worktree is gone stays gone, and so does one whose file is —
+  /// an agent's `git worktree remove`, or a rebase, and the tab would have nothing to show.
+  /// Restored tabs are lasting, never previews: a preview is what the last click made of a tab,
+  /// and a relaunch is not a click.
+  func restoreFileTabs(_ states: [FileTabState]) {
+    loadViewIfNeeded()
+    for state in states {
+      guard let worktree = workspace?.worktree(id: state.worktreeID) else { continue }
+      let url = worktree.url.appendingPathComponent(state.path)
+      guard FileManager.default.fileExists(atPath: url.path) else { continue }
+      let tab = FileTab(path: state.path, isPreview: false)
+      tab.isPending = true
+      wire(tab)
+      fileTabsByWorktree[state.worktreeID, default: []].append(tab)
+    }
+  }
+
+  /// Put last run's commit tabs back. Unread until looked at, like the files — and unchecked:
+  /// nothing answers "is this oid still here" more cheaply than reading the commit, so a commit a
+  /// rebase has dropped says so in the tab when it is opened.
+  func restoreCommitTabs(_ states: [CommitTabState]) {
+    loadViewIfNeeded()
+    for state in states {
+      guard workspace?.worktree(id: state.worktreeID) != nil else { continue }
+      let tab = CommitTab(oid: state.oid, isPreview: false)
+      tab.isPending = true
+      addChild(tab.content)
+      commitTabsByWorktree[state.worktreeID, default: []].append(tab)
+    }
+  }
+
+  /// Land on the tab the window was left on. Called once every kind is back and in order, and
+  /// before the desk is reloaded onto its worktree: it names the tab by its place in that
+  /// worktree's strip, and the reload's own reconcile then finds the surface already on the strip
+  /// and leaves it alone. Doing it the other way round — letting the reload pick — is what put a
+  /// restored window on the end of its strip, and taking the index inside the reload was worse
+  /// still: the terminals arrive on a reload of their own, so the index was spent against a strip
+  /// that was still half of one.
+  func restoreSelectedTab(worktreeID: UUID, index: Int) {
+    guard let workspace, workspace.worktree(id: worktreeID) != nil else { return }
+    let order = orderedSurfaces(
+      in: worktreeID, terminals: workspace.terminals(inWorktree: worktreeID))
+    guard order.indices.contains(index) else { return }
+    surface = order[index]
+  }
+
+  /// How many restored tabs are still unread. The laziness a restored desk rests on is the one
+  /// thing about it the strip does not show — a tab that has not been opened looks exactly like
+  /// one that has — so this is what a test asserts it on.
+  var unreadRestoredTabCount: Int {
+    fileTabsByWorktree.values.flatMap { $0 }.count { $0.isPending }
+      + commitTabsByWorktree.values.flatMap { $0 }.count { $0.isPending }
+  }
+
+  /// Read a restored tab, the first time it is shown. Everything a fresh open does except
+  /// choosing the tab — which the caller has already done by landing on it.
+  private func realize(_ tab: FileTab) {
+    guard tab.isPending, let worktreeID, let worktree = workspace?.worktree(id: worktreeID) else {
+      return
+    }
+    tab.isPending = false
+    tab.content.show(worktree: worktree, path: tab.path)
+  }
+
+  private func realize(_ tab: CommitTab) {
+    guard tab.isPending, let worktreeID, let worktree = workspace?.worktree(id: worktreeID) else {
+      return
+    }
+    tab.isPending = false
+    tab.content.show(worktree: worktree, oid: tab.oid)
   }
 
   /// The terminals in strip order, for saving — so that they come back in it.
@@ -440,10 +577,11 @@ final class WorktreeDeskViewController: NSViewController {
     }.map(\.element)
   }
 
-  /// Lay last run's web tabs and terminals out in the order they were saved in. Called once both
-  /// kinds are back on their worktrees, each list in the order it was saved — which is the strip's
-  /// — so walking the rows and taking the next tab of each row's kind rebuilds the strip. A row
-  /// past the end of its list (a terminal whose worktree is gone) is skipped.
+  /// Lay last run's tabs out in the order they were saved in. Called once every kind is back on
+  /// its worktree, each list in the order it was saved — which is the strip's — so walking the
+  /// rows and taking the next tab of each row's kind rebuilds the strip. A row past the end of its
+  /// list is skipped: that is a tab that did not come back (a terminal whose worktree is gone, a
+  /// file that is), and the tabs after it on the strip close up over the gap.
   func restoreTabOrder(_ rows: [Workspace.RestoredTabOrder]) {
     guard let workspace else { return }
     var next: [Workspace.RestoredTabOrder: Int] = [:]
@@ -460,10 +598,36 @@ final class WorktreeDeskViewController: NSViewController {
         let tabs = workspace.terminals(inWorktree: row.worktreeID)
         guard index < tabs.count else { continue }
         order[row.worktreeID, default: []].append(.terminal(tabs[index].id))
+      case .file:
+        let tabs = fileTabsByWorktree[row.worktreeID] ?? []
+        guard index < tabs.count else { continue }
+        order[row.worktreeID, default: []].append(.file(tabs[index].id))
+      case .commit:
+        let tabs = commitTabsByWorktree[row.worktreeID] ?? []
+        guard index < tabs.count else { continue }
+        order[row.worktreeID, default: []].append(.commit(tabs[index].id))
       }
     }
     for (worktreeID, surfaces) in order { tabOrderByWorktree[worktreeID] = surfaces }
     if isViewLoaded { rebuildTabBar() }
+  }
+
+  /// The hooks every file tab carries, wherever it came from: what a save tells the window, what
+  /// the first edit does to a preview slot, and the dot the strip puts up for an unsaved edit.
+  private func wire(_ tab: FileTab) {
+    tab.content.onSaved = { [weak self] worktreeID, path in
+      self?.onFileSaved?(worktreeID, path)
+    }
+    // The first edit pins the tab: you must not lose what you just started typing to the next
+    // single click reusing the slot.
+    let id = tab.id
+    tab.content.onEdited = { [weak self] in
+      _ = self?.pinIfPreview(.file(id))
+    }
+    // The dot goes up and comes down on the tab; the pin above rides the same first edit, so
+    // one rebuild here covers both.
+    tab.content.onDirtyChanged = { [weak self] in self?.rebuildTabBar() }
+    addChild(tab.content)
   }
 
   /// A tab dragged from `from` into the gap at `to` — gaps counted in tabs from the strip's
@@ -477,8 +641,6 @@ final class WorktreeDeskViewController: NSViewController {
     order.insert(moved, at: to > from ? to - 1 : to)
     tabOrderByWorktree[worktreeID] = order
     rebuildTabBar()
-    // The web tabs' order is part of what comes back after a relaunch.
-    view.window?.invalidateRestorableState()
   }
 
   /// ⌃⇥ (+1) / ⌃⇧⇥ (−1): move to the next or previous tab, wrapping, and hand it focus.
@@ -613,19 +775,7 @@ final class WorktreeDeskViewController: NSViewController {
       tab.content.show(worktree: worktree, path: path)
     } else {
       let fresh = FileTab(path: path, isPreview: preview)
-      fresh.content.onSaved = { [weak self] worktreeID, path in
-        self?.onFileSaved?(worktreeID, path)
-      }
-      // The first edit pins the tab: you must not lose what you just started typing to the next
-      // single click reusing the slot.
-      let id = fresh.id
-      fresh.content.onEdited = { [weak self] in
-        _ = self?.pinIfPreview(.file(id))
-      }
-      // The dot goes up and comes down on the tab; the pin above rides the same first edit, so
-      // one rebuild here covers both.
-      fresh.content.onDirtyChanged = { [weak self] in self?.rebuildTabBar() }
-      addChild(fresh.content)
+      wire(fresh)
       fresh.content.show(worktree: worktree, path: path)
       tabs.append(fresh)
       fileTabsByWorktree[worktree.id] = tabs
@@ -730,23 +880,16 @@ final class WorktreeDeskViewController: NSViewController {
     }
   }
 
-  /// Every web tab worth saving, across every worktree — the desk's contribution to the window's
-  /// restorable state. Files and commits are not here on purpose: either is one click from the
-  /// panel, while a page reached through a sign-in and three redirects is not.
+  /// Every web tab worth saving, across every worktree — a blank one is one keystroke to make
+  /// again, so it has no slot.
   var restorableBrowserTabs: [BrowserTabState] {
     browserTabsByWorktree.flatMap { worktreeID, tabs in
-      // In strip order rather than the order they were opened, since `restoreBrowserTabs` puts
-      // them back in the order it is given — and a dragged tab must not spring back on relaunch.
-      let order = tabOrderByWorktree[worktreeID] ?? []
-      let sorted = tabs.enumerated().sorted { a, b in
-        (order.firstIndex(of: .browser(a.element.id)) ?? .max, a.offset)
-          < (order.firstIndex(of: .browser(b.element.id)) ?? .max, b.offset)
-      }.map(\.element)
-      return sorted.compactMap { tab -> BrowserTabState? in
-        guard var state = tab.pane.restorableState else { return nil }
-        state.worktreeID = worktreeID
-        return state
-      }
+      inStripOrder(tabs, in: worktreeID, surface: { .browser($0.id) })
+        .compactMap { tab -> BrowserTabState? in
+          guard var state = tab.pane.restorableState else { return nil }
+          state.worktreeID = worktreeID
+          return state
+        }
     }
   }
 
@@ -760,6 +903,39 @@ final class WorktreeDeskViewController: NSViewController {
       let tab = BrowserTab(pane: BrowserPaneViewController(restoring: state))
       wire(tab, in: state.worktreeID)
       browserTabsByWorktree[state.worktreeID, default: []].append(tab)
+    }
+  }
+
+  /// The showing worktree's strip, one line per tab: its place, `●` for the one showing, its kind,
+  /// and what it is of — with a restored tab nobody has opened yet marked unread. The scripting
+  /// surface's handle on the desk as a whole, added for the same reason the commit tab and the
+  /// files panel have theirs: the strip is buttons, so what a relaunch put back on it, in what
+  /// order and open at which tab, is otherwise only checkable by clicking at coordinates.
+  var tabStripReport: String {
+    let order = orderedSurfaces
+    guard !order.isEmpty else { return "(no tabs)" }
+    return order.enumerated().map { index, item in
+      let marker = item == surface ? "●" : " "
+      return "\(index + 1) \(marker) \(describe(item))"
+    }.joined(separator: "\n")
+  }
+
+  private func describe(_ item: Surface) -> String {
+    switch item {
+    case .file(let id):
+      guard let tab = fileTabs.first(where: { $0.id == id }) else { return "file" }
+      return "file      \(tab.path)\(tab.isPending ? "  (unread)" : "")"
+    case .commit(let id):
+      guard let tab = commitTabs.first(where: { $0.id == id }) else { return "commit" }
+      return "commit    \(tab.oid.prefix(7))\(tab.isPending ? "  (unread)" : "")"
+    case .browser(let id):
+      guard let tab = browserTabs.first(where: { $0.id == id }) else { return "browser" }
+      return "browser   \(tab.pane.pageTitle)"
+    case .terminal(let id):
+      guard let terminal = terminals.first(where: { $0.id == id }) else { return "terminal" }
+      return "terminal  \(terminal.title)"
+    case .none:
+      return "none"
     }
   }
 
@@ -837,11 +1013,10 @@ final class WorktreeDeskViewController: NSViewController {
   /// Save / Cancel a closing tab gets, since closing the window closes every tab. False when one
   /// of them was cancelled, which the window and the app both read as "do not close after all".
   ///
-  /// Without it the prompt was reachable only one tab at a time: ⌘W asked, and the window's own
-  /// close and the quit behind it took every tab at once without asking any of them, so an edit
-  /// nobody had saved went silently. Across every worktree, not only the one showing — the alert
-  /// names the file, and the tab is selected first when it is on the desk in front of you, so a
-  /// Cancel lands on it.
+  /// It is what makes restoring file tabs honest: hukan keeps no copy of an unsaved buffer, so
+  /// without this a quit dropped the edit and put the tab back on the file as it had been left on
+  /// disk. Across every worktree, not only the one showing — the alert names the file, and the tab
+  /// is selected first when it is on the desk in front of you, so a Cancel lands on it.
   func confirmClosingWindow() -> Bool {
     let previous = surface
     for (worktreeID, tabs) in fileTabsByWorktree {
@@ -934,7 +1109,10 @@ final class WorktreeDeskViewController: NSViewController {
   /// and a highlight, and it drops the selection with it, so a tab nobody wrote to must not pay
   /// for a tab somebody did.
   func refreshOpenFiles(changed: Set<String>? = nil) {
-    for tab in fileTabs where changed == nil || changed?.contains(tab.path) == true {
+    // A restored tab nobody has opened has nothing read to refresh; it reads the file when it is
+    // looked at, which is later than this and so newer.
+    for tab in fileTabs
+    where !tab.isPending && (changed == nil || changed?.contains(tab.path) == true) {
       tab.content.refreshCurrent()
     }
   }
@@ -948,7 +1126,8 @@ final class WorktreeDeskViewController: NSViewController {
       guard let path = Self.repath(tab.path, from: from, to: to) else { continue }
       let previous = tab.path
       tab.path = path
-      tab.content.renamed(to: path)
+      // A restored tab that has not been read yet only needs the new name: it opens on it.
+      if !tab.isPending { tab.content.renamed(to: path) }
       onFileTabRenamed?(worktreeID, previous, path)
       moved = true
     }
@@ -1024,6 +1203,10 @@ final class WorktreeDeskViewController: NSViewController {
   // MARK: Tab strip
 
   private func rebuildTabBar() {
+    // What is on the strip, and which of it is showing, is what comes back after a relaunch — and
+    // every act that moves either rebuilds the strip, so one call here covers the lot. A tab
+    // renaming itself as its page loads does not, which is why the browser marks it too.
+    view.window?.invalidateRestorableState()
     for arranged in tabBar.arrangedSubviews {
       tabBar.removeArrangedSubview(arranged)
       arranged.removeFromSuperview()
@@ -1338,6 +1521,7 @@ final class WorktreeDeskViewController: NSViewController {
       setSurfaceView(placeholder)
     case .file(let id):
       if let tab = fileTabs.first(where: { $0.id == id }) {
+        realize(tab)
         setSurfaceView(tab.content.view)
       } else {
         setSurfaceView(placeholder)
@@ -1350,6 +1534,7 @@ final class WorktreeDeskViewController: NSViewController {
       }
     case .commit(let id):
       if let tab = commitTabs.first(where: { $0.id == id }) {
+        realize(tab)
         setSurfaceView(tab.content.view)
       } else {
         setSurfaceView(placeholder)

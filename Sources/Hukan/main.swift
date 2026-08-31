@@ -60,10 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.activate(ignoringOtherApps: true)
   }
 
-  /// Quitting closes every window, so it owes every unsaved edit the prompt a closing tab gets.
-  /// A Cancel anywhere stops the quit where it stands; the windows already answered for keep
-  /// whatever their answer wrote. Asked before `applicationWillTerminate` starts stopping engines,
-  /// since a quit that is going to be cancelled must not have torn anything down on the way.
+  /// Quitting closes every window, so it owes every unsaved edit the prompt a closing tab gets —
+  /// hukan keeps no copy of an unsaved buffer, and the tab that comes back after a relaunch comes
+  /// back on the file as it stands on disk. A Cancel anywhere stops the quit where it stands; the
+  /// windows already answered for keep whatever their answer wrote.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     for controller in WorkspaceWindowController.all where !controller.confirmClosingWindow() {
       return .terminateCancel

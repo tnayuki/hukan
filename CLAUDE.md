@@ -174,25 +174,35 @@ Workspace (one window)
   tab in place rather than rebuilding the strip. No process pool: it was set on the belief that it
   shared the sign-in, and it never did — the persistent data store does, and WebKit has managed
   its own processes since macOS 12.
-- **Web tabs come back after a relaunch; files and commits do not.** Either of those is one click
-  from the panel, while a page reached through a sign-in and three redirects is not. What is
-  saved is WebKit's own `interactionState` — the back/forward list and where each entry was
-  scrolled — held opaque, plus the title and address so the tab can be named and found by address
-  before it loads. It rides the window's restorable state keyed by worktree, the terminals'
-  arrangement, passed in from the desk because the model has no view to read it off. **Nothing
-  loads until its tab is looked at**: a restored window may carry a dozen web tabs across its
-  worktrees, and loading them all at launch is what a browser's session restore is known for.
-  The saved title holds until the page reports its own, or every restored tab would rename itself
-  to a bare host name the moment it loads. A blank tab is not saved — it is one keystroke to make
-  again.
+- **The whole strip comes back after a relaunch, at the tab that was showing.** Each tab is saved
+  as what identifies it and nothing more — a worktree and a relative path, an oid, a directory
+  and a scrollback, and for a web tab WebKit's own `interactionState` (the back/forward list and where
+  each entry was scrolled) held opaque beside the title and address, so the tab can be named and
+  found by address before it loads. It rides the window's restorable state keyed by worktree,
+  passed in from the desk because the model has no view to read it off. **Nothing is read until
+  its tab is looked at** — a restored window may carry a dozen tabs across its worktrees, and
+  reading them all at launch is what a browser's session restore is known for; a saved web title
+  holds until the page reports its own, or every restored tab would rename itself to a bare host
+  name the moment it loads. What does not come back is what has nothing left to show: a blank web
+  tab (one keystroke to make again), a file or a worktree that is gone, a commit a rebase dropped
+  — that last one unchecked at launch, since nothing answers it more cheaply than reading the
+  commit, so the tab says so when it is opened. **The strip's order is saved apart from the tabs**,
+  one row per tab naming only its kind, because a row is then answered by position in that kind's
+  list — and a tab that did not come back is a row past the end of its list, which the strip
+  closes up over. **The showing tab is a place in that order**, applied once the strip is in it:
+  the terminals arrive on a reload of their own, before the rest of the strip is on it, so an index
+  spent at the first reload available is spent against half a strip. Only the one worktree's — the
+  desk does not remember a tab per worktree, so there is nothing else to save. A restored tab is
+  lasting, never a preview: a preview is what the last click made of a tab, and a relaunch is not
+  a click.
 - **A window that closes, and a quit, ask about every unsaved edit first.** The same Save / Don't
   Save / Cancel a closing tab gets, since closing the window closes every tab, and a Cancel keeps
-  the window. The prompt was reachable one tab at a time only: ⌘W asked, and the window's close and
-  the quit behind it took every tab at once without asking any of them — so the one state hukan
-  holds that exists nowhere else, an edit nobody has saved, was the one it dropped without a word.
-  Hot exit is the other answer, VS Code's and Zed's: carry the unsaved text across a relaunch
-  instead of asking. Refused for what it costs — a copy of the file outside git, which is the line
-  master data draws — and not for the convenience it buys.
+  the window. It is the other half of restoring file tabs: hukan holds no copy of an unsaved
+  buffer — that would be a second copy of the file outside git, which is the line master data
+  draws — so without the prompt a quit dropped the edit silently and put the tab back on the file
+  as it stood on disk, which is the worst of the three available answers. The alternative was hot
+  exit, VS Code's and Zed's: carry the unsaved text across too. Refused for the copy it costs,
+  not for the convenience it buys.
 - **A terminal's tab is named the way Terminal.app names one** — the command holding the pty
   while something is running, the working directory's last component when nothing is. The path
   relative to the worktree is the alternative, and the one thing it buys — two tabs in one
@@ -1013,6 +1023,7 @@ osascript -e 'tell application "Hukan Dev" to send "..." to (selected session of
 osascript -e 'tell application "Hukan Dev" to get transcript of (selected session of window 1)'
 osascript -e 'tell application "Hukan Dev" to get history of worktree "main" of repository 1 of window 1'
 osascript -e 'tell application "Hukan Dev" to commit "<full oid>"'   # then: commit / commit toggling 3 / commit finding "…"'
+osascript -e 'tell application "Hukan Dev" to tabs'
 osascript -e 'tell application "Hukan Dev" to completions typing "/co"'   # then: completions moving 1 / completions accepting true
 ```
 
@@ -1033,11 +1044,14 @@ do — it is rows and not text, so `files` reports what the panel is showing and
 gestures put it there, and `filtering`/`searching` run them. `files menu "<path>"` reads back the
 right-click menu that row would carry, a line each; the writes that menu makes
 (`creating`/`folder`/`renaming … to …`/`deleting`) are guarded, because each of them stands in for
-a human's answer — a name typed on the row, or the alert before a delete. `completions` is the third of that
+a human's answer — a name typed on the row, or the alert before a delete. `tabs` is the same
+answer for the strip as a whole, which is what a relaunch has to be checked against: which tabs
+came back, in what order, which one is showing, and which of them have been read yet — all of it
+buttons, and otherwise only reachable by clicking at coordinates. `completions` is another of that
 kind: the command list is rows on a panel floating over the window, so checking that a `/` opened
 it — and that `⏎` took the row the arrows had reached — is otherwise a click at coordinates.
 `typing` goes through the text view's own edit path rather than a shortcut only a script can
-take, so what it exercises is the list a person would get. `selected sessions` is the fourth, and
+take, so what it exercises is the list a person would get. `selected sessions` is the last of them, and
 it reads *and writes*: a multi-selection is rows on a list with nothing to read back, and a
 property that could only be read would leave the half worth checking — that a batch survives the
 reload every FSEvents batch triggers — reachable only by ⌘-clicking at coordinates.

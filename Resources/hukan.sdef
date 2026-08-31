@@ -315,6 +315,11 @@
             <result type="text"/>
         </command>
 
+        <command name="tabs" code="HuknTabs" hidden="yes" description="Report the selected worktree\'s tab strip, one line per tab, for automated checks">
+            <cocoa class="TabsCommand"/>
+            <result type="text"/>
+        </command>
+
         <command name="fold" code="HuknFold" hidden="yes" description="Inspect or drive the tool-call fold in the selected transcript, for automated checks">
             <cocoa class="FoldCommand"/>
             <direct-parameter type="text" optional="yes" description="status (default), expand, or collapse"/>

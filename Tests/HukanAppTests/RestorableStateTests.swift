@@ -158,6 +158,68 @@ final class RestorableStateTests: XCTestCase {
     XCTAssertTrue(restored.takeRestoredTabOrder().isEmpty, "taken once")
   }
 
+  /// File and commit tabs ride across as what identifies them — a worktree and a path, an oid —
+  /// and nothing else: there is no copy of a buffer's text here, which is what the unsaved-edit
+  /// prompt at close is for.
+  func testFileAndCommitTabsRoundTripByWorktree() throws {
+    let worktree = UUID()
+    let other = UUID()
+    let files = [
+      FileTabState(worktreeID: worktree, path: "Sources/Model.swift"),
+      FileTabState(worktreeID: other, path: "README.md"),
+    ]
+    let commits = [CommitTabState(worktreeID: worktree, oid: String(repeating: "a", count: 40))]
+
+    let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+    Workspace().encodeState(to: archiver, fileTabs: files, commitTabs: commits)
+    archiver.finishEncoding()
+    let restored = Workspace()
+    restored.decodeState(from: try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData))
+
+    XCTAssertEqual(restored.takeRestoredFileTabs(), files)
+    XCTAssertTrue(restored.takeRestoredFileTabs().isEmpty, "taken once")
+    XCTAssertEqual(restored.takeRestoredCommitTabs(), commits)
+  }
+
+  /// The strip order spans all four kinds now, and the tab that was showing is a place in it —
+  /// carried with the worktree it is a place in, since that is the one strip it means anything
+  /// against.
+  func testTheSelectedTabRoundTripsAsAPlaceInTheSelectedWorktreesStrip() throws {
+    let workspace = Workspace()
+    let worktree = UUID()
+    workspace.selectedWorktreeID = worktree
+    let order: [Workspace.RestoredTabOrder] = [
+      .init(worktreeID: worktree, kind: .file), .init(worktreeID: worktree, kind: .commit),
+      .init(worktreeID: worktree, kind: .browser),
+    ]
+
+    let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+    workspace.encodeState(to: archiver, tabOrder: order, selectedTabIndex: 1)
+    archiver.finishEncoding()
+    let restored = Workspace()
+    restored.decodeState(from: try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData))
+
+    XCTAssertEqual(restored.takeRestoredTabOrder(), order)
+    let selection = try XCTUnwrap(restored.takeRestoredTabSelection())
+    XCTAssertEqual(selection.worktreeID, worktree)
+    XCTAssertEqual(selection.index, 1)
+    XCTAssertNil(restored.takeRestoredTabSelection(), "taken once")
+  }
+
+  /// An empty desk saves no selection, and a restored one must not be handed a place in a strip
+  /// that has no tabs on it.
+  func testAnEmptyDeskRestoresNoSelection() throws {
+    let workspace = Workspace()
+    workspace.selectedWorktreeID = UUID()
+    let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+    workspace.encodeState(to: archiver, selectedTabIndex: -1)
+    archiver.finishEncoding()
+    let restored = Workspace()
+    restored.decodeState(from: try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData))
+
+    XCTAssertNil(restored.pendingRestoredTabSelection)
+  }
+
   func testRosterShortFieldsFallBackToValue() throws {
     // Hand-built archive with the display-name and resolved arrays truncated, the way a partial
     // or older archive would read. The raw keys here are the on-disk format, pinned on purpose.

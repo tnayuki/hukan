@@ -1197,7 +1197,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     workspace.encodeState(
       to: state, browserTabs: files.desk.restorableBrowserTabs,
       terminals: files.desk.restorableTerminals(workspace.terminals),
-      tabOrder: files.desk.restorableTabOrder)
+      fileTabs: files.desk.restorableFileTabs, commitTabs: files.desk.restorableCommitTabs,
+      tabOrder: files.desk.restorableTabOrder,
+      selectedTabIndex: files.desk.restorableSelectedTabIndex)
   }
 
   /// Closing the window closes every tab in it, so it owes each unsaved edit the prompt a closing
@@ -1217,8 +1219,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     workspace.decodeState(from: state)
     materializeRestoredTerminals()
     files.desk.restoreBrowserTabs(workspace.takeRestoredBrowserTabs())
-    // Only once both kinds are back, since the order names them by position.
+    files.desk.restoreFileTabs(workspace.takeRestoredFileTabs())
+    files.desk.restoreCommitTabs(workspace.takeRestoredCommitTabs())
+    // Only once every kind is back, since the order names them by position.
     files.desk.restoreTabOrder(workspace.takeRestoredTabOrder())
+    // And the tab that was showing only once the strip is in its order, since that is what its
+    // place is a place in.
+    if let selection = workspace.takeRestoredTabSelection() {
+      files.desk.restoreSelectedTab(worktreeID: selection.worktreeID, index: selection.index)
+    }
     reload()
     // The column widths only exist now. Arranging from init instead would run before this
     // and lay out the defaults — and then record them, destroying what was saved.

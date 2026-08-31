@@ -273,24 +273,47 @@ final class Workspace {
     return pendingRestoredBrowserTabs
   }
 
-  /// The kinds of tab that outlive the window, and so the only ones whose order on the strip is
-  /// worth carrying across. A tab of either kind is named by its position among its kind in the
-  /// saved lists, so an order is one row per tab: which worktree, which kind — nothing else.
+  /// File tabs decoded from restoration state, carried across to the desk like the web tabs.
+  private var pendingRestoredFileTabs: [FileTabState] = []
+
+  func takeRestoredFileTabs() -> [FileTabState] {
+    defer { pendingRestoredFileTabs = [] }
+    return pendingRestoredFileTabs
+  }
+
+  /// Commit tabs decoded from restoration state, carried across to the desk like the rest.
+  private var pendingRestoredCommitTabs: [CommitTabState] = []
+
+  func takeRestoredCommitTabs() -> [CommitTabState] {
+    defer { pendingRestoredCommitTabs = [] }
+    return pendingRestoredCommitTabs
+  }
+
+  /// A tab is named by its position among its own kind in the saved lists, so an order is one
+  /// row per tab: which worktree, which kind — nothing else.
   struct RestoredTabOrder: Hashable {
     enum Kind: String {
-      case browser, terminal
+      case browser, terminal, file, commit
     }
     let worktreeID: UUID
     let kind: Kind
   }
 
   /// The strip order decoded from restoration state, waiting for the desk to lay its restored
-  /// tabs out in it once both kinds are back.
+  /// tabs out in it once every kind is back.
   private var pendingRestoredTabOrder: [RestoredTabOrder] = []
 
   func takeRestoredTabOrder() -> [RestoredTabOrder] {
     defer { pendingRestoredTabOrder = [] }
     return pendingRestoredTabOrder
+  }
+
+  /// Which tab was showing, as a place in the selected worktree's strip.
+  private(set) var pendingRestoredTabSelection: (worktreeID: UUID, index: Int)?
+
+  func takeRestoredTabSelection() -> (worktreeID: UUID, index: Int)? {
+    defer { pendingRestoredTabSelection = nil }
+    return pendingRestoredTabSelection
   }
 
   /// Set a freshly-discovered session's mode/effort/model from what was restored, if anything
@@ -667,20 +690,33 @@ final class Workspace {
     static let browserURLs = "browsers.urls"
     static let browserTitles = "browsers.titles"
     static let browserStates = "browsers.states"
-    // The strip's order across both kinds, so a dragged tab does not spring back on relaunch:
-    // one row per restorable tab, in strip order — the terminal and web tab lists above are saved
-    // in that same order, which is what makes a row's kind enough to name its tab.
+    // File tabs: the worktree and the path relative to it, which is the whole of a buffer's
+    // identity. Nothing of the text rides along — an unsaved edit is answered for before the
+    // window goes, so what comes back is the file as it stands on disk.
+    static let fileWorktreeIDs = "files.worktreeIDs"
+    static let filePaths = "files.paths"
+    // Commit tabs: the worktree they were opened from and the oid, which is the tab's identity.
+    static let commitWorktreeIDs = "commits.worktreeIDs"
+    static let commitOids = "commits.oids"
+    // The strip's order across every kind, so a dragged tab does not spring back on relaunch:
+    // one row per restorable tab, in strip order — the four lists above are saved in that same
+    // order, which is what makes a row's kind enough to name its tab.
     static let tabOrderWorktreeIDs = "tabs.orderWorktreeIDs"
     static let tabOrderKinds = "tabs.orderKinds"
+    // Which tab of the selected worktree was showing, as its place in that worktree's strip.
+    // The worktree half is `selectedWorktreeID`, already stored above.
+    static let tabSelectedIndex = "tabs.selectedIndex"
   }
 
-  /// `browserTabs` come from the desk, which owns them; they are passed in rather than read off
-  /// the model because the model has no view to read them from. `terminals` too, when given:
-  /// the model's list is in the order they were opened, and the desk's is the order they stand
-  /// in, which is the one to come back in. `tabOrder` is the strip order the two lists are in.
+  /// The tabs come from the desk, which owns them; they are passed in rather than read off the
+  /// model because the model has no view to read them from. `terminals` too, when given: the
+  /// model's list is in the order they were opened, and the desk's is the order they stand in,
+  /// which is the one to come back in. `tabOrder` is the strip order the four lists are in, and
+  /// `selectedTabIndex` is the place in it that was showing (negative for none).
   func encodeState(
     to coder: NSCoder, browserTabs: [BrowserTabState] = [], terminals: [TerminalSession]? = nil,
-    tabOrder: [RestoredTabOrder] = []
+    fileTabs: [FileTabState] = [], commitTabs: [CommitTabState] = [],
+    tabOrder: [RestoredTabOrder] = [], selectedTabIndex: Int = -1
   ) {
     let terminals = terminals ?? self.terminals
     coder.encode(worktrees.map(\.url.path) as NSArray, forKey: Key.worktreePaths)
@@ -776,9 +812,17 @@ final class Workspace {
       browserTabs.map { $0.interactionState?.base64EncodedString() ?? "" } as NSArray,
       forKey: Key.browserStates)
 
+    coder.encode(fileTabs.map(\.worktreeID.uuidString) as NSArray, forKey: Key.fileWorktreeIDs)
+    coder.encode(fileTabs.map(\.path) as NSArray, forKey: Key.filePaths)
+
+    coder.encode(
+      commitTabs.map(\.worktreeID.uuidString) as NSArray, forKey: Key.commitWorktreeIDs)
+    coder.encode(commitTabs.map(\.oid) as NSArray, forKey: Key.commitOids)
+
     coder.encode(
       tabOrder.map(\.worktreeID.uuidString) as NSArray, forKey: Key.tabOrderWorktreeIDs)
     coder.encode(tabOrder.map(\.kind.rawValue) as NSArray, forKey: Key.tabOrderKinds)
+    coder.encode(selectedTabIndex, forKey: Key.tabSelectedIndex)
   }
 
   func decodeState(from coder: NSCoder) {
@@ -922,6 +966,26 @@ final class Workspace {
           interactionState: state.isEmpty ? nil : Data(base64Encoded: state)))
     }
 
+    let fileWorktrees = strings(coder, Key.fileWorktreeIDs)
+    let filePaths = strings(coder, Key.filePaths)
+    pendingRestoredFileTabs = []
+    for (index, idString) in fileWorktrees.enumerated() where index < filePaths.count {
+      guard let worktreeID = UUID(uuidString: idString), !filePaths[index].isEmpty else { continue }
+      pendingRestoredFileTabs.append(
+        FileTabState(worktreeID: worktreeID, path: filePaths[index]))
+    }
+
+    let commitWorktrees = strings(coder, Key.commitWorktreeIDs)
+    let commitOids = strings(coder, Key.commitOids)
+    pendingRestoredCommitTabs = []
+    for (index, idString) in commitWorktrees.enumerated() where index < commitOids.count {
+      guard let worktreeID = UUID(uuidString: idString), !commitOids[index].isEmpty else {
+        continue
+      }
+      pendingRestoredCommitTabs.append(
+        CommitTabState(worktreeID: worktreeID, oid: commitOids[index]))
+    }
+
     let orderWorktrees = strings(coder, Key.tabOrderWorktreeIDs)
     let orderKinds = strings(coder, Key.tabOrderKinds)
     pendingRestoredTabOrder = []
@@ -930,6 +994,14 @@ final class Workspace {
         let kind = RestoredTabOrder.Kind(rawValue: orderKinds[index])
       else { continue }
       pendingRestoredTabOrder.append(RestoredTabOrder(worktreeID: worktreeID, kind: kind))
+    }
+
+    // The place in that strip that was showing. Kept for the desk to consume rather than applied
+    // here: the tabs are not on it yet, and the reload that puts them there is what would
+    // otherwise choose for it.
+    let selectedTab = coder.decodeInteger(forKey: Key.tabSelectedIndex)
+    if selectedTab >= 0, let worktreeID = selectedWorktreeID {
+      pendingRestoredTabSelection = (worktreeID, selectedTab)
     }
 
     // The session list is never stored — it is read back off disk every time.

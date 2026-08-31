@@ -271,6 +271,18 @@ final class CompletionsCommand: NSScriptCommand {
   }
 }
 
+/// `tabs` reports the selected worktree's tab strip, one line per tab. Hidden, like the rest of
+/// the checking verbs: the strip is a row of buttons with nothing to read back, and what it holds
+/// after a relaunch — which tabs came back, in what order, and which of them is showing — is the
+/// whole of what restoring the desk means.
+@objc(TabsCommand)
+final class TabsCommand: NSScriptCommand {
+  override func performDefaultImplementation() -> Any? {
+    guard let controller = frontController() else { return fail("no window") }
+    return controller.deskForScripting.tabStripReport
+  }
+}
+
 /// `browser "<address>"` opens or focuses a web tab on the selected worktree's desk, taking the
 /// address bar's own reading of the text — so a script exercises the same address-or-search rule a
 /// person does. With nothing to open it reports the worktree's web tabs, one line each. Hidden,
