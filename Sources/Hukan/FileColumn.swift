@@ -82,10 +82,20 @@ final class FileContentViewController: NSViewController {
   /// The open file's bare name, for the one place it is still spoken aloud: the alert that asks
   /// about an unsaved edit. The pane itself never names the file — the tab does (see `loadView`).
   private var baseFileName = ""
-  /// True once the reader has typed into the source without it being written back yet. Guards
-  /// the on-disk refresh (an agent editing the same worktree must not clobber an unsaved edit)
-  /// and gates the save. The tab wears the dot for it, so every transition — not just the first
-  /// edit — has to reach the strip.
+  /// What the file holds on disk, as the buffer last agreed with it — set when the text is read
+  /// and again when it is written. It is what `isDirty` is decided against, and holding it is
+  /// what the answer costs: one more copy of the text per open file, beside the two `fileBase`
+  /// already keeps.
+  private var savedText = ""
+  /// True while the buffer says something other than the file does. Guards the on-disk refresh
+  /// (an agent editing the same worktree must not clobber an unsaved edit) and gates the save.
+  /// The tab wears the dot for it, so every transition — not just the first edit — has to reach
+  /// the strip.
+  ///
+  /// Read off the text rather than latched by the first keystroke, because a buffer walks back:
+  /// undo takes an edit off again, and a latch left the tab offering to save a file with nothing
+  /// left to write — and the window's closing question asking about it. Typing a deletion back
+  /// by hand ends the same way, and answers the same.
   private var isDirty = false {
     didSet {
       guard isDirty != oldValue else { return }
@@ -114,8 +124,14 @@ final class FileContentViewController: NSViewController {
     // ⌘F in a file is the text view's own find bar, the way ⌘F in a terminal is SwiftTerm's.
     textView.usesFindBar = true
     textView.isIncrementalSearchingEnabled = true
+    // The storage's own edit notification, not `NSText.didChangeNotification`: that one is the
+    // *typing* notification and no more — an undo moves the text without posting one, which is
+    // how the dot survived a ⌘Z that had already put the file back. Everything that touches the
+    // text goes through the storage, hukan's own load included, which is why `savedText` is set
+    // before the text it describes (see `render`).
     NotificationCenter.default.addObserver(
-      self, selector: #selector(textChanged), name: NSText.didChangeNotification, object: textView)
+      self, selector: #selector(textChanged), name: NSTextStorage.didProcessEditingNotification,
+      object: textView.textStorage)
   }
 
   required init?(coder: NSCoder) { fatalError() }
@@ -177,10 +193,12 @@ final class FileContentViewController: NSViewController {
     guard textView.isEditable else { return }
     // Fire the pin hook only on the transition into dirty, not on every keystroke — and before
     // the flag flips, because the flag's own hook rebuilds the tab strip and the pin has to be
-    // in place by then or the tab redraws as a preview it no longer is.
-    let firstEdit = !isDirty
-    if firstEdit { onEdited?() }
-    isDirty = true
+    // in place by then or the tab redraws as a preview it no longer is. A tab pinned this way
+    // stays pinned when the edit is undone: the pin is what the reader touching it made of the
+    // tab, and taking it back would hand a tab they are working in to the next single click.
+    let edited = textView.string != savedText
+    if edited, !isDirty { onEdited?() }
+    isDirty = edited
     scheduleLineChanges()
   }
 
@@ -195,6 +213,7 @@ final class FileContentViewController: NSViewController {
     let url = Self.fileURL(worktree: worktree, path: path)
     do {
       try textView.string.write(to: url, atomically: true, encoding: .utf8)
+      savedText = textView.string
       isDirty = false
       onSaved?(worktree.id, path)
     } catch {
@@ -252,6 +271,7 @@ final class FileContentViewController: NSViewController {
     loadViewIfNeeded()
     guard let worktree, let path else {
       textView.isEditable = false
+      savedText = ""
       textView.textStorage?.setAttributedString(
         NSAttributedString(
           string: "",
@@ -264,6 +284,10 @@ final class FileContentViewController: NSViewController {
       let rendered = Self.renderSource((try? String(contentsOf: url, encoding: .utf8)) ?? "")
       DispatchQueue.main.async { [weak self] in
         guard let self, self.path == path else { return }
+        // What the buffer has to differ from to be worth saving — the text just read, which is
+        // what the file holds until this pane writes it. Set before the text lands, since landing
+        // it is itself an edit of the storage and the answer has to be ready for it.
+        self.savedText = rendered.string
         self.textView.textStorage?.setAttributedString(rendered)
         // Always the source, so always editable. Typed text inherits its monospace.
         self.textView.isEditable = true

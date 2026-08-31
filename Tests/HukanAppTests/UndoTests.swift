@@ -169,6 +169,41 @@ final class UndoTests: XCTestCase {
     window.close()
   }
 
+  /// Undoing every edit leaves the buffer saying what the file says, so there is nothing left to
+  /// save: the dot comes down, and the closing question has nothing to ask about. The flag was
+  /// latched by the first keystroke instead, which left a file that had been edited and undone
+  /// offering to write itself back unchanged.
+  @MainActor
+  func testUndoingEveryEditTakesTheUnsavedDotDown() throws {
+    let (controller, window, editor, _) = try openWindow()
+    let content = try XCTUnwrap(controller.deskForScripting.activeFileContent)
+
+    window.makeFirstResponder(editor)
+    editor.insertText("XYZ", replacementRange: NSRange(location: 0, length: 0))
+    spin(0.2)
+    XCTAssertTrue(content.hasUnsavedEdit, "typing made the buffer dirty")
+
+    window.undoManager?.undo()
+    spin(0.2)
+    XCTAssertEqual(editor.string, "hello\n")
+    XCTAssertFalse(content.hasUnsavedEdit, "and undoing it left nothing to save")
+
+    // Redo puts the edit back, dot and all — the flag reads the text, so it follows either way.
+    window.undoManager?.redo()
+    spin(0.2)
+    XCTAssertEqual(editor.string, "XYZhello\n")
+    XCTAssertTrue(content.hasUnsavedEdit, "the edit is back, and so is the dot")
+
+    // Typing the difference away by hand answers the same, undo or no undo.
+    editor.setSelectedRange(NSRange(location: 0, length: 3))
+    editor.insertText("", replacementRange: NSRange(location: 0, length: 3))
+    spin(0.2)
+    XCTAssertEqual(editor.string, "hello\n")
+    XCTAssertFalse(content.hasUnsavedEdit, "the buffer says what the file says")
+
+    window.close()
+  }
+
   /// And the other way round: a ⌘Z in the composer must not reach into a file that is open on
   /// the desk — the buffer would go back with nobody watching, dirty and unasked for.
   @MainActor
