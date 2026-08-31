@@ -248,13 +248,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     editMenu.addItem(.separator())
     // Find inside whatever is being read — the conversation, or the desk's active tab (a file's
     // bar, a terminal's, the commit tab's field, the browser's). Which of the two it means is
-    // where the focus is, the same rule ⌃⌘M follows for the column it maximizes. The tag is the
-    // field every find bar reads its action from; the controller is the target so the key never
-    // reaches a stray text field.
-    let find = editMenu.addItem(
-      withTitle: "Find", action: #selector(WorkspaceWindowController.find(_:)),
-      keyEquivalent: "f")
-    find.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+    // where the focus is, the same rule ⌃⌘M follows for the column it maximizes. All four ride
+    // one selector and differ only in the tag, which is the field every find bar reads its action
+    // from; the controller is the target so the key never reaches a stray text field.
+    for (title, key, action) in [
+      ("Find", "f", NSFindPanelAction.showFindPanel),
+      ("Find Next", "g", .next),
+      ("Find Previous", "G", .previous),
+      ("Use Selection for Find", "e", .setFindString),
+    ] {
+      let item = editMenu.addItem(
+        withTitle: title, action: #selector(WorkspaceWindowController.find(_:)),
+        keyEquivalent: key)
+      item.tag = Int(action.rawValue)
+    }
     editMenu.addItem(.separator())
     // One key per field, and ⏎ inside it does the rest. Each item names what *typing* in the
     // field does — narrow the tree by path, narrow the rail by title — because the escalation

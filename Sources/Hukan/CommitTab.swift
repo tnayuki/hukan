@@ -581,14 +581,32 @@ final class CommitContentViewController: NSViewController {
   /// ⌘F: the tab's own find field, not a text view's find bar — the commit is a stack of cards,
   /// so what a search has to cross is more than one text. Every card it can afford opens first,
   /// because a fold is a reading convenience and must not act as a filter on the search.
+  /// ⌘G / ⌘⇧G step without taking the focus, and ⌘E takes the term off whatever is selected —
+  /// the same tags the other panes read off the menu item.
   func performFind(_ sender: Any?) {
-    open(upTo: Self.findRowBudget)
-    rebuildCards()
-    load(sections.indices.filter { sections[$0].isOpen }) { [weak self] in
-      guard let self else { return }
-      self.view.window?.makeFirstResponder(self.findField)
-      if !self.findField.stringValue.isEmpty { self.runFind(stepping: false) }
+    switch NSFindPanelAction(rawValue: UInt((sender as? NSMenuItem)?.tag ?? 1)) {
+    case .next?: runFind(step: 1)
+    case .previous?: runFind(step: -1)
+    case .setFindString?:
+      guard let selection = selectedText, !selection.isEmpty else { return }
+      findField.stringValue = selection
+      runFind(step: 0)
+    default:
+      open(upTo: Self.findRowBudget)
+      rebuildCards()
+      load(sections.indices.filter { sections[$0].isOpen }) { [weak self] in
+        guard let self else { return }
+        self.view.window?.makeFirstResponder(self.findField)
+        if !self.findField.stringValue.isEmpty { self.runFind(step: 0) }
+      }
     }
+  }
+
+  /// What is selected in whichever card has the focus — a card's diff is a text view, so ⌘E has
+  /// something to read even though the tab itself is not one text.
+  private var selectedText: String? {
+    guard let textView = view.window?.firstResponder as? NSTextView else { return nil }
+    return (textView.string as NSString).substring(with: textView.selectedRange())
   }
 
   /// Fold a file's card, or unfold it — reading its diff first if this is the first time.
@@ -701,7 +719,7 @@ final class CommitContentViewController: NSViewController {
       let term = markedTerm
       markedTerm = ""
       findField.stringValue = term
-      runFind(stepping: false)
+      runFind(step: 0)
     }
   }
 
@@ -722,23 +740,26 @@ final class CommitContentViewController: NSViewController {
     matchLabel.stringValue = ""
   }
 
-  @objc private func findReturned(_ sender: Any?) { runFind(stepping: true) }
+  @objc private func findReturned(_ sender: Any?) {
+    runFind(step: NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
+  }
 
   /// Run a search, the way typing in the field does — one seam for the tests rather than an
   /// exposed field.
   func find(_ term: String) {
     loadViewIfNeeded()
     findField.stringValue = term
-    runFind(stepping: false)
+    runFind(step: 0)
   }
 
   /// How many matches the current search found, and which one it is standing on.
   var findState: (count: Int, index: Int) { (matches.count, matchIndex) }
 
-  /// Mark every occurrence in every open card, and step through them on Return. All of them are
-  /// marked at once rather than only the current one, because in a diff the useful question is
-  /// usually "where else" rather than "next".
-  private func runFind(stepping: Bool) {
+  /// Mark every occurrence in every open card, and step through them by `step` (0 to stay where
+  /// it is — a fresh search, which lands on the first). All of them are marked at once rather
+  /// than only the current one, because in a diff the useful question is usually "where else"
+  /// rather than "next".
+  private func runFind(step: Int) {
     let term = findField.stringValue
     if term != markedTerm {
       markedTerm = term
@@ -748,8 +769,8 @@ final class CommitContentViewController: NSViewController {
         for range in body.mark(term) { matches.append((card.index, range)) }
       }
       matchIndex = 0
-    } else if stepping, !matches.isEmpty {
-      matchIndex = (matchIndex + 1) % matches.count
+    } else if step != 0, !matches.isEmpty {
+      matchIndex = (matchIndex + step + matches.count) % matches.count
     }
     if term.isEmpty {
       matchLabel.stringValue = ""
@@ -777,6 +798,6 @@ final class CommitContentViewController: NSViewController {
 
 extension CommitContentViewController: NSSearchFieldDelegate {
   func controlTextDidChange(_ notification: Notification) {
-    runFind(stepping: false)
+    runFind(step: 0)
   }
 }
