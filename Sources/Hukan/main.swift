@@ -254,11 +254,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Find", action: #selector(WorkspaceWindowController.find(_:)),
       keyEquivalent: "f")
     find.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
-    // Both land on the files panel's filter — one field over the tree that narrows by name and
-    // grows content hits under files, so "go to file" and "find in files" are the same place.
-    // Two items so both keys an editor hand reaches for (⌘P, ⌘⇧F) work.
+    // Both land on the files panel's filter — one field over the tree, told apart by gesture —
+    // so "go to file" and "find in files" are the same place. Two items so both keys an editor
+    // hand reaches for (⌘P, ⌘⇧F) work, and they differ in which of the field's two operations
+    // they run: ⌘P puts the cursor in it, ⌘⇧F searches with what is already there.
     editMenu.addItem(
-      withTitle: "Go to File…", action: #selector(WorkspaceWindowController.findInFiles(_:)),
+      withTitle: "Go to File…", action: #selector(WorkspaceWindowController.goToFile(_:)),
       keyEquivalent: "p")
     editMenu.addItem(
       withTitle: "Find in Files…", action: #selector(WorkspaceWindowController.findInFiles(_:)),
