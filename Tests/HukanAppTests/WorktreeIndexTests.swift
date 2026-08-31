@@ -82,6 +82,31 @@ final class WorktreeIndexTests: XCTestCase {
     XCTAssertNil(WorktreeIndex.list(root.appendingPathComponent("nothing-here")))
   }
 
+  /// A name can change kind. A directory standing where a file stood is one the walk has never
+  /// been into, so it has to be walked like any other new directory — while the names of what
+  /// was there were taken regardless of kind, and it was mistaken for a directory already known,
+  /// everything under it stayed out of the index and so out of the filter and the search.
+  func testADirectoryStandingWhereAFileStoodIsWalked() throws {
+    let root = try makeTree(["src/a.swift", "top.txt"])
+    let manager = FileManager.default
+    let index = WorktreeIndex(root: root) { _ in [] }
+    built(index)
+    XCTAssertEqual(index.filePaths, ["src/a.swift", "top.txt"])
+
+    try manager.removeItem(at: root.appendingPathComponent("top.txt"))
+    try manager.createDirectory(
+      at: root.appendingPathComponent("top.txt"), withIntermediateDirectories: true)
+    try "inside\n".write(
+      to: root.appendingPathComponent("top.txt/now.txt"), atomically: true, encoding: .utf8)
+
+    let done = expectation(description: "batch")
+    index.update(moved: ["top.txt"]) { _ in done.fulfill() }
+    wait(for: [done], timeout: 5)
+
+    XCTAssertEqual(index.filePaths, ["src/a.swift", "top.txt/now.txt"])
+    XCTAssertEqual(index.entries(of: "top.txt")?.map(\.name), ["now.txt"])
+  }
+
   /// A batch names paths; the directories they sit in are read again, a new directory is walked
   /// in, and a directory that went takes its subtree out. Each answer says which directories
   /// now read differently.

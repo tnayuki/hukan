@@ -175,7 +175,10 @@ final class WorktreeIndex {
         let ignoredHere = ignored(
           after.filter(\.isDirectory).map { parent.isEmpty ? $0.name : "\(parent)/\($0.name)" })
         // A directory that is new to the listing is walked in; one that stayed keeps its subtree.
-        let known = Set((before ?? []).map(\.name))
+        // New means new *as a directory*: a name that was a file and is now a directory is as
+        // unwalked as one that was not there at all, and taking the names regardless of kind
+        // left everything under it out of the index for as long as it stood.
+        let known = Set((before ?? []).filter(\.isDirectory).map(\.name))
         for entry in after where entry.isDirectory && !known.contains(entry.name) {
           let path = parent.isEmpty ? entry.name : "\(parent)/\(entry.name)"
           if ignoredHere.contains(path) {
