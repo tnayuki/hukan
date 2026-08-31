@@ -941,8 +941,12 @@ public enum Transcript {
   static func toolArgument(tool name: String, input: [String: Any]) -> (
     summary: String, full: String
   )? {
+    // `skill` is last because it is nothing else's key: a Skill call carries the skill's name
+    // and its arguments, and without the name the line reads `Skill` and says nothing about
+    // which one ran.
     for key in [
       "file_path", "path", "pattern", "command", "url", "query", "prompt", "description", "plan",
+      "skill",
     ] {
       if let value = input[key] as? String {
         var single = value.split(separator: "\n").first.map(String.init) ?? value

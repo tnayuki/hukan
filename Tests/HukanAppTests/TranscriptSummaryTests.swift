@@ -44,6 +44,15 @@ final class TranscriptSummaryTests: XCTestCase {
     XCTAssertEqual(clipped?.count, 91, "90 chars plus the single ellipsis glyph")
   }
 
+  func testSkillCallNamesItsSkill() {
+    // The Skill tool's input is the skill's name and its arguments; without `skill` in the key
+    // list the line read a bare `Skill` and never said which one ran.
+    let result = Transcript.toolArgument(
+      tool: "Skill", input: ["skill": "code-review", "args": "--fix"])
+    XCTAssertEqual(result?.summary, "code-review")
+    XCTAssertEqual(result?.full, "code-review")
+  }
+
   func testReturnsNilWhenNoKnownKey() {
     XCTAssertNil(Transcript.toolArgument(tool: "Mystery", input: ["unknown": "value"]))
     XCTAssertNil(Transcript.toolArgument(tool: "Mystery", input: [:]))
