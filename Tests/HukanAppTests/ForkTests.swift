@@ -17,10 +17,10 @@ final class ForkTests: XCTestCase {
     XCTAssertEqual(
       arguments,
       [
-        "--resume", source.uuidString,
+        "--resume", ClaudeSessionStore.name(source),
         "--resume-session-at", "anchor-uuid",
         "--fork-session",
-        "--session-id", branch.uuidString,
+        "--session-id", ClaudeSessionStore.name(branch),
       ],
       "the CLI refuses --session-id alongside --resume unless --fork-session is there too")
   }
@@ -29,17 +29,17 @@ final class ForkTests: XCTestCase {
     let id = UUID()
     XCTAssertEqual(
       ClaudeSession.conversationArguments(id: id, resume: false, fork: nil),
-      ["--session-id", id.uuidString])
+      ["--session-id", ClaudeSessionStore.name(id)])
     XCTAssertEqual(
       ClaudeSession.conversationArguments(id: id, resume: true, fork: nil),
-      ["--resume", id.uuidString])
+      ["--resume", ClaudeSessionStore.name(id)])
   }
 
   func testRollbackResumesOurOwnConversationTruncated() {
     let id = UUID()
     XCTAssertEqual(
       ClaudeSession.conversationArguments(id: id, resume: true, fork: nil, rollbackTo: "a1"),
-      ["--resume", id.uuidString, "--resume-session-at", "a1"],
+      ["--resume", ClaudeSessionStore.name(id), "--resume-session-at", "a1"],
       "no --session-id and no --fork-session: the cut lands in this session's own transcript")
   }
 
@@ -49,7 +49,7 @@ final class ForkTests: XCTestCase {
     let id = UUID()
     XCTAssertEqual(
       ClaudeSession.conversationArguments(id: id, resume: false, fork: nil, rollbackTo: "a1"),
-      ["--session-id", id.uuidString])
+      ["--session-id", ClaudeSessionStore.name(id)])
   }
 
   /// A fork wins over resume rather than combining with it: the branch has no transcript of its

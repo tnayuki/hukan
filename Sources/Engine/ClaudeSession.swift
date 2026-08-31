@@ -263,15 +263,15 @@ final class ClaudeSession {
   ) -> [String] {
     if let fork {
       return [
-        "--resume", fork.source.uuidString,
+        "--resume", ClaudeSessionStore.name(fork.source),
         "--resume-session-at", fork.anchor,
         "--fork-session",
-        "--session-id", id.uuidString,
+        "--session-id", ClaudeSessionStore.name(id),
       ]
     }
-    guard resume else { return ["--session-id", id.uuidString] }
-    guard let rollbackTo else { return ["--resume", id.uuidString] }
-    return ["--resume", id.uuidString, "--resume-session-at", rollbackTo]
+    guard resume else { return ["--session-id", ClaudeSessionStore.name(id)] }
+    guard let rollbackTo else { return ["--resume", ClaudeSessionStore.name(id)] }
+    return ["--resume", ClaudeSessionStore.name(id), "--resume-session-at", rollbackTo]
   }
 
   /// The one line hukan appends to the engine's own system prompt. A session's worktree is read
@@ -783,8 +783,26 @@ enum ClaudeSessionStore {
       .appendingPathComponent(encoded)
   }
 
+  /// How a session id is spelt on Claude Code's side: lower case, the way the CLI spells the ids
+  /// it mints itself.
+  ///
+  /// `UUID.uuidString` is upper case by Swift's definition, and hukan hands the engine an id of
+  /// its own making (`--session-id`, see `conversationArguments`), so every session started here
+  /// used to be named in a case the CLI never uses — against a store where the ones it made are
+  /// all lower. Nothing ever opened the wrong file, APFS being case-insensitive by default, which
+  /// is why it went unnoticed; what broke is everything that compared the two spellings as
+  /// *strings*, and each place found that out separately. The task directory tried both
+  /// spellings, `liveProcessOwning` compares UUIDs to step around it, and the transcript watcher
+  /// simply missed — its whole subject is a row born in a terminal, which is exactly a row spelt
+  /// in lower case. One spelling in one place is what stops the next reader inventing a third
+  /// workaround.
+  ///
+  /// Reading stays tolerant regardless: the transcripts hukan wrote before this are still upper
+  /// case, and only a string comparison can tell. A path cannot.
+  static func name(_ id: UUID) -> String { id.uuidString.lowercased() }
+
   static func transcriptURL(id: UUID, worktree: URL) -> URL {
-    directory(for: worktree).appendingPathComponent("\(id.uuidString).jsonl")
+    directory(for: worktree).appendingPathComponent("\(name(id)).jsonl")
   }
 
   /// Delete a session for good: unlink its transcript. Because the list is derived from the

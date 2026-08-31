@@ -22,6 +22,19 @@ final class SessionPathTests: XCTestCase {
     XCTAssertEqual(dir.lastPathComponent, "-tmp-a-b-c-d")
   }
 
+  // MARK: how an id is spelt
+
+  /// Claude Code spells the ids it mints in lower case, and `UUID.uuidString` spells them in
+  /// upper. hukan used to hand the engine the upper one, so every session started here was named
+  /// against the grain of the store it was written into.
+  func testAnIDIsSpeltTheWayTheCLISpellsItsOwn() {
+    let id = UUID(uuidString: "FFF40972-FBDE-40F0-B6F8-1EA442254E7C")!
+    XCTAssertEqual(ClaudeSessionStore.name(id), "fff40972-fbde-40f0-b6f8-1ea442254e7c")
+    XCTAssertEqual(
+      ClaudeSessionStore.transcriptURL(id: id, worktree: URL(fileURLWithPath: "/tmp/x"))
+        .lastPathComponent, "fff40972-fbde-40f0-b6f8-1ea442254e7c.jsonl")
+  }
+
   // MARK: worktree path extraction
 
   func testWorktreePathBeforeBranchClause() {

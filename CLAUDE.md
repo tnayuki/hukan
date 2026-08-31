@@ -541,6 +541,14 @@ Workspace (one window)
   permanent "New session" on the rail, which is exactly the pile of rows standing for nothing that
   this window is supposed to be the opposite of. A New Session opened here by hand is someone's
   intent and stays.
+- **A session id is spelt the way Claude Code spells its own.** The CLI names the ids it mints in
+  lower case; Swift's `UUID` renders in upper, and hukan supplies the id for every session started
+  here, so the store held two spellings of the same kind of thing. Nothing ever opened the wrong
+  file — the volume is case-insensitive — so what it cost was invisible and landed entirely on the
+  places that compare the two as *strings*: the watch above matched no file it was put there for,
+  since every row it watches for is one another `claude` made and therefore one spelt in lower
+  case. Reading stays tolerant of either, because the transcripts hukan wrote before this keep
+  their names for good.
 - **A conversation another process is writing is followed by reading its file, not by asking more
   often.** Opened here, such a session's pane is fixed at whatever it said when it was opened:
   there is no stream to hear it on, the engine being someone else's. The file is the one thing it

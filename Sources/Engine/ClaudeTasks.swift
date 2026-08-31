@@ -37,17 +37,13 @@ struct AgentTask: Equatable {
 extension ClaudeSessionStore {
   /// The agent's task list for one session.
   ///
-  /// The directory is named for the session id — but a session Claude Code started itself spells
-  /// that id in lower case where `UUID.uuidString` spells it in upper, so both are tried. It is
-  /// the same mismatch `liveProcessOwning` compares its way around.
+  /// The directory is named for the session id, in the one spelling `ClaudeSessionStore.name`
+  /// decides — this used to try two, hukan having spelt its own ids in a case the CLI never uses.
   static func tasks(id: UUID) -> [AgentTask] {
-    let root = FileManager.default.homeDirectoryForCurrentUser
+    let directory = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".claude/tasks")
-    for name in [id.uuidString, id.uuidString.lowercased()] {
-      let directory = root.appendingPathComponent(name)
-      if FileManager.default.fileExists(atPath: directory.path) { return tasks(in: directory) }
-    }
-    return []
+      .appendingPathComponent(name(id))
+    return tasks(in: directory)
   }
 
   /// The parse behind `tasks(id:)`, over a directory of task files — separate so a test can

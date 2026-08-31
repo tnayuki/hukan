@@ -7,6 +7,29 @@ import XCTest
 /// from greyed to startable. The same registry is also how a session started outside this window
 /// reaches the rail at all, before it has written a transcript to be discovered by.
 final class HeldElsewhereTests: XCTestCase {
+  /// The watch that gives an adopted row its name matches on the transcript's file name, which
+  /// is the one comparison in this window a case-insensitive volume cannot rescue. Both spellings
+  /// have to land: a row born in a terminal carries an id the CLI minted and named in lower case,
+  /// and hukan's own transcripts from before it spelt ids that way are still upper.
+  func testATranscriptReachesItsRowInEitherSpelling() {
+    let workspace = Workspace()
+    let session = AgentSession(worktreeID: UUID())
+    session.isRegistryBorn = true
+    workspace.sessions = [session]
+
+    let directory = "/Users/x/.claude/projects/-tmp-w/"
+    XCTAssertEqual(
+      workspace.watchedTranscripts(
+        movedIn: [directory + ClaudeSessionStore.name(session.id) + ".jsonl"]),
+      [session.id], "the spelling the CLI names a file it made itself with")
+    XCTAssertEqual(
+      workspace.watchedTranscripts(movedIn: [directory + session.id.uuidString + ".jsonl"]),
+      [session.id], "and the one hukan used to write")
+    XCTAssertEqual(
+      workspace.watchedTranscripts(movedIn: [directory + UUID().uuidString + ".jsonl"]), [],
+      "every claude on the machine writes into this directory; only these rows are watched for")
+  }
+
   /// A live process to stand in for another engine. Terminated by the test's teardown.
   private var holders: [Process] = []
 

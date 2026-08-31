@@ -432,8 +432,7 @@ extension Workspace {
       // Read again rather than captured: what is being watched for changes under this closure,
       // and a set fixed when the stream started would go on answering for rows that have since
       // been named and panes that have since been let go.
-      let watched = self.watchedTranscripts()
-      let moved = Set(paths.map { ($0 as NSString).lastPathComponent }).compactMap { watched[$0] }
+      let moved = self.watchedTranscripts(movedIn: paths)
       guard !moved.isEmpty else { return }
       var wantsNames = false
       for id in moved {
@@ -455,11 +454,24 @@ extension Workspace {
   /// on screen at whatever it said when it was opened unless the file is followed — the process
   /// is not ours, so there is no stream to hear it on. Nothing else qualifies: a session hukan
   /// runs speaks over its own pipes, and one nobody has opened is read whole when it is.
+  /// Which of the watched sessions a batch of changed paths names. Split out from the stream so
+  /// the matching can be asserted without one — and it is worth asserting, because it is the one
+  /// comparison in this window that the filesystem cannot rescue. The names are folded on both
+  /// sides: a transcript hukan wrote before it learned to spell an id the way the CLI does is
+  /// still named in upper case, and every row this watch exists for — one born in a terminal, one
+  /// another process is writing — is a row spelt in lower. While the two were compared as they
+  /// stood, this matched nothing it was put here for.
+  func watchedTranscripts(movedIn paths: [String]) -> [UUID] {
+    let watched = watchedTranscripts()
+    return Set(paths.map { ($0 as NSString).lastPathComponent.lowercased() })
+      .compactMap { watched[$0] }
+  }
+
   private func watchedTranscripts() -> [String: UUID] {
     var watched: [String: UUID] = [:]
     for session in sessions
     where (session.isRegistryBorn && session.title == nil) || session.isFollowable {
-      watched["\(session.id.uuidString).jsonl"] = session.id
+      watched["\(ClaudeSessionStore.name(session.id)).jsonl"] = session.id
     }
     return watched
   }
