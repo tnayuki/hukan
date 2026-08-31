@@ -446,11 +446,25 @@ extension Workspace {
       }
       return paths
     }
+    // What a wholesale question can collapse to. Nothing in the working tree was written — a
+    // write raises its own batch and is asked about by name — so the answer can only have
+    // moved where HEAD went since the last landed read, where the index stands off HEAD, or
+    // where it already differed. Captured on this side of the hop, so the background block
+    // measures from what the last landed read actually recorded.
+    let recordedHead = worktree(id: worktreeID)?.measurementBase?.head
+    let alreadyChanged = Set(worktree(id: worktreeID)?.changedFiles.map(\.path) ?? [])
     refreshInFlight.insert(worktreeID)
     readSequence += 1
     let stamp = readSequence
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let changed = Git.changedFiles(at: url, since: "HEAD", paths: asked.map(Array.init))
+      // The collapse — see `Git.wholesaleCandidates`. nil (a first read, an unborn branch, a
+      // head that no longer resolves) falls back to the whole diff, the honest cost then.
+      let scope =
+        asked
+        ?? Git.wholesaleCandidates(at: url, sinceHead: recordedHead).map {
+          $0.union(alreadyChanged)
+        }
+      let changed = Git.changedFiles(at: url, since: "HEAD", paths: scope.map(Array.init))
       // The index is a file inside git's own directory, so nothing that moved in the worktree
       // can have moved it: a narrowed batch is by construction one git never saw. Reading it
       // anyway is what a 400,000-entry index costs on every write an agent makes.
@@ -470,9 +484,10 @@ extension Workspace {
         if let worktree = self.worktree(id: worktreeID), stamp > worktree.readStamp {
           worktree.readStamp = stamp
           // A narrowed read answers for the paths it was given and for nothing else, so it is
-          // folded into what the worktree already holds rather than replacing it.
+          // folded into what the worktree already holds rather than replacing it — the
+          // collapsed wholesale included, whose scope is its candidates.
           let files =
-            asked.map { Git.merged(changed, into: worktree.changedFiles, for: $0) }
+            scope.map { Git.merged(changed, into: worktree.changedFiles, for: $0) }
             ?? changed
           let trackedFiles = tracked ?? worktree.trackedFiles
           // The report: everything, if what files are measured against moved under this read

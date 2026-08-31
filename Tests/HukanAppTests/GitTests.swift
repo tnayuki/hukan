@@ -153,6 +153,46 @@ final class GitTests: XCTestCase {
       whole.filter { $0.path == "a.txt" || $0.path == "fresh/d.txt" })
   }
 
+  /// The wholesale read's question, collapsed: when HEAD or the index moved and nothing in the
+  /// working tree was written, the answer can only have moved where HEAD went, where the index
+  /// stands off it, or where it already differed. The candidates plus the changed set, asked by
+  /// pathspec, must reproduce the whole read exactly — the collapse has to be invisible.
+  func testWholesaleCandidatesReproduceTheWholeRead() throws {
+    makeRepository()
+    for path in ["a.txt", "b.txt", "c.txt"] { try write("one\n", to: path) }
+    git(["add", "."])
+    git(["commit", "-q", "-m", "first"])
+    let oldHead = git(["rev-parse", "HEAD"])
+
+    // The state the last read left behind: one modified file, one untracked.
+    try write("one\ntwo\n", to: "b.txt")
+    try write("new\n", to: "e.txt")
+    let before = Git.changedFiles(at: root, since: "HEAD")
+    XCTAssertEqual(before.map(\.path), ["b.txt", "e.txt"])
+
+    // Then git moves under it and the working tree stays put: b's edit is committed away
+    // beside a change to a, and c gains a staged edit.
+    try write("one\ntwo\n", to: "a.txt")
+    git(["add", "a.txt", "b.txt"])
+    git(["commit", "-q", "-m", "second"])
+    try write("one\nstaged\n", to: "c.txt")
+    git(["add", "c.txt"])
+
+    let candidates = try XCTUnwrap(Git.wholesaleCandidates(at: root, sinceHead: oldHead))
+    XCTAssertTrue(candidates.contains("a.txt"), "HEAD moved it")
+    XCTAssertTrue(candidates.contains("b.txt"), "committed away, so its entry must go")
+    XCTAssertTrue(candidates.contains("c.txt"), "staged")
+
+    let asked = candidates.union(before.map(\.path))
+    let narrowed = Git.merged(
+      Git.changedFiles(at: root, since: "HEAD", paths: Array(asked)), into: before, for: asked)
+    XCTAssertEqual(narrowed, Git.changedFiles(at: root, since: "HEAD"))
+
+    // Nothing to measure from is not an empty answer but no answer: the whole read is honest.
+    XCTAssertNil(Git.wholesaleCandidates(at: root, sinceHead: nil))
+    XCTAssertNil(Git.wholesaleCandidates(at: root, sinceHead: "not-a-commit"))
+  }
+
   /// Folding a narrowed read back in has to leave the set indistinguishable from a whole read's
   /// — the two are compared to decide whether anything needs redrawing, so a set that merely
   /// re-sorted itself would redraw the window on every write.

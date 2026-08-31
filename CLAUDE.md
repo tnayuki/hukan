@@ -673,6 +673,13 @@ Workspace (one window)
   other one differently**: a save and the files panel's edits raise no event at all (every watcher
   carries `IgnoreSelf`), so they say what they wrote and git is asked about exactly that — but
   nothing is re-read, the buffer already holding what went to disk.
+  **A wholesale question collapses the same way.** When the repository moves — a commit, a
+  staging — nothing in the working tree was written, so the answer can only have moved where
+  HEAD went since the last read, where the index stands off HEAD, or where it already differed:
+  two metadata diffs name the candidates, the changed set is unioned in, and the same pathspec
+  read answers (6ms against 103 on the 50,000-file repository, growing with the change rather
+  than the checkout). The whole diff remains only where it is honest — a first read, or nothing
+  left to measure from.
   **A worktree's files and its repository are watched apart, on a stream each.** They are
   different questions — one narrows to what moved, the other cannot be narrowed at all — and
   FSEvents coalesces per *stream*, so a batch is answered by the worst thing in it. While the
