@@ -1694,26 +1694,28 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
 
     let row = outlineView.clickedRow
     let node = row >= 0 ? outlineView.item(atRow: row) as? RailNode : nil
+    let sessions = clickedSessions(row: row)
     // What the lifecycle items act on: never a held session — it belongs to another process, and
     // we do not act on what we do not own — so a batch quietly narrows to the ones that are ours
-    // rather than refusing outright.
-    let clicked = clickedSessions(row: row).filter { $0.heldByPID == nil }
+    // rather than refusing outright. The copy items below act on the whole set instead, held rows
+    // included: that narrowing is about acting, and naming a session is only reading it.
+    let clicked = sessions.filter { $0.heldByPID == nil }
+    /// `count` suffixes a batch and is left off a single: "Stop Session" reads better than
+    /// "Stop 1 Session", and the singular is overwhelmingly the case.
+    func label(_ verb: String, _ noun: String = "Session") -> String {
+      clicked.count == 1 ? "\(verb) \(noun)" : "\(verb) \(clicked.count) \(noun)s"
+    }
+    func add(_ title: String, _ action: Selector) {
+      let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      item.target = self
+      item.representedObject = clicked
+      menu.addItem(item)
+    }
     // A session's own lifecycle, from its row. Running: Restart (cycle the engine, resume)
     // and Stop (take it down; the next send resumes). Not running: Start, the deliberate eager
     // bring-up that is the counterpart to Stop. All distinct from Escape's turn-interrupt, which
     // stops the turn but leaves the engine up.
     if !clicked.isEmpty {
-      /// `count` suffixes a batch and is left off a single: "Stop Session" reads better than
-      /// "Stop 1 Session", and the singular is overwhelmingly the case.
-      func label(_ verb: String, _ noun: String = "Session") -> String {
-        clicked.count == 1 ? "\(verb) \(noun)" : "\(verb) \(clicked.count) \(noun)s"
-      }
-      func add(_ title: String, _ action: Selector) {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self
-        item.representedObject = clicked
-        menu.addItem(item)
-      }
       // A mixed batch gets both, each acting on the half it applies to — refusing a batch because
       // one row of it is already running would make the act depend on state you cannot see once
       // five rows are selected.
@@ -1725,6 +1727,28 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
         add(label("Start"), #selector(startClickedSessions(_:)))
       }
       menu.addItem(.separator())
+    }
+    // The two ways to name a session: the file to read it out of, and the id to resume it by.
+    // They sit between the lifecycle items and the Archive/Delete pair, which is where the files
+    // panel puts Copy Path — after what merely acts on the thing, before what destroys it — and
+    // nothing may come between Archive and Delete, since the pair is read as one choice.
+    if !sessions.isEmpty {
+      func copy(_ title: String, _ action: Selector) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.representedObject = sessions
+        menu.addItem(item)
+      }
+      let count = sessions.count
+      copy(
+        count == 1 ? "Copy Transcript Path" : "Copy \(count) Transcript Paths",
+        #selector(copyClickedTranscriptPaths(_:)))
+      copy(
+        count == 1 ? "Copy Session ID" : "Copy \(count) Session IDs",
+        #selector(copyClickedSessionIDs(_:)))
+      menu.addItem(.separator())
+    }
+    if !clicked.isEmpty {
       // Archive and Delete are one pair, in that order: both are "get this row out of the way",
       // and they are the two answers to it — the reversible one, then the one that cannot be
       // undone. Reading them together is what says which is which, so no separator comes between.
@@ -1789,6 +1813,48 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     let recent = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
     recent.submenu = RecentRepositoriesMenu(title: "Open Recent")
     menu.addItem(recent)
+  }
+
+  @objc private func copyClickedTranscriptPaths(_ sender: NSMenuItem) {
+    guard let sessions = sender.representedObject as? [AgentSession] else { return }
+    put(transcriptPaths(of: sessions))
+  }
+
+  @objc private func copyClickedSessionIDs(_ sender: NSMenuItem) {
+    guard let sessions = sender.representedObject as? [AgentSession] else { return }
+    put(sessionIDs(of: sessions))
+  }
+
+  /// Where each session's conversation is written, absolute and in that order.
+  ///
+  /// Absolute is the only form there is: the file lives in Claude Code's store, not in the
+  /// worktree, so there is nothing for it to be relative to — which is why this is one item where
+  /// the files panel's Copy Path is two. A session that has never run is named too, its file not
+  /// existing yet being a fact about the conversation rather than about the path: the id and the
+  /// worktree are what decide the name, and both are already settled. A session whose worktree
+  /// this window no longer holds is the one thing that cannot be named, and it drops out.
+  ///
+  /// Split from the click so it can be asserted: the menu is built from `clickedRow`, which is
+  /// only meaningful while the click that raised it is being handled.
+  func transcriptPaths(of sessions: [AgentSession]) -> [String] {
+    guard let workspace else { return [] }
+    return sessions.compactMap { session in
+      guard let worktree = workspace.worktree(id: session.worktreeID) else { return nil }
+      return ClaudeSessionStore.transcriptURL(id: session.id, worktree: worktree.url).path
+    }
+  }
+
+  /// The ids, spelt the way Claude Code spells them — so what is pasted matches the store rather
+  /// than only resolving against it (see `ClaudeSessionStore.name`).
+  func sessionIDs(of sessions: [AgentSession]) -> [String] {
+    sessions.map { ClaudeSessionStore.name($0.id) }
+  }
+
+  /// One a line, which is the shape a batch of anything goes onto the pasteboard as.
+  private func put(_ lines: [String]) {
+    guard !lines.isEmpty else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
   }
 
   @objc private func closeClickedRepository(_ sender: NSMenuItem) {

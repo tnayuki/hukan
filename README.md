@@ -245,6 +245,12 @@ hidden — and one you send a message to leaves the fold for good, since instruc
 deciding you are not done with it. Several rows can be selected at once, so a batch of finished attempts is one gesture. A
 worktree's rows leave when git stops listing it, or when its repository is closed.
 
+The same right-click also names a session two ways, for handing to something outside the window:
+*Copy Transcript Path* gives the jsonl Claude Code is writing, and *Copy Session ID* the id it is
+writing under. Both answer for a session another process is holding, and for one that has yet to
+write anything — reading a row is not acting on it, and a conversation with no file yet still has
+a name waiting for it.
+
 ---
 
 ## Install
