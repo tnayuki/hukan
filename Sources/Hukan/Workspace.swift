@@ -67,8 +67,13 @@ final class Workspace {
   var pendingPaths: [UUID: Set<String>?] = [:]
 
   /// The paths FSEvents named, as paths within the worktree — and nil when any of them is not
-  /// one. Anything under git's own directory is the case that matters: `.git/HEAD` moving is
-  /// not a file anyone has open, but it changes what every open file is measured against.
+  /// one at all, the batch that can be placed nowhere and so narrows nothing. Empty is a third
+  /// answer and not the second: nothing to do.
+  ///
+  /// Git's own directory is dropped rather than reported. This is the worktree's stream, which
+  /// is asked not to carry it (`syncWatchers`) — the repository has a stream of its own, and it
+  /// is the only thing that speaks for it. What survives here is a guard, for the linked
+  /// worktree's `.git` pointer file, which is a file and so cannot be excluded.
   static func relativePaths(_ paths: [String], under root: String) -> Set<String>? {
     // Both spellings of the worktree: the one we were handed, and the one the filesystem calls
     // canonical. FSEvents answers in canonical paths — `/private/var/…` where a URL built from
@@ -80,15 +85,14 @@ final class Workspace {
       let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
       guard let root = roots.first(where: { standardized.hasPrefix($0 + "/") }) else { return nil }
       let suffix = String(standardized.dropFirst(root.count + 1))
-      guard !suffix.hasPrefix(".git/"), suffix != ".git" else { return nil }
+      guard !suffix.hasPrefix(".git/"), suffix != ".git" else { continue }
       relative.insert(suffix)
     }
-    return relative.isEmpty ? nil : relative
+    return relative
   }
 
-  /// Whether a batch inside git's own directory — the second watcher a linked worktree carries,
-  /// whose git directory is outside it — is one the worktree has to be read again for. A path
-  /// that cannot be placed under the directory counts, since a batch nobody can read is not one
+  /// Whether a batch on the *repository's* stream is one the worktree has to be read again for.
+  /// Conservative: a path that cannot be placed counts, since a batch nobody can read is not one
   /// to dismiss.
   static func gitDirectoryMoved(_ paths: [String], under gitDirectory: String) -> Bool {
     let roots = Set([gitDirectory, canonicalPath(gitDirectory)].compactMap { $0 })

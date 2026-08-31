@@ -21,7 +21,14 @@ final class DirectoryWatcher {
   /// still be drained, and a shared key could not tell the two apart.
   private let queueKey = DispatchSpecificKey<Void>()
 
-  init(url: URL, onChange: @escaping ([String]) -> Void) {
+  /// `excluding` names directories the stream must not report at all — the repository inside a
+  /// main checkout, git's object database inside the repository. Filtering them here rather than
+  /// in the callback is not only about volume, though a single `git add` writes a blob per file:
+  /// FSEvents coalesces per *stream*, so anything left in is free to arrive in the same batch as
+  /// something else, and a batch is answered by the worst thing in it. What the stream never
+  /// carries can never widen another question. Up to 8, they must be directories, and a path that
+  /// does not exist is tolerated (measured, both).
+  init(url: URL, excluding: [URL] = [], onChange: @escaping ([String]) -> Void) {
     self.callback = onChange
 
     queue.setSpecific(key: queueKey, value: ())
@@ -66,6 +73,11 @@ final class DirectoryWatcher {
       // A directory that cannot be watched (it may not exist yet) simply misses live updates;
       // the callers' refresh paths still catch it, so this is a graceful degrade, not a failure.
       return
+    }
+
+    // Before the start, which is when it is read.
+    if !excluding.isEmpty {
+      FSEventStreamSetExclusionPaths(stream, excluding.map(\.path) as CFArray)
     }
 
     self.stream = stream

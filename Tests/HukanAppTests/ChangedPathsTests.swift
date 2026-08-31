@@ -17,30 +17,38 @@ final class ChangedPathsTests: XCTestCase {
       ["Sources/A.swift", "README.md"])
   }
 
-  /// Anything under git's own directory is not a file anyone has open, but HEAD or the index
-  /// moving changes what every open file is measured against — so it cannot be narrowed.
-  func testAGitDirectoryPathIsWholesale() {
-    XCTAssertNil(Workspace.relativePaths(["/tmp/worktree/.git/HEAD"], under: root))
-    XCTAssertNil(Workspace.relativePaths(["/tmp/worktree/.git"], under: root))
-    XCTAssertNil(
+  /// The worktree's stream is asked not to carry the repository at all, so a path under it is
+  /// not an answer this has to give — only a linked worktree's `.git` pointer file can still
+  /// arrive, being a file where an exclusion needs a directory. Either way it is dropped, and
+  /// what speaks for the repository is the repository's own stream.
+  func testAGitDirectoryPathIsNotOneOfTheWorktreesFiles() {
+    for path in ["/tmp/worktree/.git/HEAD", "/tmp/worktree/.git/index", "/tmp/worktree/.git"] {
+      XCTAssertEqual(Workspace.relativePaths([path], under: root), [], path)
+    }
+    XCTAssertEqual(
       Workspace.relativePaths(
-        ["/tmp/worktree/Sources/A.swift", "/tmp/worktree/.git/index"],
-        under: root),
-      "one unplaceable path makes the whole batch unplaceable")
+        ["/tmp/worktree/Sources/A.swift", "/tmp/worktree/.git/index"], under: root),
+      ["Sources/A.swift"], "and the file beside it is still a file")
   }
 
-  /// A path that is not under the worktree at all cannot be placed either — the linked
-  /// worktree's git directory arrives that way.
+  /// A path that is not under the worktree at all cannot be placed — nothing can be said about
+  /// what it moved, so the whole batch is wholesale.
   func testAPathOutsideTheWorktreeIsWholesale() {
     XCTAssertNil(Workspace.relativePaths(["/somewhere/else/HEAD"], under: root))
-    XCTAssertNil(Workspace.relativePaths([], under: root))
+    XCTAssertNil(
+      Workspace.relativePaths(
+        ["/tmp/worktree/Sources/A.swift", "/somewhere/else/HEAD"], under: root))
+    // An empty batch is nothing to do, not "everything moved": nil is reserved for the paths
+    // that could not be placed, since that is the only answer a later batch cannot narrow.
+    XCTAssertEqual(Workspace.relativePaths([], under: root), [])
   }
 
-  /// The batch on the *other* watcher — a linked worktree's git directory, which lives outside
-  /// the worktree. A read of the whole worktree is what an answer of yes costs, so git's own
-  /// churn must not buy one: the object database, the reflog, the lock file every operation
-  /// takes and drops, the message an editor is handed, and another worktree's state.
-  func testTheGitDirectorysOwnBatchIsAskedPathByPath() {
+  /// The repository's own stream. A read of the whole worktree is what an answer of yes costs,
+  /// so git's churn must not buy one: the object database, the reflog, the lock files, the
+  /// message an editor is handed, another worktree's state — which has a stream of its own. The
+  /// heaviest of those never leave the stream (`syncWatchers` excludes the directories), and
+  /// this answers for the rest, and for a directory a repository happens not to have.
+  func testTheRepositorysBatchIsAskedPathByPath() {
     let directory = "/tmp/repo/.git/worktrees/task"
     XCTAssertTrue(Workspace.gitDirectoryMoved(["\(directory)/index"], under: directory))
     XCTAssertTrue(Workspace.gitDirectoryMoved(["\(directory)/HEAD"], under: directory))

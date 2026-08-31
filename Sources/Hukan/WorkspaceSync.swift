@@ -332,17 +332,32 @@ extension Workspace {
       // *before* this moment needs no report — nothing was watching, so nothing was shown that
       // could have gone stale.
       worktree.measurementBase = Git.measurementBase(at: worktree.url)
-      // Watch the whole worktree subtree: an edit, and — in the main checkout, whose `.git` is
-      // inside it — the commit that clears those edits away, a change worth noticing just the
-      // same. The re-query is where ignored churn (a build writing into `node_modules`)
-      // collapses to a cheap no-op.
+      // Two streams, and the split is the point. A worktree's files and its repository are
+      // different questions with different answers — one narrows to what moved, the other cannot
+      // be narrowed at all — and FSEvents coalesces per stream, so carrying both on one meant a
+      // `git status` an agent ran arrived in the same batch as the file it had just written, and
+      // the batch was answered by the worse half: the file's name was dropped and the whole
+      // worktree read again. A linked worktree always had the two, its repository being outside
+      // it; the main checkout keeps its `.git` inside the subtree and so had to be told to leave
+      // it out. Now every worktree is watched the same way.
       let root = worktree.url.standardizedFileURL.path
       var started = [
-        DirectoryWatcher(url: worktree.url) { [weak self] paths in
-          let moved = Workspace.relativePaths(paths, under: root)
-          // The index lists again the directories the batch touched, on its own queue, and
-          // says which — before git is asked, since the tree does not wait on git and git could
-          // not answer for a `mkdir` in any case. No index yet means no worktree on screen that
+        DirectoryWatcher(
+          url: worktree.url, excluding: [worktree.url.appendingPathComponent(".git")]
+        ) { [weak self] paths in
+          guard let moved = Workspace.relativePaths(paths, under: root) else {
+            // Placed nowhere, so nothing about it can be narrowed: the index walks again and
+            // everything open is measured against git afresh.
+            self?.worktree(id: id)?.index?.update(moved: nil) { directories in
+              self?.onWorktreePathsMoved?(id, directories)
+            }
+            self?.refreshFiles(worktreeID: id, moved: nil)
+            return
+          }
+          guard !moved.isEmpty else { return }
+          // The index lists again the directories the batch touched, on its own queue, and says
+          // which — before git is asked, since the tree does not wait on git and git could not
+          // answer for a `mkdir` in any case. No index yet means no worktree on screen that
           // reads one.
           self?.worktree(id: id)?.index?.update(moved: moved) { directories in
             self?.onWorktreePathsMoved?(id, directories)
@@ -350,23 +365,19 @@ extension Workspace {
           self?.refreshFiles(worktreeID: id, moved: moved)
         }
       ]
-      // A linked worktree keeps a pointer file where the main checkout keeps a directory, so its
-      // `HEAD` and `index` live under the common dir instead — outside everything above. Staging
-      // and committing there write nothing inside the worktree at all, so without this second
-      // watcher the diffstat, the ± scope and the gutter kept describing work that had already
-      // been committed, and nothing ever corrected them: `refreshGitState` on focus re-reads the
-      // branch, which a commit does not move.
-      if let gitDirectory = Git.gitDirectory(at: worktree.url),
-        !gitDirectory.path.hasPrefix(worktree.url.standardizedFileURL.path + "/")
-      {
-        // Nothing here is a file anyone has open, but HEAD and the index moving changes what
-        // every open file is measured against — so what this one reports, it reports as
-        // "everything". What it reports at all is the narrower question: most of a batch in
-        // there is git's own churn, and a `git add` writing a dozen blobs must not re-read the
-        // worktree a dozen times.
+      // Nothing in there is a file anyone has open, but HEAD and the index moving changes what
+      // every open file is measured against — so what this one reports, it reports as
+      // "everything". What it reports at all is the narrower question: most of a batch in there
+      // is git's own churn, and a `git add` writing a dozen blobs must not read the worktree a
+      // dozen times. The heaviest of it never leaves the stream (`Git.movesTheWorkingSet` still
+      // answers for the rest, and for a directory this repository happens not to have).
+      if let gitDirectory = Git.gitDirectory(at: worktree.url) {
         let directory = gitDirectory.standardizedFileURL.path
         started.append(
-          DirectoryWatcher(url: gitDirectory) { [weak self] paths in
+          DirectoryWatcher(
+            url: gitDirectory,
+            excluding: ["objects", "logs", "worktrees"].map(gitDirectory.appendingPathComponent)
+          ) { [weak self] paths in
             guard Workspace.gitDirectoryMoved(paths, under: directory) else { return }
             self?.refreshFiles(worktreeID: id, moved: nil)
           })

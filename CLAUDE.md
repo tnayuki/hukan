@@ -673,14 +673,22 @@ Workspace (one window)
   other one differently**: a save and the files panel's edits raise no event at all (every watcher
   carries `IgnoreSelf`), so they say what they wrote and git is asked about exactly that — but
   nothing is re-read, the buffer already holding what went to disk.
-  **A linked worktree's repository is watched apart from it, and most of what is written there
-  moves nothing.** The answer costs a read of the whole worktree, so the batch is asked path by
-  path: the object database, the reflog, the lock file every operation takes and drops, the
-  message an editor is handed, the hooks — and another worktree's directory, which holds that
-  worktree's own HEAD and index and is watched on its own, so while it counted an agent working
-  on a task re-read the main checkout from top to bottom on every command it ran. Anything not
-  recognised as that churn counts, since what is being decided is whether to read, and a read
-  nobody needed is cheaper than a reading left stale.
+  **A worktree's files and its repository are watched apart, on a stream each.** They are
+  different questions — one narrows to what moved, the other cannot be narrowed at all — and
+  FSEvents coalesces per *stream*, so a batch is answered by the worst thing in it. While the
+  main checkout carried both on one, its `.git` being inside the subtree, a `git status` an
+  agent ran arrived in the same batch as the file it had just written and the file's name was
+  dropped with it. A linked worktree always had the two, its repository living outside it; the
+  file stream is now told to leave `.git` out, so every worktree is watched the same way and the
+  mixing cannot happen rather than being sorted out afterwards. **Most of what is written in a
+  repository moves nothing**, and an answer of yes costs a read of the whole worktree, so the
+  batch is asked path by path: the object database, the reflog, the lock file every operation
+  takes and drops, the message an editor is handed, the hooks — and another worktree's
+  directory, which holds that worktree's own HEAD and index and is watched on its own, so while
+  it counted an agent working on a task re-read the main checkout from top to bottom on every
+  command it ran. The heaviest of those never leave the stream either. Anything not recognised
+  as churn counts, since what is being decided is whether to read, and a read nobody needed is
+  cheaper than a reading left stale.
 
 - **hukan observes worktrees, it does not act on them.** Work reaches main through a PR the
   agent opens itself; cleaning up a merged worktree is a plain `git worktree remove` any

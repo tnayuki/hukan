@@ -409,16 +409,17 @@ final class WorktreeSyncTests: XCTestCase {
     wait(for: [sawTheCommit], timeout: 20)
   }
 
-  /// The second watcher is only for the worktrees that need one — the main checkout keeps its
-  /// git directory inside itself, where the first one already covers it.
-  func testOnlyALinkedWorktreeIsWatchedTwice() throws {
+  /// Every worktree is watched twice, and the pair is the design: its files on one stream, its
+  /// repository on another. The main checkout keeps its git directory inside the subtree, so its
+  /// file stream is told to leave it out rather than being left to sort the two apart afterwards.
+  func testEveryWorktreeIsWatchedTwice() throws {
     let (main, linked) = try makeRepositoryWithWorktree()
     let workspace = Workspace()
     workspace.openRepository(main)
 
     let mainID = try XCTUnwrap(workspace.worktree(atPath: main.path)).id
     let linkedID = try XCTUnwrap(workspace.worktree(atPath: linked.path)).id
-    XCTAssertEqual(workspace.watchers[mainID]?.count, 1)
+    XCTAssertEqual(workspace.watchers[mainID]?.count, 2)
     XCTAssertEqual(workspace.watchers[linkedID]?.count, 2)
   }
 
