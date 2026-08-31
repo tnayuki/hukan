@@ -107,6 +107,75 @@ final class WorktreeIndexTests: XCTestCase {
     XCTAssertEqual(index.entries(of: "top.txt")?.map(\.name), ["now.txt"])
   }
 
+  /// The flattened list is spliced rather than rebuilt, so the splice has to be indistinguishable
+  /// from the rebuild — over a run of batches that between them create, delete, replace a file
+  /// with a directory and a directory with a file, and take a whole subtree away. The oracle is
+  /// the index's own full walk of the same disk.
+  func testTheSplicedFlatteningMatchesAFullWalk() throws {
+    let root = try makeTree(["src/a.swift", "src/deep/b.swift", "top.txt"])
+    let manager = FileManager.default
+    let index = WorktreeIndex(root: root) { directories in
+      Set(directories.filter { ($0 as NSString).lastPathComponent == "ignored" })
+    }
+    built(index)
+
+    func batch(_ paths: Set<String>, _ change: () throws -> Void) rethrows {
+      try change()
+      let done = expectation(description: "batch")
+      index.update(moved: paths) { _ in done.fulfill() }
+      wait(for: [done], timeout: 5)
+
+      // The oracle: a second index over the same disk, walked from scratch.
+      let fresh = WorktreeIndex(root: root) { directories in
+        Set(directories.filter { ($0 as NSString).lastPathComponent == "ignored" })
+      }
+      built(fresh)
+      XCTAssertEqual(index.filePaths, fresh.filePaths, "after \(paths.sorted())")
+    }
+
+    // A file edited: no name moves at all, which is the case the splice exists for.
+    try batch(["src/a.swift"]) {
+      try "changed\n".write(
+        to: root.appendingPathComponent("src/a.swift"), atomically: true, encoding: .utf8)
+    }
+    // Made, and made in a directory that is itself new — the walk has to bring both in.
+    try batch(["src/c.swift", "fresh/d.swift", "fresh"]) {
+      try "c\n".write(
+        to: root.appendingPathComponent("src/c.swift"), atomically: true, encoding: .utf8)
+      try manager.createDirectory(
+        at: root.appendingPathComponent("fresh/inner"), withIntermediateDirectories: true)
+      try "d\n".write(
+        to: root.appendingPathComponent("fresh/d.swift"), atomically: true, encoding: .utf8)
+      try "e\n".write(
+        to: root.appendingPathComponent("fresh/inner/e.swift"), atomically: true, encoding: .utf8)
+    }
+    // A whole subtree taken away.
+    try batch(["src/deep", "src/deep/b.swift"]) {
+      try manager.removeItem(at: root.appendingPathComponent("src/deep"))
+    }
+    // A file where a directory was, and a directory where a file was.
+    try batch(["fresh/inner", "top.txt"]) {
+      try manager.removeItem(at: root.appendingPathComponent("fresh/inner"))
+      try "was a directory\n".write(
+        to: root.appendingPathComponent("fresh/inner"), atomically: true, encoding: .utf8)
+      try manager.removeItem(at: root.appendingPathComponent("top.txt"))
+      try manager.createDirectory(
+        at: root.appendingPathComponent("top.txt"), withIntermediateDirectories: true)
+      try "inside\n".write(
+        to: root.appendingPathComponent("top.txt/now.txt"), atomically: true, encoding: .utf8)
+    }
+    // One git has started ignoring keeps its files out of the list, the walk not going in.
+    try batch(["ignored", "ignored/junk.o"]) {
+      try manager.createDirectory(
+        at: root.appendingPathComponent("ignored"), withIntermediateDirectories: true)
+      try "junk\n".write(
+        to: root.appendingPathComponent("ignored/junk.o"), atomically: true, encoding: .utf8)
+    }
+    XCTAssertFalse(index.filePaths.contains { $0.hasPrefix("ignored/") })
+    XCTAssertTrue(index.filePaths.contains("fresh/inner"))
+    XCTAssertTrue(index.filePaths.contains("top.txt/now.txt"))
+  }
+
   /// A batch names paths; the directories they sit in are read again, a new directory is walked
   /// in, and a directory that went takes its subtree out. Each answer says which directories
   /// now read differently.
