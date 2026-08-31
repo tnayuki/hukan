@@ -1222,6 +1222,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
   func windowWillClose(_ notification: Notification) {
     WorkspaceWindowController.all.removeAll { $0 === self }
+    // The window is the only way to anything running in it, so closing it has to take the
+    // processes with it: the engines and the terminals' shells are hukan's own children, and the
+    // app outlives its last window (`applicationShouldTerminateAfterLastWindowClosed`), so
+    // without this they are left alive and unreachable until it quits. Releasing the workspace
+    // does not do it — an engine's waiter and a shell's pty are held by the process, not by the
+    // view, and SwiftTerm's own deinit says outright that it closes its I/O and sends no signal.
+    // It is the teardown closing a repository does, run over the lot; nothing on disk is touched,
+    // so every one of these sessions resumes where it stopped.
+    workspace.dropWorktrees(workspace.worktrees)
     // Nothing left to march off — start the next window centred, not partway down a staircase.
     if WorkspaceWindowController.all.isEmpty { WorkspaceWindowController.cascadePoint = nil }
   }

@@ -99,6 +99,35 @@ final class TerminalSessionTests: XCTestCase {
     XCTAssertTrue(spin(untilTrue: { kill(shell, 0) != 0 }), "the shell outlived the close")
   }
 
+  /// Closing the window is the other way a shell can be left behind, and the one nothing else
+  /// catches: the app outlives its last window, so a workspace released with terminals in it left
+  /// them running as hukan's children, invisible, until the app quit. SwiftTerm's `deinit` is no
+  /// backstop — it closes its I/O and says outright that it sends no signal.
+  func testClosingTheWindowHangsUpItsShells() {
+    let directory = URL(fileURLWithPath: NSTemporaryDirectory()).standardizedFileURL
+    let repository = Repository(id: directory.path)
+    let worktree = Worktree(url: directory, branch: "main", repository: repository)
+    repository.worktrees = [worktree]
+    let workspace = Workspace()
+    workspace.repositories = [repository]
+    workspace.selectedWorktreeID = worktree.id
+
+    let controller = WorkspaceWindowController(workspace: workspace)
+    let window = controller.window
+    controller.newTerminal(nil)
+    guard let terminal = workspace.terminals.first else { return XCTFail("no terminal") }
+    XCTAssertTrue(
+      spin(untilTrue: {
+        !terminal.scrollbackText().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      }),
+      "the shell never reached a prompt")
+    guard let shell = terminal.shellPID else { return XCTFail("no shell to watch") }
+
+    window?.close()
+    XCTAssertTrue(spin(untilTrue: { kill(shell, 0) != 0 }), "the shell outlived its window")
+    XCTAssertTrue(workspace.terminals.isEmpty, "and the model still held it")
+  }
+
   /// The window's poll, which is the half the model cannot show: in the app nothing calls
   /// `refreshForegroundProcess` by hand, a timer does, and a timer that never starts leaves every
   /// tab named for its directory forever — indistinguishable, on an idle terminal, from working.
