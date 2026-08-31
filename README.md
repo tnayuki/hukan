@@ -195,7 +195,9 @@ the Claude Code engines, what those spawned and the terminals, with a process co
 **Sessions.** A restored session reads its conversation back rather than opening empty. Names are
 Claude Code's own titles. A session not yet reattached is marked `detached` and resumes on
 selection; one another process already holds shows greyed and cannot be started, but still reads
-and searches, and returns the moment that process exits.
+and searches, and returns the moment that process exits. A `claude` started outside the window —
+in a terminal, in a worktree open here — joins the rail as it starts, held, and takes its name
+when it writes its first message.
 
 **Slash commands.** A `/` at the head of the composer opens the engine's own command list — its
 built-ins beside every skill and user command it found — filtered as you type, taken with `⏎` or
@@ -231,8 +233,8 @@ merely finishing is silent.
 
 Nothing leaves the rail by age, and nothing is deleted from disk except by asking — Delete
 Session removes the transcript that *is* the session, permanently. Sessions are discovered from
-Claude Code's transcripts and ordered by when you last instructed them, each row saying how long
-ago that was. *Archive* puts the ones
+Claude Code's transcripts, and one that has yet to write a transcript from the live engine that
+holds it, ordered by when you last instructed them, each row saying how long ago that was. *Archive* puts the ones
 you are done with into a folded section at the foot of the main checkout's rows — only main's,
 since a linked worktree leaves the rail with its sessions when git stops listing it. It stops the
 agent, the way *Stop Session* does, and destroys nothing: the transcript stays exactly where it

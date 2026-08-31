@@ -519,6 +519,28 @@ Workspace (one window)
   only what the context menu acts on; the batch is sessions only, and `approve`/`deny` are
   pointedly not in it, since making a decision cheaper by the dozen is the opposite of why they
   are guarded.
+- **A session started outside the window gets its row from the registry, not from a transcript.**
+  The rail is built by listing Claude Code's transcripts, and that list cannot answer for a
+  `claude` someone starts in a terminal: the transcript is not written until the first message —
+  measured at eleven seconds on a session started here, which is simply how long it took to type —
+  so the session is working with no row until the next time a repository is opened or the app is
+  relaunched, which is the one thing the rail exists to prevent. What is on time is the
+  per-process registry hukan already watches for the held-elsewhere state: a record appears the
+  moment the engine is up, and it carries the directory as well as the id, which is the whole of
+  what a row needs. So the acquire edge that greys a row also *makes* one, held, when the id is
+  unknown and the directory is a worktree this window holds. Only the worktree root, never a
+  directory inside it: Claude Code keys its transcript directory off the process's directory, so a
+  session started one level down is one the transcript listing will never see, and a row for it is
+  a row the next discovery drops. The record is written once and never rewritten, which is what
+  rules out waiting for the transcript and re-reading on a second event — there is no second
+  event. **The two things it then owes are what nothing else will do for it.** Its name arrives
+  when its transcript does, so the transcript store is watched — but only while such a row is
+  still nameless, since every `claude` on the machine writes into that directory. And a row whose
+  process goes without leaving a transcript behind was never a conversation, so it leaves with the
+  process: without that, a `claude` started and quit before a word was typed would leave a
+  permanent "New session" on the rail, which is exactly the pile of rows standing for nothing that
+  this window is supposed to be the opposite of. A New Session opened here by hand is someone's
+  intent and stays.
 - **The rail navigates between tasks; the files panel navigates within one.** The rail lists
   worktrees, sessions and what is waiting (approvals) — bounded state, which is why one field
   searches it, under the same typing-filters / Return-searches rule as the panel's (titles are in

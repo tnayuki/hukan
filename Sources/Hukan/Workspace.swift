@@ -50,6 +50,12 @@ final class Workspace {
   /// delete here, so the directory watch cannot be trusted for release.
   var sessionsRegistryWatcher: DirectoryWatcher?
 
+  /// The watcher over Claude Code's transcript store, up only while a row taken off the registry
+  /// is still nameless — see `syncTranscriptWatcher()`. Nothing else would ever name one: reading
+  /// titles is discovery's job and discovery has already run, and a session hukan runs names
+  /// itself from what you sent.
+  var transcriptsWatcher: DirectoryWatcher?
+
   /// Worktrees with a `refreshFiles` git query in flight, and those that changed again while one
   /// was running. Together they collapse a storm of FSEvents into at most one query plus one
   /// queued rerun per worktree — see `refreshFiles`. Touched only on the main thread.
@@ -532,15 +538,11 @@ final class Workspace {
   /// it, a worktree root this window holds, and registering anything else would make a Worktree
   /// git does not list, which the next reconcile would drop — taking this session, the one that
   /// just came home, with it. False when nothing matched, and the session stays where it was.
-  /// Paths are compared resolved, because the engine reports its directory through `realpath`.
+  /// Paths are compared resolved, because the engine reports its directory through `realpath`
+  /// (see `worktree(atRoot:)`, which the registry read asks the same question of).
   @discardableResult
   func returnSession(_ session: AgentSession, to url: URL) -> Bool {
-    let target = url.standardizedFileURL.resolvingSymlinksInPath().path
-    guard
-      let home = worktrees.first(where: {
-        $0.url.standardizedFileURL.resolvingSymlinksInPath().path == target
-      })
-    else { return false }
+    guard let home = worktree(atRoot: url) else { return false }
     session.worktreeID = home.id
     return true
   }

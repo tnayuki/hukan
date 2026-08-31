@@ -818,31 +818,46 @@ enum ClaudeSessionStore {
   /// Claude Code and Unterm use; pid reuse can fake "alive", but the entry clears itself the
   /// moment that unrelated process exits, so a refusal is at worst temporary.
   static func liveProcessOwning(id: UUID) -> pid_t? {
-    liveProcessOwners()[id]
+    liveProcessOwners()[id]?.pid
   }
 
-  /// The whole registry, read once: which live process holds each session it names.
+  /// Where Claude Code registers the engines that are up — one `<pid>.json` per live process.
+  /// Named here rather than spelt out at each user, so the watch and the read cannot drift apart.
+  static var registryDirectory: URL {
+    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/sessions")
+  }
+
+  /// A live engine as its own record describes it: which process, and the directory it was
+  /// started in. The directory is what makes the registry more than a lock — it says which
+  /// worktree the session belongs to, so a session born outside this window can be put on the
+  /// rail from the record alone, before there is a transcript to discover it by. Optional
+  /// because the hold does not need it: a record without one still names its holder.
+  struct SessionOwner {
+    let pid: pid_t
+    let cwd: URL?
+  }
+
+  /// The whole registry, read once: which live process holds each session it names, and where.
   ///
   /// Asking it one session at a time is what the rail used to do, and the rail asks about every
   /// session it lists — the registry was therefore re-listed and every record re-parsed once per
   /// row, which on this machine's own hukan checkout (121 sessions, 15 processes registered) cost
   /// 42 ms of the main thread per rescan, and a rescan runs on every FSEvents batch under
   /// `~/.claude/sessions` as well as on every discovery.
-  static func liveProcessOwners() -> [UUID: pid_t] {
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".claude/sessions")
+  static func liveProcessOwners(in directory: URL = registryDirectory) -> [UUID: SessionOwner] {
     guard
       let entries = try? FileManager.default.contentsOfDirectory(
-        at: dir, includingPropertiesForKeys: nil)
+        at: directory, includingPropertiesForKeys: nil)
     else { return [:] }
-    var owners: [UUID: pid_t] = [:]
+    var owners: [UUID: SessionOwner] = [:]
     for url in entries where url.pathExtension == "json" {
       guard let data = try? Data(contentsOf: url),
         let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
         let sessionID = record["sessionId"] as? String, let id = UUID(uuidString: sessionID),
         let pid = record["pid"] as? Int, kill(pid_t(pid), 0) == 0
       else { continue }
-      owners[id] = pid_t(pid)
+      let cwd = (record["cwd"] as? String).map { URL(fileURLWithPath: $0) }
+      owners[id] = SessionOwner(pid: pid_t(pid), cwd: cwd)
     }
     return owners
   }

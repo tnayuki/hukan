@@ -163,6 +163,15 @@ final class AgentSession {
   /// later turn is being cut away unseen. Nil before the first message of the session.
   private var lastUserMessageUUID: String? { userMessages.last?.uuid }
 
+  /// This row came off Claude Code's registry rather than off a transcript — a `claude` started
+  /// outside this window, listed while its process was alive and before it had written anything
+  /// (see `Workspace.adoptRegisteredSessions`). It marks the two things nothing else answers
+  /// for: once the hold lifts, a row that left no transcript behind was never a conversation and
+  /// goes with its process — where a New Session opened here by hand is someone's intent and
+  /// stays — and until the transcript arrives there is nobody to read a name off, so the row is
+  /// what `syncTranscriptWatcher()` is waiting for.
+  var isRegistryBorn = false
+
   /// A live pid in another process — a second hukan, a terminal `claude --resume`, or a crash
   /// orphan whose pid is still alive — that already owns this session id. Spawning a second
   /// engine on the same transcript would be two claudes writing one file, so hukan refuses:

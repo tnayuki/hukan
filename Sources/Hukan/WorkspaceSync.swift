@@ -7,12 +7,15 @@ extension Workspace {
   ///
   /// Nothing is imported and nothing is stored on our side, so there is no list to corrupt
   /// and no husks to accumulate. A worktree that gets landed or discarded takes its
-  /// sessions out of the rail with it. Old sessions are not dropped — they fold into the
-  /// "Older" time bucket (collapsed by default), which is what keeps the rail glanceable
-  /// without hiding history; a base checkout that has carried many sessions is exactly the
-  /// long tail that bucket exists to hold.
+  /// sessions out of the rail with it. Nothing leaves by age: a session goes below the fold when
+  /// you archive it (`Workspace.isArchived`), which is a decision rather than a clock, so this
+  /// rebuild lists the long tail of a checkout as readily as today's work.
   func discoverSessions() {
-    let live = sessions.filter { $0.isRunning }
+    // Carried across the rebuild: a session we run ourselves, and one another live process
+    // holds. Neither is answered by the transcripts this rebuild lists — the first has not
+    // written one yet, and the second may not have either (see `adoptRegisteredSessions`) — and
+    // both are running work, which is the one thing the rail must never drop.
+    let live = sessions.filter { $0.isRunning || $0.heldByPID != nil }
     var known = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     var rebuilt: [AgentSession] = []
     var visited = Set<String>()
@@ -116,6 +119,7 @@ extension Workspace {
 
   /// Adopt a batch of names, in one rail redraw.
   private func adopt(titles: [(UUID, String)]) {
+    defer { syncTranscriptWatcher() }
     var changed = false
     for (id, title) in titles {
       guard let session = sessions.first(where: { $0.id == id }), session.title == nil else {
@@ -307,9 +311,8 @@ extension Workspace {
   /// workspace's lifetime, since the watched directory never changes.
   func startSessionsRegistryWatcher() {
     guard sessionsRegistryWatcher == nil else { return }
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".claude/sessions")
-    sessionsRegistryWatcher = DirectoryWatcher(url: dir) { [weak self] _ in
+    sessionsRegistryWatcher = DirectoryWatcher(url: ClaudeSessionStore.registryDirectory) {
+      [weak self] _ in
       self?.rescanHeldSessions()
     }
   }
@@ -320,14 +323,136 @@ extension Workspace {
   /// scan that finds nothing new reloads nothing.
   func rescanHeldSessions() {
     let owners = ClaudeSessionStore.liveProcessOwners()
+    var vanished: Set<UUID> = []
     for session in sessions {
       if session.isRunning {
         session.clearHeldElsewhere()
       } else if let owner = owners[session.id] {
-        session.markHeldElsewhere(by: owner)
+        session.markHeldElsewhere(by: owner.pid)
       } else {
+        // Nobody holds it, so "is there anything to resume" can have changed: a session adopted
+        // below joined the rail before it had written a transcript, and the process that has
+        // gone is what wrote one. Asked of the hold's edge, and of a registry-born row whether
+        // or not the edge is this pass's — the release usually arrives on the holder's own
+        // `.exit` watch, which cleared the pid before any rescan could run. One stat either way,
+        // and a rescan is a claude starting or stopping, not a redraw.
+        if session.heldByPID != nil || session.isRegistryBorn,
+          let worktree = worktree(id: session.worktreeID)
+        {
+          session.isDetached = ClaudeSessionStore.isResumable(
+            id: session.id, worktree: worktree.url)
+          // Nothing was written, so there was no conversation: the row stood for a process, and
+          // the process is gone. Undoing the adoption is the honest end of it — leaving it would
+          // grow a "New session" per `claude` that was started and quit before a word was typed,
+          // which is a rail of rows standing for nothing.
+          if session.isRegistryBorn && !session.isDetached { vanished.insert(session.id) }
+        }
         session.clearHeldElsewhere()
       }
+    }
+    if !vanished.isEmpty {
+      sessions.removeAll { vanished.contains($0.id) }
+      if let selected = selectedSessionID, vanished.contains(selected) { selectedSessionID = nil }
+    }
+    adoptRegisteredSessions(owners)
+    if !vanished.isEmpty {
+      syncTranscriptWatcher()
+      onSessionsChanged?()
+    }
+  }
+
+  /// Put on the rail the sessions the registry names that this window has never seen — a `claude`
+  /// started in a terminal, or by another app, in a worktree that is open here.
+  ///
+  /// Discovery cannot answer for these. It lists transcripts, and the record is written when the
+  /// process starts, seconds before the first message creates the transcript — measured at 11s on
+  /// a session started here, which is simply how long it took to type — and it is written once,
+  /// so there is no second event to re-read on. Waiting for the transcript therefore means
+  /// waiting until the next `discoverSessions`, which is a repository being opened or a relaunch:
+  /// a session working away in the background with no row on the rail, which is the one thing the
+  /// rail exists to prevent. The record is the answer instead — it carries the id and the
+  /// directory, which is the whole of what a row needs. The name arrives when the transcript does.
+  ///
+  /// Only the worktree *root* counts, never a directory inside it: Claude Code keys its transcript
+  /// directory off the cwd, so a session started one level down writes where
+  /// `ClaudeSessionStore.sessions(in:)` will never look, and adopting it would put up a row the
+  /// next discovery drops.
+  func adoptRegisteredSessions(_ owners: [UUID: ClaudeSessionStore.SessionOwner]) {
+    let known = Set(sessions.map(\.id))
+    var adopted: [(session: AgentSession, pid: pid_t)] = []
+    for (id, owner) in owners where !known.contains(id) {
+      guard let cwd = owner.cwd, let home = worktree(atRoot: cwd) else { continue }
+      // Detached is "there is something to resume", and at this moment there usually is not.
+      // Asked rather than assumed, for the session that has been going a while before this
+      // window opened its worktree.
+      let session = AgentSession(
+        id: id, worktreeID: home.id,
+        isDetached: ClaudeSessionStore.isResumable(id: id, worktree: home.url))
+      session.isRegistryBorn = true
+      applyRestoredPrefs(to: session)
+      // It started just now, which is the honest answer for both — and the stored stamp still
+      // wins for a session this window has instructed before, exactly as in discovery.
+      session.updatedAt = Date()
+      session.lastInstructedAt = restoredInstruction(for: id, fallback: session.updatedAt)
+      resolveArchivedID(id)
+      adopted.append((session, owner.pid))
+    }
+    guard !adopted.isEmpty else { return }
+    // Listed before they are marked: marking notifies, and a notification is the rail reading
+    // `sessions` back.
+    sessions.append(contentsOf: adopted.map(\.session))
+    for (session, pid) in adopted {
+      session.onHeldChange = { [weak self] in self?.onSessionsChanged?() }
+      session.markHeldElsewhere(by: pid)
+    }
+    loadTitles()
+    syncTranscriptWatcher()
+    onSessionsChanged?()
+  }
+
+  /// Keep the transcript watcher matched to whether anything is still waiting for a name.
+  ///
+  /// An adopted row is the one row nothing else will ever name. Its transcript does not exist
+  /// when the row goes up — that is the whole reason the row came off the registry — and the
+  /// file appearing later is an event in a directory hukan watches for no other reason. So the
+  /// stream is up exactly while one of these rows is nameless: `~/.claude/projects`, the parent,
+  /// since the worktree's own directory under it may not exist until the first message creates
+  /// it. Every claude on the machine writes into that subtree, which is why the question asked
+  /// of a batch is a set lookup on the file name, and why the stream is not up the rest of the
+  /// time.
+  func syncTranscriptWatcher() {
+    guard !namelessTranscripts().isEmpty else {
+      transcriptsWatcher = nil
+      return
+    }
+    guard transcriptsWatcher == nil else { return }
+    let directory = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".claude/projects")
+    transcriptsWatcher = DirectoryWatcher(url: directory) { [weak self] paths in
+      guard let self else { return }
+      // Read again rather than captured: what is waiting changes under this closure, and a set
+      // fixed when the stream started would go on answering for rows that have been named.
+      let waiting = self.namelessTranscripts()
+      guard paths.contains(where: { waiting.contains(($0 as NSString).lastPathComponent) })
+      else { return }
+      self.loadTitles()
+    }
+  }
+
+  /// The transcript file names the rail is waiting on: one per adopted row that has no name yet.
+  private func namelessTranscripts() -> Set<String> {
+    Set(
+      sessions.filter { $0.isRegistryBorn && $0.title == nil }
+        .map { "\($0.id.uuidString).jsonl" })
+  }
+
+  /// The open worktree whose root is exactly this directory. Resolved on both sides, because
+  /// /tmp is a symlink and an engine reports its directory through `realpath` — the lesson
+  /// `returnSession` learned first.
+  func worktree(atRoot url: URL) -> Worktree? {
+    let target = url.standardizedFileURL.resolvingSymlinksInPath().path
+    return worktrees.first {
+      $0.url.standardizedFileURL.resolvingSymlinksInPath().path == target
     }
   }
 
