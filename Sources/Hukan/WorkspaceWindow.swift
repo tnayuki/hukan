@@ -1999,6 +1999,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.browserGoForward()
   }
 
+  /// View ▸ Reload (⌘R) and Open Location (⌘L), aimed the same way: at the web tab the desk is
+  /// showing. Reload is the one manual re-read on the desk — a file tab, the tree and the history
+  /// are re-read by the batch FSEvents hands them — and Open Location is the address field under
+  /// a key, which a tab opened from the transcript rather than typed into has no other way to.
+  @objc func browserReload(_ sender: Any?) {
+    files.browserReload()
+  }
+
+  @objc func browserFocusAddress(_ sender: Any?) {
+    files.browserFocusAddress()
+  }
+
   /// Edit ▸ Go to File… (⌘P). The files panel, shown if hidden, its filter focused.
   @objc func goToFile(_ sender: Any?) {
     revealFilesPanel()
@@ -2314,6 +2326,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       return files.canBrowserGoBack
     case #selector(browserGoForward(_:)):
       return files.canBrowserGoForward
+    case #selector(browserReload(_:)), #selector(browserFocusAddress(_:)):
+      return files.isShowingWebTab
     case #selector(goToFile(_:)):
       return workspace.selectedWorktreeID != nil
     case #selector(goToSession(_:)):

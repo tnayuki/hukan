@@ -385,6 +385,13 @@ final class WorktreeDeskViewController: NSViewController {
   func browserGoBack() { activeBrowserPane?.webView.goBack() }
   func browserGoForward() { activeBrowserPane?.webView.goForward() }
 
+  /// Reload and Open Location ask only that a web tab is showing, where back and forward also
+  /// want somewhere to go: the page worth reloading most is the one that failed to load, and the
+  /// tab worth typing an address into is the blank one.
+  var isShowingWebTab: Bool { activeBrowserPane != nil }
+  func browserReload() { activeBrowserPane?.reloadPage() }
+  func browserFocusAddress() { activeBrowserPane?.focusAddress() }
+
   /// ⌘F: find within the active surface. A terminal's bar is SwiftTerm's, a file's the text
   /// view's; both read their action tag off the menu item passed through as `sender`.
   func performFind(_ sender: Any?) {

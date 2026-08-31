@@ -201,6 +201,14 @@ Workspace (one window)
   tab in place rather than rebuilding the strip. No process pool: it was set on the belief that it
   shared the sign-in, and it never did — the persistent data store does, and WebKit has managed
   its own processes since macOS 12.
+  **Reload is the browser's own key, and it never becomes Stop.** A web tab is the one surface on
+  the desk with a manual re-read to give — a file, the tree and the history all come back on the
+  batch FSEvents hands them — and the button holds both meanings only because it can show which
+  one it is holding, where a key that reloads or stops depending on how far the page has got is
+  one you cannot press without looking first. Stopping is Escape's instead, and it reaches the tab
+  only if the page did not want it: that ordering is the whole reason it is not a menu key
+  equivalent, since one of those is matched before the page ever sees the event and would take
+  Escape from every menu and dialog a page has.
 - **The whole strip comes back after a relaunch, at the tab that was showing.** Each tab is saved
   as what identifies it and nothing more — a worktree and a relative path, an oid, a directory
   and a scrollback, and for a web tab WebKit's own `interactionState` (the back/forward list and where
@@ -820,10 +828,9 @@ Workspace (one window)
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
-- **Browser** — still open on the tab itself: `⌘L` for the address field and the page zoom the
-  reserved `⌘0`/`⌘+`/`⌘-` are held for (neither is wired — the reservation is a promise the menu
-  does not yet keep), a favicon in place of the one globe, and a snapshot of the chrome, which is
-  the one pane not pinned. Measured with a WKWebView harness (2026-08): SSO redirect chains and
+- **Browser** — still open on the tab itself: the page zoom the reserved `⌘0`/`⌘+`/`⌘-` are held
+  for (not wired — the reservation is a promise the menu does not yet keep), a favicon in place of
+  the one globe, and a snapshot of the chrome, which is the one pane not pinned. Measured with a WKWebView harness (2026-08): SSO redirect chains and
   Kolide device trust **work**; passkeys and iCloud Keychain autofill **do not** (browser-vendor
   entitlements) — which is what the error page's Open in Safari is for; sharing Safari's login
   state is officially impossible (plan B: inject `Cookies.binarycookies`, needs Full Disk Access).

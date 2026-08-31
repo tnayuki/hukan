@@ -1,3 +1,4 @@
+import Network
 import WebKit
 import XCTest
 
@@ -154,6 +155,54 @@ final class BrowserTests: XCTestCase {
     XCTAssertFalse(window.firstResponder is NSTextView, "Return hands the keyboard to the page")
   }
 
+  /// Escape stops a load in flight — the keyboard's half of the button's Stop, and what lets ⌘R
+  /// stay a reload at every point in a page's life instead of turning into a Stop halfway. The
+  /// page has to *hang* for there to be anything to stop, which no address can be relied on to do
+  /// (an unroutable one fails inside a quarter second, and a failure is already over), so the test
+  /// brings its own server: it takes the connection, reads the request and answers nothing.
+  ///
+  /// Waiting for the request to reach that server is not padding. A stop issued in the same
+  /// run-loop turn as the load is dropped on the floor — WebKit has not handed it to the network
+  /// process yet — and the page goes on loading with the key spent, which is how this test was
+  /// first written wrong. The web view's own `estimatedProgress` does not say so either: `load`
+  /// puts it at 0.1 before it returns, so it is 0.1 in that same doomed turn.
+  func testEscapeStopsALoadInFlight() throws {
+    let server = try SilentServer()
+    let pane = BrowserPaneViewController()
+    // In a window and on screen: WebKit throttles a view nobody is looking at, and the load of a
+    // pane held on its own never reaches the network at all.
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+      backing: .buffered, defer: false)
+    window.contentViewController = pane
+    window.makeKeyAndOrderFront(nil)
+
+    let asked = expectation(description: "the request reached the server")
+    asked.assertForOverFulfill = false
+    server.onRequest = { asked.fulfill() }
+    pane.load(URL(string: "http://127.0.0.1:\(server.port)/")!)
+    wait(for: [asked], timeout: 30)
+    XCTAssertTrue(pane.webView.isLoading, "nothing answered it, so it is still loading")
+
+    let stopped = expectation(description: "stopped")
+    stopped.assertForOverFulfill = false
+    let loading = pane.webView.observe(\.isLoading, options: [.new]) { webView, _ in
+      if !webView.isLoading { stopped.fulfill() }
+    }
+    pane.keyDown(with: BrowserTests.escape())
+    wait(for: [stopped], timeout: 30)
+    loading.invalidate()
+  }
+
+  /// An Escape as AppKit delivers one. The key code is what the pane matches on, the way the
+  /// desk's ⌃⇥ does.
+  private static func escape() -> NSEvent {
+    NSEvent.keyEvent(
+      with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+      context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false,
+      keyCode: 53)!
+  }
+
   /// A content process killed under a background tab (memory pressure) leaves a blank view; the
   /// pane reloads rather than showing it. The error page reloads to the address it stands for.
   func testALostContentProcessReloads() {
@@ -301,6 +350,25 @@ final class BrowserDeskTests: XCTestCase {
     XCTAssertNotNil(desk.selectedBrowserPane)
   }
 
+  /// Reload and Open Location reach the pane the desk is showing, and go dead when the surface is
+  /// not a browser — which is what disables their menu items. They ask less of it than back and
+  /// forward do: a blank tab has no history and is exactly the tab worth typing an address into,
+  /// and a page that failed to load is exactly the one worth reloading.
+  func testReloadAndTheAddressFieldTrackTheActiveBrowserTab() {
+    let (desk, _, worktrees) = desk(worktrees: 1)
+    XCTAssertFalse(desk.isShowingWebTab, "no web tab yet")
+    desk.openBrowser(worktree: worktrees[0])
+    XCTAssertTrue(desk.isShowingWebTab, "a blank tab takes both")
+    XCTAssertFalse(desk.canBrowserGoBack, "where back and forward have nowhere to go")
+    // Both reach the showing pane; neither may trap on a tab with nothing loaded in it.
+    desk.browserReload()
+    desk.browserFocusAddress()
+    let pane = try! XCTUnwrap(desk.selectedBrowserPane)
+    pane.webViewDidClose(pane.webView)
+    XCTAssertFalse(desk.isShowingWebTab, "the surface is not a browser: the items disable")
+    desk.browserReload()
+  }
+
   /// `window.close()` — how an SSO popup ends — takes the tab with it rather than leaving an empty
   /// one on the strip.
   func testAPageClosingItselfClosesItsTab() {
@@ -332,5 +400,41 @@ final class BrowserDeskTests: XCTestCase {
     desk.reload(worktreeID: worktrees[1].id)
     XCTAssertTrue(desk.browserTabsReport.contains("B  https://example.com/b"))
     _ = workspace
+  }
+}
+
+/// A server that takes a connection, reads what is asked of it and never answers, so a load hangs
+/// where an unreachable address would only fail. Accepted connections are held: dropping one
+/// closes the socket, and WebKit reads that as a failed load rather than a slow one.
+private final class SilentServer {
+  /// Called once the request is in — the point from which there is a load to stop.
+  var onRequest: (() -> Void)?
+
+  private let listener: NWListener
+  private let queue = DispatchQueue(label: "silent-server")
+  private var accepted: [NWConnection] = []
+
+  /// Whatever port the system handed out, read off the listener rather than stored: a stored one
+  /// cannot be assigned before the handlers below capture `self`.
+  var port: UInt16 { listener.port?.rawValue ?? 0 }
+
+  init() throws {
+    listener = try NWListener(using: .tcp)
+    listener.newConnectionHandler = { [weak self] connection in
+      connection.start(queue: .global())
+      connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { _, _, _, _ in
+        self?.onRequest?()
+      }
+      self?.queue.async { self?.accepted.append(connection) }
+    }
+    let ready = DispatchSemaphore(value: 0)
+    listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
+    listener.start(queue: queue)
+    XCTAssertEqual(ready.wait(timeout: .now() + 10), .success, "the server came up")
+  }
+
+  deinit {
+    for connection in accepted { connection.cancel() }
+    listener.cancel()
   }
 }

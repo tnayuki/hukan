@@ -617,12 +617,16 @@ final class FileColumns {
   /// Whether the active surface has something ⌘F can search — the Find item validates on this.
   var canFind: Bool { desk.isViewLoaded && desk.canFind }
 
-  /// Back / forward for the web tab showing on the desk — the browser menu items and their
-  /// validation. Guarded on the view being loaded, like the rest here.
+  /// The web tab showing on the desk, under the four keys the chrome's own row carries — back,
+  /// forward, reload, address — and their validation. Guarded on the view being loaded, like the
+  /// rest here.
   var canBrowserGoBack: Bool { desk.isViewLoaded && desk.canBrowserGoBack }
   var canBrowserGoForward: Bool { desk.isViewLoaded && desk.canBrowserGoForward }
+  var isShowingWebTab: Bool { desk.isViewLoaded && desk.isShowingWebTab }
   func browserGoBack() { desk.browserGoBack() }
   func browserGoForward() { desk.browserGoForward() }
+  func browserReload() { desk.browserReload() }
+  func browserFocusAddress() { desk.browserFocusAddress() }
 
   /// A terminal renamed itself (OSC title); repaint the strip's labels.
   func refreshTerminalTabs() {

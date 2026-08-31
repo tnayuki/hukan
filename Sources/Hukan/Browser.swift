@@ -389,12 +389,37 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
   @objc private func reloadOrStop() {
     if webView.isLoading {
       webView.stopLoading()
-    } else if let failedURL {
+    } else {
+      reloadPage()
+    }
+  }
+
+  /// ⌘R, and the button when nothing is loading. It is the error page's Retry too: that page
+  /// stands in for an address the web view never reached, so reloading what WebKit is holding
+  /// would reload the failure. Never a Stop, which is where it parts from the button — a key
+  /// that means two things depending on how far a page has got is one you cannot press without
+  /// looking first, so stopping is Escape's below and ⌘R restarts the load the way it does
+  /// everywhere else.
+  func reloadPage() {
+    if let failedURL {
       load(failedURL)
     } else {
       webView.reload()
     }
   }
+
+  /// Escape stops a load in flight. It arrives here only when the page did not want the key:
+  /// WebKit hands an unhandled one back up the responder chain, so a menu or a dialog on the page
+  /// closes first and the load is stopped only once nothing on the page is listening. That
+  /// precedence is the whole reason it is not a menu key equivalent — one of those is matched
+  /// before the page ever sees the event, and it would take Escape away from every page.
+  override func keyDown(with event: NSEvent) {
+    // kVK_Escape, matched on the key code the way the desk's ⌃⇥ is: what the event carries as a
+    // character is not what tells one key from another.
+    guard event.keyCode == 53, webView.isLoading else { return super.keyDown(with: event) }
+    webView.stopLoading()
+  }
+
   @objc private func submitAddress() {
     load(address.stringValue)
     view.window?.makeFirstResponder(webView)

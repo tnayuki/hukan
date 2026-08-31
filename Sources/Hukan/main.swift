@@ -153,7 +153,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  private static func makeMainMenu() -> NSMenu {
+  /// The whole menu, built once at launch. Not private so a test can walk it: what keys are
+  /// spent, and on what, is a decision this file is the only record of — the README and CLAUDE.md
+  /// deliberately carry no table of them — so the one thing worth asserting is that no two items
+  /// have been given the same one.
+  static func makeMainMenu() -> NSMenu {
     let main = NSMenu()
 
     let appItem = NSMenuItem()
@@ -336,6 +340,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     viewMenu.addItem(
       withTitle: "Forward", action: #selector(WorkspaceWindowController.browserGoForward(_:)),
       keyEquivalent: "]")
+    // The rest of the chrome's row under keys, and the group reads in the row's own order: back,
+    // forward, reload, address. ⌘R is the browser's alone, which is a decision and not just what
+    // Safari does — a web tab is the only tab on the desk with a manual re-read to give it, since
+    // a file, the tree and the history all come back on the batch FSEvents hands them. The item
+    // never becomes Stop the way the button does: a key that means reload or stop depending on
+    // how far the page has got cannot be pressed without looking first, so stopping stays the
+    // button's and Escape's. ⌘L is Safari's Open Location…, and it sits here rather than beside
+    // Edit's ⌘P / ⌘⇧P — those two aim at the window's own indexes, where this field goes out to
+    // the network, so it belongs with the tab it drives.
+    //
+    // All four are menu items where ⌃⇥ needed a key monitor, and the difference is not that the
+    // page is out of the way: a focused web view answers yes to *every* ⌘-key put to it (measured
+    // — ⌘R, ⌘L, ⌘[, ⌘], ⌘N alike), because it can only ask the web process what the page wants
+    // and it re-dispatches whatever came back unwanted. What is actually lost that way is a key
+    // the page really uses, and Tab is one of those where these are not.
+    viewMenu.addItem(
+      withTitle: "Reload", action: #selector(WorkspaceWindowController.browserReload(_:)),
+      keyEquivalent: "r")
+    viewMenu.addItem(
+      withTitle: "Open Location…",
+      action: #selector(WorkspaceWindowController.browserFocusAddress(_:)), keyEquivalent: "l")
     viewItem.submenu = viewMenu
     main.addItem(viewItem)
 
