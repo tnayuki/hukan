@@ -200,8 +200,9 @@ one — and copy as tab-separated text, which is what a spreadsheet and Slack re
 
 **Search.** Two questions, two places. *Which conversation* is the rail's field, with the same two
 gestures as the panel's: typing filters the sessions by title, `⏎` searches the transcripts
-themselves, off the main thread. Opening a session under transcript results lands on its first
-match, highlighted. *Where in this conversation* is the find bar over the transcript, which opens
+themselves, off the main thread — the tool calls included, each read by the argument it carries in
+full rather than by the summary its folded line shows. Opening a session under transcript results
+lands on its first match, highlighted. *Where in this conversation* is the find bar over the transcript, which opens
 every folded tool call and pulls in the history above before it searches, so what it answers for
 is the conversation and not the part of it on screen. Which of the two a find means is where the
 focus is.

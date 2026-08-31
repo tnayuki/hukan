@@ -3,8 +3,9 @@ import XCTest
 
 @testable import Hukan
 
-/// ⌘F in the conversation: which column the key means, and the two things it has to do before
-/// the find bar sees anything — open every folded tool call, and pull in the history above.
+/// ⌘F in the conversation, and the two things it has to do before the find bar sees anything:
+/// open every folded tool call, and — for the rail's half of the same question — count those
+/// calls as part of the transcript rather than as machinery underneath it.
 final class TranscriptFindTests: XCTestCase {
   override class func setUp() {
     super.setUp()
@@ -125,5 +126,42 @@ final class TranscriptFindTests: XCTestCase {
       scrollView.isFindBarVisible, "⌘F with the transcript focused finds in the transcript")
     XCTAssertTrue(
       workspace.sessions[0].transcript.string.contains(Self.tail), "and opened its folds first")
+  }
+
+  // MARK: The rail's half of the same question
+
+  /// What decides whether a session matches at all. A tool call is on screen, so it counts — and
+  /// it counts in full, because the 90 characters the folded line shows are a reading
+  /// convenience and the search must not inherit them as a limit.
+  func testTheRailsGateReadsToolCallsInFull() throws {
+    let worktree = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("hukan-find-\(UUID().uuidString)")
+    let id = UUID()
+    let directory = ClaudeSessionStore.directory(for: worktree)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+
+    let lines = [
+      #"{"type":"user","uuid":"a","message":{"role":"user","content":"cut me a branch"}}"#,
+      """
+      {"type":"assistant","parentUuid":"a","uuid":"b","message":{"role":"assistant",\
+      "content":[{"type":"text","text":"Making the worktree."},\
+      {"type":"tool_use","name":"Bash","input":{"command":"\(Self.command)"}}]}}
+      """,
+    ]
+    try lines.joined(separator: "\n").write(
+      to: ClaudeSessionStore.transcriptURL(id: id, worktree: worktree), atomically: true,
+      encoding: .utf8)
+
+    let records = try XCTUnwrap(ClaudeSessionStore.history(id: id, worktree: worktree)?.records)
+    let gate = SessionRailViewController.gateText(records)
+
+    XCTAssertTrue(gate.contains("cut me a branch"), "what the person typed")
+    XCTAssertTrue(gate.contains("making the worktree"), "what the agent answered")
+    XCTAssertTrue(gate.contains("bash"), "the tool's name, which is on the line")
+    XCTAssertTrue(gate.contains(Self.tail), "and its argument past the summary's cut")
+    XCTAssertFalse(
+      Transcript.render(records).string.contains(Self.tail),
+      "which the rendered transcript alone could never have answered for")
   }
 }

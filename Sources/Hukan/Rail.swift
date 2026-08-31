@@ -269,13 +269,14 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   }
   /// Per matched session, its hits in transcript order — the rows the results list expands to.
   private var hits: [UUID: [Hit]] = [:]
-  /// Searchable bodies keyed by session id, invalidated on the transcript's mtime so a changed
-  /// conversation reparses and an unchanged one is a straight substring scan. Touched only on
-  /// `searchQueue`, which is what keeps this dictionary off the concurrent-access cliff. The
-  /// second cache holds the *rendered* transcript string (with formatting, the way the view shows
-  /// it), so hit offsets line up with the text view; the filter still gates on the body-only text.
-  private var searchCache: [UUID: (mtime: Date, text: String)] = [:]
-  private var renderCache: [UUID: (mtime: Date, text: String)] = [:]
+  /// One session's two readings of its transcript, keyed by session id and invalidated on the
+  /// transcript's mtime, so a changed conversation reparses and an unchanged one is a straight
+  /// substring scan. `gate` is what decides whether the session matches at all; `rendered` is the
+  /// transcript as the view shows it, so a hit's offset is a valid location in the text view.
+  /// Both come out of one parse — they are two readings of the same records, and two parses of
+  /// the same file could only disagree. Touched only on `searchQueue`, which is what keeps this
+  /// dictionary off the concurrent-access cliff.
+  private var searchCache: [UUID: (mtime: Date, gate: String, rendered: String)] = [:]
   private let searchQueue = DispatchQueue(label: "dev.tnayuki.hukan.rail-search")
   /// A typed query is heavy (it can read many files), so it is debounced; the token drops a run
   /// whose keystroke was superseded before it fired.
@@ -766,17 +767,17 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     }
   }
 
-  /// Which of `requests` contain every term (title plus body), and — for those that do — where the
-  /// terms land in the rendered transcript. Runs on `searchQueue`, the only place the caches are
-  /// touched. The filter gates on the body-only text (the user's choice — no tool calls); the hit
-  /// offsets come from the rendered transcript so they line up with what the view shows.
+  /// Which of `requests` contain every term (title plus transcript), and — for those that do —
+  /// where the terms land in the rendered transcript. Runs on `searchQueue`, the only place the
+  /// cache is touched. The gate and the hit offsets are two readings of one parse (see
+  /// `cachedTranscript`), so a term that makes a session match can always be pointed at.
   private func scan(terms: [String], requests: [(id: UUID, title: String, url: URL)])
     -> (matches: Set<UUID>, hits: [UUID: [Hit]])
   {
     var found = Set<UUID>()
     var hits: [UUID: [Hit]] = [:]
     for request in requests {
-      let haystack = request.title + "\n" + cachedSearchText(id: request.id, url: request.url)
+      let haystack = request.title + "\n" + cachedTranscript(id: request.id, url: request.url).gate
       guard terms.allSatisfy({ haystack.contains($0) }) else { continue }
       found.insert(request.id)
       hits[request.id] = renderedHits(id: request.id, url: request.url, terms: terms)
@@ -788,7 +789,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// one-line snippet for the results list. Empty when the match was on the title alone (the
   /// title is not part of the transcript). Runs on `searchQueue`.
   private func renderedHits(id: UUID, url: URL, terms: [String]) -> [Hit] {
-    let rendered = cachedRenderedText(id: id, url: url) as NSString
+    let rendered = cachedTranscript(id: id, url: url).rendered as NSString
     guard rendered.length > 0 else { return [] }
     var found: [(offset: Int, length: Int)] = []
     for term in terms where !term.isEmpty {
@@ -829,26 +830,36 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     return (start > 0 ? "…" : "") + piece + (end < text.length ? "…" : "")
   }
 
-  /// The rendered transcript string for one session, cached by mtime — the same
-  /// `ClaudeSessionStore.history` render the view loads, so a hit's offset is a valid location in
-  /// the text view once the session is open. Runs only on `searchQueue`.
-  private func cachedRenderedText(id: UUID, url: URL) -> String {
+  /// One session's transcript, read once and kept two ways (see `searchCache`). Runs only on
+  /// `searchQueue`, so the cache needs no further locking.
+  private func cachedTranscript(id: UUID, url: URL) -> (gate: String, rendered: String) {
     let mtime = ClaudeSessionStore.lastModified(id: id, worktree: url) ?? .distantPast
-    if let entry = renderCache[id], entry.mtime == mtime { return entry.text }
-    let text = Transcript.render(ClaudeSessionStore.history(id: id, worktree: url)?.records ?? [])
-      .string
-    renderCache[id] = (mtime, text)
-    return text
+    if let entry = searchCache[id], entry.mtime == mtime { return (entry.gate, entry.rendered) }
+    let records = ClaudeSessionStore.history(id: id, worktree: url)?.records ?? []
+    let entry = (mtime, Self.gateText(records), Transcript.render(records).string)
+    searchCache[id] = entry
+    return (entry.1, entry.2)
   }
 
-  /// The lowercased body for one session, from cache when the transcript has not changed since it
-  /// was last read. Runs only on `searchQueue`, so the cache needs no further locking.
-  private func cachedSearchText(id: UUID, url: URL) -> String {
-    let mtime = ClaudeSessionStore.lastModified(id: id, worktree: url) ?? .distantPast
-    if let entry = searchCache[id], entry.mtime == mtime { return entry.text }
-    let text = ClaudeSessionStore.searchableText(id: id, worktree: url)
-    searchCache[id] = (mtime, text)
-    return text
+  /// What decides whether a session matches: everything the transcript is made of, lowercased.
+  /// The tool calls are in it because they are on screen — a `▸ Bash  git worktree add …` line is
+  /// as much a part of the conversation as the sentence above it — and each carries its argument
+  /// *in full* rather than the 90-character summary the folded line shows, since a fold is a
+  /// reading convenience and must never act as a filter on the search.
+  static func gateText(_ records: [HistoryRecord]) -> String {
+    var parts: [String] = []
+    for record in records {
+      switch record.kind {
+      case .userText(let body), .assistantText(let body):
+        parts.append(body)
+      case .toolUse(let name, let input):
+        parts.append(name)
+        if let argument = Transcript.toolArgument(tool: name, input: input) {
+          parts.append(argument.full)
+        }
+      }
+    }
+    return parts.joined(separator: "\n").lowercased()
   }
 
   func reload() {

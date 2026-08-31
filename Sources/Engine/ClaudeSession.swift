@@ -1232,40 +1232,6 @@ enum ClaudeSessionStore {
     return CostEstimate(usd: total, approximate: approximate, tokens: totals, byModel: byModel)
   }
 
-  /// The conversation as one lowercased blob for substring search, without styling it.
-  ///
-  /// The rail's full-text filter needs to look inside sessions nobody has opened, whose only
-  /// copy is this jsonl (the same reasoning as `title` and `history`). It mirrors `history`'s
-  /// parse — the live branch only, user text plus the assistant's text blocks, sidechain and
-  /// command markup dropped — but collects plain strings, so a search matches exactly what the
-  /// transcript would show, and a hit the rail counts is a hit the pane can scroll to. Tool calls
-  /// and results are deliberately left out: they are not what someone searches for.
-  static func searchableText(id: UUID, worktree: URL) -> String {
-    let url = transcriptURL(id: id, worktree: worktree)
-    guard let data = try? Data(contentsOf: url) else { return "" }
-
-    var parts: [String] = []
-    for record in liveBranch(inTranscript: data) {
-      switch record["type"] as? String {
-      case "user":
-        guard record["isMeta"] as? Bool != true,
-          let message = record["message"] as? [String: Any]
-        else { continue }
-        parts.append(contentsOf: userTexts(in: message["content"]))
-      case "assistant":
-        guard let message = record["message"] as? [String: Any],
-          let blocks = message["content"] as? [[String: Any]]
-        else { continue }
-        for block in blocks where block["type"] as? String == "text" {
-          if let text = block["text"] as? String { parts.append(text) }
-        }
-      default:
-        continue
-      }
-    }
-    return parts.joined(separator: "\n").lowercased()
-  }
-
   /// What the person actually typed. Content is either a bare string or a block list that
   /// also carries tool results, and slash commands expand into markup nobody typed.
   private static func userTexts(in content: Any?) -> [String] {

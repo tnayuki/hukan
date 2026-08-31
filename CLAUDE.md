@@ -511,6 +511,13 @@ Workspace (one window)
   expensive gesture over whatever happened to be left in the field. Each field now names the verb
   and its subject, since a key aims at one of the two and the toolbar item's label is not drawn
   in icon mode.
+  **The rail's scan reads the tool calls too, and reads them in full.** It read only what the
+  person and the agent had *said*, which sounds like the right narrowing and is not: a
+  `▸ Bash  git worktree add …` line is on screen, so a scan that cannot find it is a search
+  disagreeing with the window it is in — and once the transcript had a find of its own, that
+  disagreement was two fields in one window answering one string two ways. Both readings now come
+  off one parse of one file, which is the only arrangement in which they cannot drift; the second
+  walk of the transcript that used to produce the narrow one is gone with it.
 - **One field over the tree, two operations, told apart by gesture.** Typing filters the tree by
   path — live, in memory, and the tree stays a tree. Return searches contents — off the main
   thread, over every file, and the panel becomes a result list until Escape. Running both off the
