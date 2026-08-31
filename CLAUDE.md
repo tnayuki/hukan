@@ -828,9 +828,8 @@ Workspace (one window)
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
-- **Browser** — still open on the tab itself: the page zoom the reserved `⌘0`/`⌘+`/`⌘-` are held
-  for (not wired — the reservation is a promise the menu does not yet keep), a favicon in place of
-  the one globe, and a snapshot of the chrome, which is the one pane not pinned. Measured with a WKWebView harness (2026-08): SSO redirect chains and
+- **Browser** — still open on the tab itself: a favicon in place of the one globe, and a snapshot
+  of the chrome, which is the one pane not pinned. Measured with a WKWebView harness (2026-08): SSO redirect chains and
   Kolide device trust **work**; passkeys and iCloud Keychain autofill **do not** (browser-vendor
   entitlements) — which is what the error page's Open in Safari is for; sharing Safari's login
   state is officially impossible (plan B: inject `Cookies.binarycookies`, needs Full Disk Access).

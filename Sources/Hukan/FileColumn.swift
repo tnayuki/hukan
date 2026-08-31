@@ -627,6 +627,8 @@ final class FileColumns {
   func browserGoForward() { desk.browserGoForward() }
   func browserReload() { desk.browserReload() }
   func browserFocusAddress() { desk.browserFocusAddress() }
+  func browserZoom(by delta: Int) { desk.browserZoom(by: delta) }
+  func browserResetZoom() { desk.browserResetZoom() }
 
   /// A terminal renamed itself (OSC title); repaint the strip's labels.
   func refreshTerminalTabs() {

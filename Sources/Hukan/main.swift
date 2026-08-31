@@ -361,6 +361,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     viewMenu.addItem(
       withTitle: "Open Location…",
       action: #selector(WorkspaceWindowController.browserFocusAddress(_:)), keyEquivalent: "l")
+    viewMenu.addItem(.separator())
+    // The page zoom the keys were reserved for. ⌘+ is the key a person means and ⌘= is the key
+    // they press — on a US layout the plus is a shifted equals, and on a JIS one it is somewhere
+    // else again — so Zoom In is offered twice, the second hidden and kept live for its key
+    // alone. Actual Size is not a walk back along the ladder: it is the rung marked 1.
+    viewMenu.addItem(
+      withTitle: "Zoom In", action: #selector(WorkspaceWindowController.browserZoomIn(_:)),
+      keyEquivalent: "+")
+    let zoomInEquals = viewMenu.addItem(
+      withTitle: "Zoom In", action: #selector(WorkspaceWindowController.browserZoomIn(_:)),
+      keyEquivalent: "=")
+    zoomInEquals.isHidden = true
+    zoomInEquals.allowsKeyEquivalentWhenHidden = true
+    viewMenu.addItem(
+      withTitle: "Zoom Out", action: #selector(WorkspaceWindowController.browserZoomOut(_:)),
+      keyEquivalent: "-")
+    viewMenu.addItem(
+      withTitle: "Actual Size",
+      action: #selector(WorkspaceWindowController.browserActualSize(_:)), keyEquivalent: "0")
     viewItem.submenu = viewMenu
     main.addItem(viewItem)
 

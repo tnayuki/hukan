@@ -391,6 +391,8 @@ final class WorktreeDeskViewController: NSViewController {
   var isShowingWebTab: Bool { activeBrowserPane != nil }
   func browserReload() { activeBrowserPane?.reloadPage() }
   func browserFocusAddress() { activeBrowserPane?.focusAddress() }
+  func browserZoom(by delta: Int) { activeBrowserPane?.zoomPage(by: delta) }
+  func browserResetZoom() { activeBrowserPane?.resetZoom() }
 
   /// ⌘F: find within the active surface. A terminal's bar is SwiftTerm's, a file's the text
   /// view's; both read their action tag off the menu item passed through as `sender`.

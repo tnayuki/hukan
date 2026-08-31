@@ -203,6 +203,29 @@ final class BrowserTests: XCTestCase {
       keyCode: 53)!
   }
 
+  /// The zoom walks a ladder of steps and holds at both ends, and Actual Size is the rung marked
+  /// 1 rather than a walk back to it. A page left at a zoom nothing here set — WebKit's, a pinch —
+  /// still moves by one step from wherever it stands.
+  func testThePageZoomWalksItsLadder() {
+    let pane = BrowserPaneViewController()
+    pane.loadViewIfNeeded()
+    XCTAssertEqual(pane.webView.pageZoom, 1, accuracy: 0.001, "where a page starts")
+    pane.zoomPage(by: 1)
+    XCTAssertEqual(pane.webView.pageZoom, 1.1, accuracy: 0.001)
+    pane.zoomPage(by: 1)
+    pane.zoomPage(by: 1)
+    XCTAssertEqual(pane.webView.pageZoom, 1.5, accuracy: 0.001)
+    for _ in 0..<20 { pane.zoomPage(by: 1) }
+    XCTAssertEqual(pane.webView.pageZoom, 3, accuracy: 0.001, "the top rung holds")
+    pane.resetZoom()
+    XCTAssertEqual(pane.webView.pageZoom, 1, accuracy: 0.001, "and ⌘0 is that rung, from anywhere")
+    for _ in 0..<20 { pane.zoomPage(by: -1) }
+    XCTAssertEqual(pane.webView.pageZoom, 0.5, accuracy: 0.001, "as does the bottom one")
+    pane.webView.pageZoom = 1.6
+    pane.zoomPage(by: -1)
+    XCTAssertEqual(pane.webView.pageZoom, 1.25, accuracy: 0.001, "a step from the nearest rung")
+  }
+
   /// A content process killed under a background tab (memory pressure) leaves a blank view; the
   /// pane reloads rather than showing it. The error page reloads to the address it stands for.
   func testALostContentProcessReloads() {
@@ -360,13 +383,16 @@ final class BrowserDeskTests: XCTestCase {
     desk.openBrowser(worktree: worktrees[0])
     XCTAssertTrue(desk.isShowingWebTab, "a blank tab takes both")
     XCTAssertFalse(desk.canBrowserGoBack, "where back and forward have nowhere to go")
-    // Both reach the showing pane; neither may trap on a tab with nothing loaded in it.
+    // All of them reach the showing pane, and none may trap on a tab with nothing loaded in it.
     desk.browserReload()
     desk.browserFocusAddress()
+    desk.browserZoom(by: 1)
+    desk.browserResetZoom()
     let pane = try! XCTUnwrap(desk.selectedBrowserPane)
     pane.webViewDidClose(pane.webView)
     XCTAssertFalse(desk.isShowingWebTab, "the surface is not a browser: the items disable")
     desk.browserReload()
+    desk.browserZoom(by: -1)
   }
 
   /// `window.close()` — how an SSO popup ends — takes the tab with it rather than leaving an empty

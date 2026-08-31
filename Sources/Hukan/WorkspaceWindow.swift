@@ -2011,6 +2011,21 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.browserFocusAddress()
   }
 
+  /// View ▸ Zoom In / Zoom Out / Actual Size (⌘+ / ⌘− / ⌘0), the keys this menu has been holding
+  /// for them since the desk's plain ⌘T became a browser tab. The page's zoom, not the window's:
+  /// the editor has a size of its own and no key here reaches it.
+  @objc func browserZoomIn(_ sender: Any?) {
+    files.browserZoom(by: 1)
+  }
+
+  @objc func browserZoomOut(_ sender: Any?) {
+    files.browserZoom(by: -1)
+  }
+
+  @objc func browserActualSize(_ sender: Any?) {
+    files.browserResetZoom()
+  }
+
   /// Edit ▸ Go to File… (⌘P). The files panel, shown if hidden, its filter focused.
   @objc func goToFile(_ sender: Any?) {
     revealFilesPanel()
@@ -2326,7 +2341,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       return files.canBrowserGoBack
     case #selector(browserGoForward(_:)):
       return files.canBrowserGoForward
-    case #selector(browserReload(_:)), #selector(browserFocusAddress(_:)):
+    case #selector(browserReload(_:)), #selector(browserFocusAddress(_:)),
+      #selector(browserZoomIn(_:)), #selector(browserZoomOut(_:)), #selector(browserActualSize(_:)):
       return files.isShowingWebTab
     case #selector(goToFile(_:)):
       return workspace.selectedWorktreeID != nil

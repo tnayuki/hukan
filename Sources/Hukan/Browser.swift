@@ -408,6 +408,32 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
     }
   }
 
+  /// The page zoom, on ⌘+ / ⌘− / ⌘0 — WebKit's own, so the page reflows the way it decides to
+  /// rather than being scaled like a picture. A ladder of steps rather than a factor applied per
+  /// press: the point of a second press is to land somewhere you meant, and 1 sits on the ladder
+  /// so walking back with ⌘− reaches exactly where ⌘0 puts you. It is the tab's, and it is not
+  /// saved with the tab — a zoom is what this page needed at this size, where what a restored tab
+  /// carries is what identifies it.
+  private static let zoomSteps: [CGFloat] = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
+
+  /// One step along that ladder, from whichever rung the page is nearest — a page left at a zoom
+  /// nothing here set (WebKit's own default is 1, but a step is a step from wherever it stands)
+  /// still moves by one, and the ends hold rather than wrap.
+  func zoomPage(by delta: Int) {
+    let steps = Self.zoomSteps
+    let zoom = webView.pageZoom
+    let nearest =
+      steps.indices.min { abs(steps[$0] - zoom) < abs(steps[$1] - zoom) }
+      ?? steps.firstIndex(of: 1) ?? 0
+    webView.pageZoom = steps[min(max(nearest + delta, 0), steps.count - 1)]
+  }
+
+  /// ⌘0. Not a step back to the nearest rung but the rung itself: the key means "the size the
+  /// page was written at", which is one place and not wherever a walk happens to end.
+  func resetZoom() {
+    webView.pageZoom = 1
+  }
+
   /// Escape stops a load in flight. It arrives here only when the page did not want the key:
   /// WebKit hands an unhandled one back up the responder chain, so a menu or a dialog on the page
   /// closes first and the load is stopped only once nothing on the page is listening. That
