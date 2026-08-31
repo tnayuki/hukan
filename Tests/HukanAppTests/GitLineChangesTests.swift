@@ -42,6 +42,22 @@ final class GitLineChangesTests: XCTestCase {
     XCTAssertTrue(Git.lineChanges(base: base, current: try contents()).bars.isEmpty)
   }
 
+  /// A repository that stores LF and checks out CRLF — a Windows batch file under
+  /// `*.bat text eol=crlf` — must read as unchanged: the base is the file as the checkout wrote
+  /// it, or every line of it is a bar while git's own diff says nothing moved.
+  func testCheckoutFiltersApplyToTheBase() throws {
+    try write("*.bat text eol=crlf\n", to: ".gitattributes")
+    try write("@echo off\r\necho hello\r\n", to: "run.bat")
+    try git("add", ".gitattributes", "run.bat")
+    try git("commit", "-q", "-m", "batch")
+
+    let base = Git.fileBase(at: repo, path: "run.bat")
+    XCTAssertEqual(base.head, "@echo off\r\necho hello\r\n")
+    XCTAssertEqual(base.index, "@echo off\r\necho hello\r\n")
+    let current = try String(contentsOf: repo.appendingPathComponent("run.bat"), encoding: .utf8)
+    XCTAssertTrue(Git.lineChanges(base: base, current: current).bars.isEmpty)
+  }
+
   func testUntrackedFileHasNoBase() throws {
     try "new\n".write(
       to: repo.appendingPathComponent("other.txt"), atomically: true, encoding: .utf8)
@@ -51,7 +67,11 @@ final class GitLineChangesTests: XCTestCase {
   }
 
   private func write(_ text: String) throws {
-    try text.write(to: repo.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
+    try write(text, to: "file.txt")
+  }
+
+  private func write(_ text: String, to name: String) throws {
+    try text.write(to: repo.appendingPathComponent(name), atomically: true, encoding: .utf8)
   }
 
   private func contents() throws -> String {

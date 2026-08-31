@@ -947,7 +947,7 @@ enum Git {
     guard git_revparse_single(&object, repo, "HEAD:\(path)") == 0, let object else { return nil }
     defer { git_object_free(object) }
     guard git_object_type(object) == GIT_OBJECT_BLOB else { return nil }
-    return blobText(object)
+    return blobText(object, path: path)
   }
 
   private static func indexBlob(_ repo: OpaquePointer, path: String) -> String? {
@@ -958,16 +958,27 @@ enum Git {
     var blob: OpaquePointer?
     guard git_blob_lookup(&blob, repo, &entry.id) == 0, let blob else { return nil }
     defer { git_blob_free(blob) }
-    return blobText(blob)
+    return blobText(blob, path: path)
   }
 
-  private static func blobText(_ blob: OpaquePointer) -> String? {
-    guard git_blob_is_binary(blob) == 0, let content = git_blob_rawcontent(blob) else {
+  /// A blob as a checkout would write it, not as the object database holds it. The gutter diffs
+  /// this against the buffer, and the buffer is the file on disk — so a repository that stores
+  /// LF and checks out CRLF (`*.bat text eol=crlf`, or `core.autocrlf`) had every line of a
+  /// Windows batch file marked as modified the moment it was opened, while the ± beside it,
+  /// which reads git's own filtered diff, rightly said nothing had changed. `git_blob_filter`
+  /// runs exactly the filters the checkout ran, so the two readings agree again. Binary is
+  /// answered before the filter rather than by it: the default flag makes `git_blob_filter`
+  /// return success with an empty buffer for a binary blob, which would read as an empty file.
+  private static func blobText(_ blob: OpaquePointer, path: String) -> String? {
+    guard git_blob_is_binary(blob) == 0 else { return nil }
+    var options = git_blob_filter_options()
+    git_blob_filter_options_init(&options, UInt32(GIT_BLOB_FILTER_OPTIONS_VERSION))
+    var buffer = git_buf()
+    defer { git_buf_dispose(&buffer) }
+    guard git_blob_filter(&buffer, blob, path, &options) == 0, let content = buffer.ptr else {
       return nil
     }
-    let size = Int(git_blob_rawsize(blob))
-    return String(
-      data: Data(bytes: content, count: size), encoding: .utf8)
+    return String(data: Data(bytes: content, count: buffer.size), encoding: .utf8)
   }
 
   /// The changed blocks between two texts, straight from libgit2 — `git_diff_buffers` diffs two
