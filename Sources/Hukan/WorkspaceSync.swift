@@ -355,10 +355,9 @@ extension Workspace {
       if let selected = selectedSessionID, vanished.contains(selected) { selectedSessionID = nil }
     }
     adoptRegisteredSessions(owners)
-    if !vanished.isEmpty {
-      syncTranscriptWatcher()
-      onSessionsChanged?()
-    }
+    // A hold taken or lifted is also a conversation becoming worth following, or ceasing to be.
+    syncTranscriptWatcher()
+    if !vanished.isEmpty { onSessionsChanged?() }
   }
 
   /// Put on the rail the sessions the registry names that this window has never seen — a `claude`
@@ -421,7 +420,7 @@ extension Workspace {
   /// of a batch is a set lookup on the file name, and why the stream is not up the rest of the
   /// time.
   func syncTranscriptWatcher() {
-    guard !namelessTranscripts().isEmpty else {
+    guard !watchedTranscripts().isEmpty else {
       transcriptsWatcher = nil
       return
     }
@@ -430,20 +429,39 @@ extension Workspace {
       .appendingPathComponent(".claude/projects")
     transcriptsWatcher = DirectoryWatcher(url: directory) { [weak self] paths in
       guard let self else { return }
-      // Read again rather than captured: what is waiting changes under this closure, and a set
-      // fixed when the stream started would go on answering for rows that have been named.
-      let waiting = self.namelessTranscripts()
-      guard paths.contains(where: { waiting.contains(($0 as NSString).lastPathComponent) })
-      else { return }
-      self.loadTitles()
+      // Read again rather than captured: what is being watched for changes under this closure,
+      // and a set fixed when the stream started would go on answering for rows that have since
+      // been named and panes that have since been let go.
+      let watched = self.watchedTranscripts()
+      let moved = Set(paths.map { ($0 as NSString).lastPathComponent }).compactMap { watched[$0] }
+      guard !moved.isEmpty else { return }
+      var wantsNames = false
+      for id in moved {
+        guard let session = self.sessions.first(where: { $0.id == id }) else { continue }
+        if session.title == nil { wantsNames = true }
+        if session.isFollowable, let worktree = self.worktree(id: session.worktreeID) {
+          session.follow(at: worktree.url)
+        }
+      }
+      if wantsNames { self.loadTitles() }
     }
   }
 
-  /// The transcript file names the rail is waiting on: one per adopted row that has no name yet.
-  private func namelessTranscripts() -> Set<String> {
-    Set(
-      sessions.filter { $0.isRegistryBorn && $0.title == nil }
-        .map { "\($0.id.uuidString).jsonl" })
+  /// The transcript files worth reacting to, by file name, and the session each belongs to.
+  ///
+  /// Two reasons a file is on this list, and both end on their own. A row adopted from the
+  /// registry has no name until its transcript exists, and reading titles is discovery's job,
+  /// which has already run. And a conversation another live process is writing, opened here, is
+  /// on screen at whatever it said when it was opened unless the file is followed — the process
+  /// is not ours, so there is no stream to hear it on. Nothing else qualifies: a session hukan
+  /// runs speaks over its own pipes, and one nobody has opened is read whole when it is.
+  private func watchedTranscripts() -> [String: UUID] {
+    var watched: [String: UUID] = [:]
+    for session in sessions
+    where (session.isRegistryBorn && session.title == nil) || session.isFollowable {
+      watched["\(session.id.uuidString).jsonl"] = session.id
+    }
+    return watched
   }
 
   /// The open worktree whose root is exactly this directory. Resolved on both sides, because

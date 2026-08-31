@@ -621,6 +621,9 @@ final class RunningColumnViewController: NSViewController {
     if let session, let worktree = workspace?.worktree(id: session.worktreeID) {
       session.loadHistoryIfNeeded(at: worktree.url)
       session.refreshTasks()
+      // Opening a session held by another process is what makes its file worth watching: from
+      // here on the pane is behind whatever that process writes unless the file is followed.
+      workspace?.syncTranscriptWatcher()
     }
   }
 

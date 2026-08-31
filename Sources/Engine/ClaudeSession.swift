@@ -960,9 +960,15 @@ enum ClaudeSessionStore {
   /// The name in one transcript line, or nil if it carries none. Empty and whitespace-only
   /// names read as unnamed, so a search keeps looking past them.
   private static func aiTitle(in line: Data.SubSequence) -> String? {
-    guard let record = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
-      record["type"] as? String == "ai-title",
-      let named = (record["aiTitle"] as? String)
+    guard let record = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any]
+    else { return nil }
+    return aiTitle(inRecord: record)
+  }
+
+  /// The same reading of an already-parsed line, for the tail read — which parses every line it
+  /// takes anyway, and must not parse them twice to find a name among them.
+  private static func aiTitle(inRecord record: [String: Any]) -> String? {
+    guard record["type"] as? String == "ai-title", let named = record["aiTitle"] as? String
     else { return nil }
     let title = titleLine(from: named)
     return title.isEmpty ? nil : title
@@ -982,6 +988,30 @@ enum ClaudeSessionStore {
     /// via `Pricing`. Nil when no priceable usage was found (unknown model, or nothing sent yet).
     /// A subscription bills no dollars — this is the "if it were API-metered" figure.
     let cost: CostEstimate
+    /// Where this read left the file, so what is written next can be picked up without reading
+    /// the whole thing again — see `historyTail`.
+    let cursor: HistoryCursor
+  }
+
+  /// How far a transcript has been read: the bytes taken off it, and the uuid of the last line
+  /// on the live branch. The uuid is what makes the offset safe to trust — a transcript is a
+  /// tree, so bytes alone cannot tell an append from a rollback that re-parented the tail.
+  struct HistoryCursor {
+    let offset: Int
+    let lastUUID: String?
+  }
+
+  /// What a transcript has gained since it was last read.
+  enum HistoryTail {
+    /// Nothing whole has been added — the file has not grown, or all it has gained is a line
+    /// still being written.
+    case unchanged
+    /// Records to put after what is already shown, and where to read from next.
+    case appended(records: [HistoryRecord], cursor: HistoryCursor, title: String?)
+    /// The file cannot be continued from where it was left: it shrank, or what was appended
+    /// hangs off something other than the last line taken. That is a rollback, which moves the
+    /// branch rather than extending it, so the conversation has to be walked again from the top.
+    case rewritten
   }
 
   /// Summed token counts across a session's assistant messages — the breakdown behind the cost,
@@ -1143,74 +1173,151 @@ enum ClaudeSessionStore {
     var totals = TokenTotals()
     var byModel: [String: TokenTotals] = [:]
 
-    func emit(
-      _ kind: HistoryRecord.Kind, at stamp: Date?, forkAnchor: String? = nil,
-      messageUUID: String? = nil
-    ) {
-      records.append(
-        HistoryRecord(
-          kind: kind, stamp: stamp, forkAnchor: forkAnchor, messageUUID: messageUUID))
-      if stamp != nil { lastStamp = stamp }
-    }
-
     // The engine renames the session as it goes and never mentions it over the pipes, so the name
     // is the last `ai-title` anywhere in the file — outside the conversation chain, which is why
     // it is read separately rather than from the walk below.
     title = aiTitle(inTranscript: data)
 
-    for record in liveBranch(inTranscript: data) {
-      let at = stamp(of: record)
-      // The point a fork taken before this record would truncate at is simply the record it
-      // hangs off — by construction that is the one before it on the live branch, and it is the
-      // last thing the branch keeps. Records hukan does not show (thinking, tool results) are on
-      // the chain too, so anchoring this way never drops part of the finished turn above.
-      let forkAnchor = record["parentUuid"] as? String
-
-      switch record["type"] as? String {
-      case "user":
-        guard record["isMeta"] as? Bool != true,
-          let message = record["message"] as? [String: Any]
-        else { continue }
-        for text in userTexts(in: message["content"]) {
-          emit(
-            .userText(text), at: at, forkAnchor: forkAnchor,
-            messageUUID: record["uuid"] as? String)
-        }
-
-      case "assistant":
-        guard let message = record["message"] as? [String: Any],
-          let blocks = message["content"] as? [[String: Any]]
-        else { continue }
-        let priced = priced(record)
-        if priced.usd > 0 { costUSD = (costUSD ?? 0) + priced.usd }
-        if priced.unpriced { costApproximate = true }
-        if let t = tokens(of: record) {
-          totals.add(t)
-          byModel[model(of: record) ?? "", default: TokenTotals()].add(t)
-        }
-        for block in blocks {
-          switch block["type"] as? String {
-          case "text":
-            guard let text = block["text"] as? String else { continue }
-            emit(.assistantText(text), at: at)
-          case "tool_use":
-            emit(
-              .toolUse(
-                name: block["name"] as? String ?? "tool",
-                input: block["input"] as? [String: Any] ?? [:]), at: at)
-          default:
-            continue
-          }
-        }
-
-      default:
-        continue
+    let branch = liveBranch(inTranscript: data)
+    for record in branch {
+      let read = parsed(record)
+      records.append(contentsOf: read.records)
+      if let stamp = read.records.compactMap(\.stamp).last { lastStamp = stamp }
+      if read.usd > 0 { costUSD = (costUSD ?? 0) + read.usd }
+      if read.unpriced { costApproximate = true }
+      if let spent = read.tokens {
+        totals.add(spent)
+        byModel[read.model ?? "", default: TokenTotals()].add(spent)
       }
     }
+
     return History(
       title: title, records: records, lastStamp: lastStamp,
       cost: CostEstimate(
-        usd: costUSD, approximate: costApproximate, tokens: totals, byModel: byModel))
+        usd: costUSD, approximate: costApproximate, tokens: totals, byModel: byModel),
+      cursor: HistoryCursor(
+        offset: consumedBytes(of: data), lastUUID: branch.last?["uuid"] as? String))
+  }
+
+  /// One line of a transcript read as what it contributes: the blocks it puts in the
+  /// conversation, and the usage it spent. Shared by the walk above and the tail read below, so
+  /// a conversation being followed and one loaded whole cannot come out different.
+  private struct ParsedRecord {
+    var records: [HistoryRecord] = []
+    var usd: Double = 0
+    var unpriced = false
+    var tokens: TokenTotals?
+    var model: String?
+  }
+
+  private static func parsed(_ record: [String: Any]) -> ParsedRecord {
+    var out = ParsedRecord()
+    let at = stamp(of: record)
+    // The point a fork taken before this record would truncate at is simply the record it
+    // hangs off — by construction that is the one before it on the live branch, and it is the
+    // last thing the branch keeps. Records hukan does not show (thinking, tool results) are on
+    // the chain too, so anchoring this way never drops part of the finished turn above.
+    let forkAnchor = record["parentUuid"] as? String
+
+    switch record["type"] as? String {
+    case "user":
+      guard record["isMeta"] as? Bool != true, let message = record["message"] as? [String: Any]
+      else { return out }
+      for text in userTexts(in: message["content"]) {
+        out.records.append(
+          HistoryRecord(
+            kind: .userText(text), stamp: at, forkAnchor: forkAnchor,
+            messageUUID: record["uuid"] as? String))
+      }
+
+    case "assistant":
+      guard let message = record["message"] as? [String: Any],
+        let blocks = message["content"] as? [[String: Any]]
+      else { return out }
+      let priced = priced(record)
+      out.usd = priced.usd
+      out.unpriced = priced.unpriced
+      out.tokens = tokens(of: record)
+      out.model = model(of: record)
+      for block in blocks {
+        switch block["type"] as? String {
+        case "text":
+          guard let text = block["text"] as? String else { continue }
+          out.records.append(HistoryRecord(kind: .assistantText(text), stamp: at))
+        case "tool_use":
+          out.records.append(
+            HistoryRecord(
+              kind: .toolUse(
+                name: block["name"] as? String ?? "tool",
+                input: block["input"] as? [String: Any] ?? [:]), stamp: at))
+        default:
+          continue
+        }
+      }
+
+    default:
+      break
+    }
+    return out
+  }
+
+  /// How much of a transcript can be trusted as read: up to and including the last newline,
+  /// never the file's end. The engine may be midway through writing a line when a read lands,
+  /// and a cursor set past a half-written one would skip the rest of it when it arrives.
+  private static func consumedBytes(of data: Data) -> Int {
+    guard let newline = data.lastIndex(of: 0x0a) else { return 0 }
+    return data.distance(from: data.startIndex, to: newline) + 1
+  }
+
+  /// What a transcript has gained since `cursor`, without reading it whole.
+  ///
+  /// The reason this exists rather than calling `history` again: a conversation is a chain walked
+  /// back from the last line, so that read has to parse every line in the file, and the
+  /// transcripts on this machine run to tens of megabytes. Affordable once, when a session is
+  /// opened. Not affordable at the rate an agent writes lines — which is the rate a session
+  /// running in another process has to be read at, the file being the only place it says
+  /// anything.
+  ///
+  /// Continuing is sound only while the new lines hang off the last one taken, which is what the
+  /// cursor's uuid is for: a rollback re-parents the tail onto an earlier record rather than
+  /// appending, and reading that as an append would show a branch the agent has forgotten. So it
+  /// is refused, and the caller walks the file again. Lines that are not part of the conversation
+  /// — a subagent's, an `ai-title` — are passed over without breaking the chain, exactly as the
+  /// whole-file walk passes over them; the title is handed back, since a session being followed
+  /// is usually one that has yet to be named.
+  static func historyTail(id: UUID, worktree: URL, since cursor: HistoryCursor) -> HistoryTail {
+    let url = transcriptURL(id: id, worktree: worktree)
+    guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int
+    else { return .rewritten }
+    if size < cursor.offset { return .rewritten }
+    if size == cursor.offset { return .unchanged }
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return .rewritten }
+    defer { try? handle.close() }
+    guard (try? handle.seek(toOffset: UInt64(cursor.offset))) != nil,
+      let data = try? handle.readToEnd()
+    else { return .unchanged }
+    let whole = consumedBytes(of: data)
+    guard whole > 0 else { return .unchanged }
+
+    var records: [HistoryRecord] = []
+    var last = cursor.lastUUID
+    var title: String?
+    let complete = data[data.startIndex..<data.index(data.startIndex, offsetBy: whole)]
+    for line in complete.split(separator: 0x0a) {
+      guard let record = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any]
+      else { continue }
+      if let named = aiTitle(inRecord: record) { title = named }
+      guard record["isSidechain"] as? Bool != true,
+        let type = record["type"] as? String, conversationTypes.contains(type),
+        let uuid = record["uuid"] as? String
+      else { continue }
+      guard record["parentUuid"] as? String == last else { return .rewritten }
+      last = uuid
+      records.append(contentsOf: parsed(record).records)
+    }
+    return .appended(
+      records: records,
+      cursor: HistoryCursor(offset: cursor.offset + whole, lastUUID: last), title: title)
   }
 
   /// Estimated cost for a session, re-read from its transcript without building the styled

@@ -197,7 +197,8 @@ Claude Code's own titles. A session not yet reattached is marked `detached` and 
 selection; one another process already holds shows greyed and cannot be started, but still reads
 and searches, and returns the moment that process exits. A `claude` started outside the window —
 in a terminal, in a worktree open here — joins the rail as it starts, held, and takes its name
-when it writes its first message.
+when it writes its first message. Opened, its conversation keeps up: what the other process writes
+arrives as it is written, a rollback it makes included.
 
 **Slash commands.** A `/` at the head of the composer opens the engine's own command list — its
 built-ins beside every skill and user command it found — filtered as you type, taken with `⏎` or

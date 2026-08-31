@@ -440,6 +440,14 @@ final class AgentSession {
 
   private var hasLoadedHistory = false
 
+  /// Where this session's transcript has been read to, so what the holder writes next can be
+  /// picked up without reading the file again — see `follow(at:)`. Nil until the history has
+  /// been read, which is what makes "opened" the condition for following at all.
+  private var historyCursor: ClaudeSessionStore.HistoryCursor?
+  /// One tail read at a time. The file moves while the read is on its way, and a second read
+  /// launched from the same cursor would take the same lines twice.
+  private var isFollowing = false
+
   /// How much history renders at once: the tail shown on open, and the slice prepended per
   /// backward load. Renders and lays out in well under a frame's worth of anything a reader
   /// notices (~200 ms for a heavy 300), where a long conversation rendered whole costs seconds
@@ -484,6 +492,7 @@ final class AgentSession {
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.pendingPrefix = prefix
+        self.historyCursor = history.cursor
         self.noteUserMessageUUIDs(in: records)
         // Inserted at the front, not appended: a session that resumed on the same
         // click may already have produced live output while this was being read — in which
@@ -502,6 +511,79 @@ final class AgentSession {
         self.onStateChange?()
       }
     }
+  }
+
+  /// Whether there is a conversation to follow: one another live process is writing, that this
+  /// window has already read once.
+  ///
+  /// Both halves matter. A session hukan runs says what it is doing over its own stream, so its
+  /// pane is never behind; a session nobody has opened has no pane for new records to go after,
+  /// and gets the whole file read when it is opened. What is left is the case in between — the
+  /// `claude` in a terminal whose conversation is on screen here — where the file is the only
+  /// thing it says anything through.
+  var isFollowable: Bool { heldByPID != nil && hasLoadedHistory }
+
+  /// Take on whatever the holder has written since the last read.
+  ///
+  /// Called when the transcript's own file is seen to move, never on a clock: an agent writes a
+  /// line every few seconds and a poll fast enough to feel live would be a re-read per second of
+  /// a file that has not changed.
+  func follow(at worktreeURL: URL) {
+    // No cursor yet means the first read is still on its way; it will land with a cursor that
+    // covers everything up to its own read, so nothing written in the meantime is missed — the
+    // next time the file moves, the tail starts from there.
+    guard let cursor = historyCursor, !isFollowing else { return }
+    isFollowing = true
+    let id = self.id
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      let tail = ClaudeSessionStore.historyTail(id: id, worktree: worktreeURL, since: cursor)
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.isFollowing = false
+        switch tail {
+        case .unchanged:
+          break
+        case .appended(let records, let cursor, let title):
+          self.historyCursor = cursor
+          if let title, self.title != title {
+            self.title = title
+            self.onStateChange?()
+          }
+          guard !records.isEmpty else { return }
+          self.appendFollowed(records)
+        case .rewritten:
+          // The branch moved under us: the process that owns this conversation rolled it back,
+          // which re-parents the tail rather than extending it. Nothing short of walking the
+          // file again is honest about what the agent now remembers.
+          self.reloadHistory(at: worktreeURL)
+        }
+      }
+    }
+  }
+
+  /// Put records read off the file after what is already shown. The same rendering the live path
+  /// uses, threaded through `lastStamp` so a pause the holder took draws its separator exactly
+  /// where a whole-file render would have put one.
+  private func appendFollowed(_ records: [HistoryRecord]) {
+    let rendered = Transcript.render(records, previousStamp: lastStamp)
+    guard rendered.length > 0 else { return }
+    append(rendered)
+    if let stamp = records.compactMap(\.stamp).last { lastStamp = stamp }
+    noteUserMessageUUIDs(in: records)
+  }
+
+  /// Read the conversation again from the top, replacing what is on screen. Only for the
+  /// rollback case above — everything else extends what is there.
+  private func reloadHistory(at worktreeURL: URL) {
+    transcript.deleteCharacters(in: NSRange(location: 0, length: transcript.length))
+    pendingPrefix = []
+    userMessages.removeAll()
+    streamStart = nil
+    lastStamp = nil
+    historyCursor = nil
+    hasLoadedHistory = false
+    onReload?()
+    loadHistoryIfNeeded(at: worktreeURL)
   }
 
   /// Whether a `user` event is a prompt someone typed rather than the engine answering its own

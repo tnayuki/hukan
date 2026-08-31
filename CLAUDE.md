@@ -541,6 +541,22 @@ Workspace (one window)
   permanent "New session" on the rail, which is exactly the pile of rows standing for nothing that
   this window is supposed to be the opposite of. A New Session opened here by hand is someone's
   intent and stays.
+- **A conversation another process is writing is followed by reading its file, not by asking more
+  often.** Opened here, such a session's pane is fixed at whatever it said when it was opened:
+  there is no stream to hear it on, the engine being someone else's. The file is the one thing it
+  says anything through, and the file moving is an event — so the same watch that waits for a name
+  carries this too, and nothing is on a clock. **What the follow costs is why it is a tail read
+  and not a re-read.** A conversation is the chain walked back from the last line, so reading one
+  means parsing every line in the file, and the transcripts here run to tens of megabytes;
+  affordable once, when a session is opened, and not at the rate an agent writes lines. So the
+  read carries on from where the last one stopped — the bytes taken, and the uuid of the last line
+  on the branch. The uuid is what makes the offset safe: a rollback re-parents the tail onto an
+  earlier record rather than appending, and bytes alone cannot tell the two apart, so a tail that
+  does not hang off the last line taken is refused and the file is walked again. It stops at the
+  last newline, never at the file's end, since a line being written is not a record yet. The two
+  reads share one reading of what a record means, or a conversation followed and one loaded whole
+  would come out different — and the name rides along on the same read, which matters because the
+  rows being followed are exactly the ones that went up without one.
 - **The rail navigates between tasks; the files panel navigates within one.** The rail lists
   worktrees, sessions and what is waiting (approvals) — bounded state, which is why one field
   searches it, under the same typing-filters / Return-searches rule as the panel's (titles are in
