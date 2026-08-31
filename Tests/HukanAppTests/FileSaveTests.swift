@@ -131,4 +131,32 @@ final class FileSaveTests: XCTestCase {
     wait(for: [wentAway], timeout: 10)
     XCTAssertEqual(worktree.changedFiles.map(\.path), [], "the worktree is clean again")
   }
+
+  /// Closing the window, and quitting, ask about every unsaved edit the way ⌘W asks about one.
+  /// Only the unobstructed half is checkable here — the other half is an `NSAlert` standing in
+  /// front of the test — so what this pins is that a desk with nothing to save is not stopped by
+  /// the new question, and that the dirty flag the question reads is the one the pane sets.
+  @MainActor
+  func testClosingIsUnobstructedUntilThereIsAnUnsavedEdit() throws {
+    try makeRepository()
+
+    let workspace = Workspace()
+    let worktree = workspace.addWorktree(root)
+    let files = FileColumns()
+    files.workspace = workspace
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+      styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = files.desk.view
+    files.desk.reload(worktreeID: worktree.id)
+    files.desk.openFile(worktree: worktree, path: "a.txt", preview: false)
+    let content = try XCTUnwrap(files.desk.activeFileContent)
+    let text = try XCTUnwrap(textView(in: content.view))
+    spin(until: { text.isEditable }, "the file's text landed")
+
+    XCTAssertTrue(files.desk.confirmClosingWindow(), "a saved desk closes without a word")
+
+    text.insertText("edited ", replacementRange: NSRange(location: 0, length: 0))
+    XCTAssertTrue(files.hasUnsavedEdit, "and this is what the question is asked about")
+  }
 }

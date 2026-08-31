@@ -60,6 +60,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.activate(ignoringOtherApps: true)
   }
 
+  /// Quitting closes every window, so it owes every unsaved edit the prompt a closing tab gets.
+  /// A Cancel anywhere stops the quit where it stands; the windows already answered for keep
+  /// whatever their answer wrote. Asked before `applicationWillTerminate` starts stopping engines,
+  /// since a quit that is going to be cancelled must not have torn anything down on the way.
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    for controller in WorkspaceWindowController.all where !controller.confirmClosingWindow() {
+      return .terminateCancel
+    }
+    return .terminateNow
+  }
+
   /// Stop every agent before quitting. `claude -p` runs as a child process, and a child is not
   /// killed when its parent exits — so without this, quitting (or the relaunch `restart` does)
   /// orphans each one to launchd, where it keeps running its turn, and the next launch resumes

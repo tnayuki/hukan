@@ -185,6 +185,14 @@ Workspace (one window)
   The saved title holds until the page reports its own, or every restored tab would rename itself
   to a bare host name the moment it loads. A blank tab is not saved — it is one keystroke to make
   again.
+- **A window that closes, and a quit, ask about every unsaved edit first.** The same Save / Don't
+  Save / Cancel a closing tab gets, since closing the window closes every tab, and a Cancel keeps
+  the window. The prompt was reachable one tab at a time only: ⌘W asked, and the window's close and
+  the quit behind it took every tab at once without asking any of them — so the one state hukan
+  holds that exists nowhere else, an edit nobody has saved, was the one it dropped without a word.
+  Hot exit is the other answer, VS Code's and Zed's: carry the unsaved text across a relaunch
+  instead of asking. Refused for what it costs — a copy of the file outside git, which is the line
+  master data draws — and not for the convenience it buys.
 - **A terminal's tab is named the way Terminal.app names one** — the command holding the pty
   while something is running, the working directory's last component when nothing is. The path
   relative to the worktree is the alternative, and the one thing it buys — two tabs in one

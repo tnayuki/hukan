@@ -137,7 +137,8 @@ end, a drag puts one wherever it is dropped, and closing the active one lands on
 neighbour. Past the point where the tabs stop fitting, it scrolls sideways instead of squeezing
 every label at once, and whichever tab is picked is scrolled back into sight; `+` keeps the
 trailing edge, outside the scroll. A click previews and a double-click promotes: a preview
-becomes lasting, and a lasting tab takes the whole window.
+becomes lasting, and a lasting tab takes the whole window. Closing the window — and quitting —
+asks about every unsaved edit first, the way closing one tab asks about one.
 
 A web tab's field is an address bar and a search box at once, and the text decides which: a
 scheme, a slash or a dot makes it an address, anything else is a search. A load that fails says

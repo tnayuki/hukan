@@ -1200,6 +1200,19 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       tabOrder: files.desk.restorableTabOrder)
   }
 
+  /// Closing the window closes every tab in it, so it owes each unsaved edit the prompt a closing
+  /// tab gets. A Cancel keeps the window — and the app's own quit asks every window this same
+  /// question first (see the delegate).
+  func windowShouldClose(_ sender: NSWindow) -> Bool {
+    confirmClosingWindow()
+  }
+
+  /// The unsaved-edit prompt for everything this window holds. Its own method so the app's quit
+  /// can ask each window the same question before any of them starts closing.
+  func confirmClosingWindow() -> Bool {
+    files.desk.confirmClosingWindow()
+  }
+
   func window(_ window: NSWindow, didDecodeRestorableState state: NSCoder) {
     workspace.decodeState(from: state)
     materializeRestoredTerminals()

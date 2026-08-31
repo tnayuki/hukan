@@ -833,6 +833,34 @@ final class WorktreeDeskViewController: NSViewController {
   /// ⌘W: close the active tab — a file (after the unsaved-edit prompt) or a terminal. Returns
   /// whether there was one to close, so the menu action is a no-op on an empty desk.
   @discardableResult
+  /// Every unsaved edit on the desk, asked about before the window goes — the same Save / Don't
+  /// Save / Cancel a closing tab gets, since closing the window closes every tab. False when one
+  /// of them was cancelled, which the window and the app both read as "do not close after all".
+  ///
+  /// Without it the prompt was reachable only one tab at a time: ⌘W asked, and the window's own
+  /// close and the quit behind it took every tab at once without asking any of them, so an edit
+  /// nobody had saved went silently. Across every worktree, not only the one showing — the alert
+  /// names the file, and the tab is selected first when it is on the desk in front of you, so a
+  /// Cancel lands on it.
+  func confirmClosingWindow() -> Bool {
+    let previous = surface
+    for (worktreeID, tabs) in fileTabsByWorktree {
+      for tab in tabs where tab.content.hasUnsavedEdit {
+        if worktreeID == self.worktreeID {
+          surface = .file(tab.id)
+          rebuildTabBar()
+          applySurface()
+        }
+        guard tab.content.confirmLeavingCurrentFile() else { return false }
+      }
+    }
+    guard surface != previous else { return true }
+    surface = previous
+    rebuildTabBar()
+    applySurface()
+    return true
+  }
+
   func closeActiveTab() -> Bool {
     guard surface != .none else { return false }
     closeTabs([surface])
