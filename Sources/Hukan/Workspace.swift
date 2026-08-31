@@ -58,6 +58,9 @@ final class Workspace {
   /// The same pair for `loadFiles`, which had none — see the note there. And a third for the
   /// history's own paging, which reads nothing else and so needs no queued rerun: a page asked
   /// for while one is in flight is simply the next scroll's page.
+  /// Handed out to each read as it starts, so a worktree can tell the older answer from the
+  /// newer when two overlap — see `Worktree.readStamp`.
+  var readSequence = 0
   var loadInFlight: Set<UUID> = []
   var loadPending: Set<UUID> = []
   var historyInFlight: Set<UUID> = []

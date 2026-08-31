@@ -124,6 +124,14 @@ final class Worktree {
     return low < trackedFiles.count && trackedFiles[low] == path
   }
 
+  /// The stamp of the newest read whose answer this worktree has taken. A read that started
+  /// before it read the disk earlier, so its answer is the older one however it finished, and it
+  /// is dropped rather than written over the newer. Two reads do overlap: `loadFiles` and
+  /// `refreshFiles` have gates of their own, so a first read of a large worktree — seconds of
+  /// it — runs while the batches an agent's writes raise are answered beside it, and the slow
+  /// one landing last used to put the worktree back as it was before them.
+  var readStamp = 0
+
   /// Where HEAD and the index stood when the last refresh read them — what decides whether that
   /// refresh reports "everything moved" or only the paths it saw move. nil until the first read.
   var measurementBase: Git.MeasurementBase?

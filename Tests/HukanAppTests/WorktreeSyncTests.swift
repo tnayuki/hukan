@@ -456,6 +456,37 @@ final class WorktreeSyncTests: XCTestCase {
     XCTAssertNil(edit("noise\n", naming: "build/out.o"), "ignored churn reaches nobody")
   }
 
+  /// Two reads of one worktree overlap: `loadFiles` and `refreshFiles` have gates of their own,
+  /// so the first read of a large worktree runs for seconds while the batches an agent's writes
+  /// raise are answered beside it. Whichever *started* later read the disk later, so it holds
+  /// the newer answer however the two finish, and the older one must not put the worktree back
+  /// the way it was before the write.
+  ///
+  /// The stamp is set by hand because the interleaving cannot be forced from outside: what has
+  /// to happen is a write landing after a read has asked git and before it has answered, and
+  /// nothing here can stand in that gap. So the state a newer read would have left is staged,
+  /// and what is under test is that the older read leaves it alone.
+  func testAnOlderReadDoesNotOverwriteANewerAnswer() throws {
+    let (main, _) = try makeRepositoryWithWorktree()
+    let workspace = Workspace()
+    workspace.addWorktree(main)
+    let worktree = try XCTUnwrap(workspace.worktree(atPath: main.path))
+
+    // As a refresh that started later would have left it: a change git cannot see on disk, so
+    // a read landing afterwards can only disagree.
+    let seen = ChangedFile(path: "a.txt", added: 1, removed: 0)
+    worktree.changedFiles = [seen]
+    worktree.readStamp = workspace.readSequence + 100
+
+    let loaded = expectation(description: "the older read lands")
+    loaded.assertForOverFulfill = false
+    workspace.loadFiles(worktreeID: worktree.id) { loaded.fulfill() }
+    wait(for: [loaded], timeout: 20)
+    settle(workspace, worktreeID: worktree.id)
+
+    XCTAssertEqual(worktree.changedFiles, [seen], "the older read answered for nobody")
+  }
+
   /// Every worktree is watched twice, and the pair is the design: its files on one stream, its
   /// repository on another. The main checkout keeps its git directory inside the subtree, so its
   /// file stream is told to leave it out rather than being left to sort the two apart afterwards.

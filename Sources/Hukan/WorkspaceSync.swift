@@ -215,6 +215,8 @@ extension Workspace {
       return
     }
     loadInFlight.insert(worktreeID)
+    readSequence += 1
+    let stamp = readSequence
     let url = worktree.url
     let limit = worktree.historyLimit
     // The disk, walked once on its own queue and kept in step from then on (the watcher). The
@@ -247,9 +249,14 @@ extension Workspace {
       // it that refresh cannot tell "HEAD moved" from "never looked", and reports everything.
       let base = Git.measurementBase(at: url)
       DispatchQueue.main.async { [weak self] in
-        worktree.changedFiles = changed
-        worktree.history = history
-        worktree.measurementBase = base
+        // Unless something read the disk after this did and has already landed: that answer is
+        // the newer one, and this would put the worktree back the way it was before it.
+        if stamp > worktree.readStamp {
+          worktree.readStamp = stamp
+          worktree.changedFiles = changed
+          worktree.history = history
+          worktree.measurementBase = base
+        }
         completion()
         guard let self else { return }
         self.loadInFlight.remove(worktreeID)
@@ -440,6 +447,8 @@ extension Workspace {
       return paths
     }
     refreshInFlight.insert(worktreeID)
+    readSequence += 1
+    let stamp = readSequence
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let changed = Git.changedFiles(at: url, since: "HEAD", paths: asked.map(Array.init))
       // The index is a file inside git's own directory, so nothing that moved in the worktree
@@ -455,7 +464,11 @@ extension Workspace {
       DispatchQueue.main.async {
         guard let self else { return }
         self.refreshInFlight.remove(worktreeID)
-        if let worktree = self.worktree(id: worktreeID) {
+        // The same rule `loadFiles` keeps: a read that started earlier read the disk earlier,
+        // so it has nothing to say once a later one has landed — and a narrowed read folds into
+        // the changed set, which makes writing an older answer into it worse than useless.
+        if let worktree = self.worktree(id: worktreeID), stamp > worktree.readStamp {
+          worktree.readStamp = stamp
           // A narrowed read answers for the paths it was given and for nothing else, so it is
           // folded into what the worktree already holds rather than replacing it.
           let files =
