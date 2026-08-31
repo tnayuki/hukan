@@ -76,6 +76,16 @@ final class Repository {
   let id: String
   var worktrees: [Worktree] = []
 
+  /// The prompts typed in this repository, ready to be matched by their reading — what the
+  /// composer completes against when the input method is off (see `PromptCompletion`). nil until
+  /// the first read of the transcripts has landed; the read is the repository's, not a worktree's,
+  /// because that is the unit a person moves between while working on one thing.
+  var promptHistory: [PromptCompletion.Indexed]?
+  /// A read is under way. The read is once per repository per window — it costs a second and the
+  /// prompts a person types after it are appended as they are sent (`Workspace.notePrompt`), so
+  /// there is nothing a second read would find that the window does not already have.
+  var isReadingPromptHistory = false
+
   init(id: String) { self.id = id }
 
   var name: String { (id as NSString).lastPathComponent }

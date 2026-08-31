@@ -188,6 +188,12 @@ final class ComposerInput: NSView {
     didSet { updateCompletion() }
   }
 
+  /// Where the past prompts come from when the field is completing one. A source rather than a
+  /// list, because it is read at the keystroke: the repository's history lands in the background
+  /// (see `Workspace.promptHistory(forWorktree:)`) and a stored copy here would be whatever it
+  /// was at the last refresh.
+  var promptSource: (() -> [PromptCompletion.Indexed])?
+
   private let completionPanel = CommandCompletionPanel()
 
   /// While a turn is in flight the stop button rides in the field's right edge; otherwise it is
@@ -264,12 +270,12 @@ final class ComposerInput: NSView {
       case .dismiss:
         self.completionPanel.dismiss()
       case .accept:
-        guard let command = self.completionPanel.selected else { return false }
-        self.take(command)
+        guard let item = self.completionPanel.selected else { return false }
+        self.take(item)
       }
       return true
     }
-    completionPanel.onPick = { [weak self] command in self?.take(command) }
+    completionPanel.onPick = { [weak self] item in self?.take(item) }
     textView.onAttach = { [weak self] paths in self?.attach(paths) }
     // Esc mirrors the stop button, but only while a turn is in flight — otherwise let the text
     // view keep Esc for its own use (and never swallow it into a silent no-op).
@@ -357,27 +363,49 @@ final class ComposerInput: NSView {
     recomputeHeight()
   }
 
-  // MARK: - Slash-command completion
+  // MARK: - Completion
 
   /// Open, refilter or close the list to match what is in the field. Driven by every keystroke,
   /// which is affordable because the list is in memory and the match is a substring — the same
   /// reasoning as the files panel's filter.
+  ///
+  /// The two lists are asked in the order they can be told apart: a leading `/` is a command and
+  /// nothing else, so the command list answers first and the prompts are what is left. Never
+  /// both at once — one message is being completed, and mixing the engine's commands into a list
+  /// of things this person has said would make the row taken by Return depend on which kind
+  /// happened to sort first.
   private func updateCompletion() {
-    guard isEnabled, !commands.isEmpty,
-      let query = CommandCompletion.query(in: textView.string)
-    else {
+    guard isEnabled else {
       completionPanel.dismiss()
       return
     }
-    completionPanel.present(CommandCompletion.matches(query, in: commands), below: self)
+    if !commands.isEmpty, let query = CommandCompletion.query(in: textView.string) {
+      completionPanel.present(
+        CommandCompletion.matches(query, in: commands).map(CompletionItem.command), below: self)
+      return
+    }
+    let prompts = promptSource?() ?? []
+    if !prompts.isEmpty,
+      let query = PromptCompletion.query(
+        in: textView.string, isComposing: textView.hasMarkedText())
+    {
+      completionPanel.present(
+        PromptCompletion.matches(query, in: prompts).map(CompletionItem.prompt), below: self)
+      return
+    }
+    completionPanel.dismiss()
   }
 
-  /// Put a picked command in the field, caret at the end. Written through the text view's own
-  /// edit path rather than by assigning `string`, so ⌘Z takes it back the way it takes back
-  /// anything else typed here.
-  private func take(_ command: ClaudeCommand) {
+  /// Put a picked row in the field, caret at the end. Written through the text view's own edit
+  /// path rather than by assigning `string`, so ⌘Z takes it back the way it takes back anything
+  /// else typed here — which is the whole of the way back from a prompt taken by mistake.
+  private func take(_ item: CompletionItem) {
     let all = NSRange(location: 0, length: (textView.string as NSString).length)
-    let replacement = CommandCompletion.completion(for: command)
+    let replacement: String
+    switch item {
+    case .command(let command): replacement = CommandCompletion.completion(for: command)
+    case .prompt(let prompt): replacement = prompt
+    }
     if textView.shouldChangeText(in: all, replacementString: replacement) {
       textView.replaceCharacters(in: all, with: replacement)
       textView.didChangeText()

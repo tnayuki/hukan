@@ -201,6 +201,13 @@ and searches, and returns the moment that process exits.
 built-ins beside every skill and user command it found — filtered as you type, taken with `⏎` or
 `⇥`. A skill added on disk shows up once an engine has restarted; nothing here keeps a copy.
 
+**Past prompts, by their reading.** With the input method off, two or more letters in the composer
+offer what you have already asked this repository, matched by how it reads: `kentou` finds
+検討して, `ririsu` finds リリースして. Both spellings of a long vowel work, and so do Hepburn and
+kunrei — `syasin` and `shashin` are one query. A word written in ASCII inside a Japanese sentence
+is matched as itself, so `pr` finds PRを作って. The list is walked and taken like the command list,
+and nothing is stored: the prompts are read back out of Claude Code's own transcripts.
+
 **Markdown.** Rendered on both sides of the conversation, with what you typed tinted and indented.
 A table's cells are selectable — by character inside a cell, by whole cells once the drag leaves
 one — and copy as tab-separated text, which is what a spreadsheet and Slack read as a table.

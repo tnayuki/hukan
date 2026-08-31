@@ -569,6 +569,45 @@ final class Workspace {
     return true
   }
 
+  // MARK: - Prompt history
+
+  /// The prompts typed in this worktree's repository, for the composer's completion list.
+  ///
+  /// Asked at the keystroke rather than pushed at every refresh, so it cannot go stale and costs
+  /// an array reference to answer. The first ask is also what starts the read: it is a second's
+  /// work over hundreds of megabytes of transcript (see `PromptHistory.read`), so it runs on a
+  /// background queue and the list is simply empty until it lands — which is long before anyone
+  /// has typed at a window they have just opened.
+  func promptHistory(forWorktree id: UUID) -> [PromptCompletion.Indexed] {
+    guard let repository = worktree(id: id)?.repository else { return [] }
+    if let history = repository.promptHistory { return history }
+    guard !repository.isReadingPromptHistory else { return [] }
+    repository.isReadingPromptHistory = true
+    let worktrees = repository.worktrees.map(\.url)
+    DispatchQueue.global(qos: .utility).async {
+      let history = PromptCompletion.index(PromptHistory.read(worktrees: worktrees))
+      DispatchQueue.main.async {
+        repository.promptHistory = history
+        repository.isReadingPromptHistory = false
+      }
+    }
+    return []
+  }
+
+  /// A prompt just sent joins the head of its repository's list.
+  ///
+  /// The transcripts are still where the history lives — this writes nothing and stores nothing
+  /// new. It is what keeps the one read from being a snapshot of the moment the window opened:
+  /// without it, the prompt you typed a minute ago is the one thing the list cannot offer.
+  func notePrompt(_ text: String, forWorktree id: UUID) {
+    let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !prompt.isEmpty, prompt.count <= PromptHistory.lengthLimit,
+      let repository = worktree(id: id)?.repository, var history = repository.promptHistory
+    else { return }
+    history.removeAll { $0.text == prompt }
+    repository.promptHistory = PromptCompletion.index([prompt]) + history
+  }
+
   /// The repository with this id, created and registered if it is the first worktree of it to
   /// arrive. Worktrees intern their repository through here, so every worktree of one
   /// repository shares a single object and the id/name are computed in exactly one place.

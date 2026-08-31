@@ -244,10 +244,13 @@ final class FilesPanelCommand: NSScriptCommand {
   }
 }
 
-/// `completions` reports the composer's slash-command list, and `typing`/`moving`/`accepting`
-/// drive it. Hidden, like `files` and `commit`, and for the same reason: the list is rows on a
-/// floating panel, so checking that a `/` opened it — and that Return took the right row — would
-/// otherwise mean clicking at coordinates.
+/// `completions` reports whichever list the composer has open — the engine's slash commands, or
+/// the past prompts a romaji query found — and `typing`/`moving`/`accepting` drive it. Hidden,
+/// like `files` and `commit`, and for the same reason: the list is rows on a floating panel, so
+/// checking that a `/` opened it — and that Return took the right row — would otherwise mean
+/// clicking at coordinates. `typing` goes through the text view's own edit path, which is what
+/// makes the prompt list reachable at all: it is opened by ordinary ASCII rather than by a
+/// trigger character, so a shortcut only a script could take would be exercising nothing.
 @objc(CompletionsCommand)
 final class CompletionsCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {

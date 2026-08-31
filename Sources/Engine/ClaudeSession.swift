@@ -1234,7 +1234,9 @@ enum ClaudeSessionStore {
 
   /// What the person actually typed. Content is either a bare string or a block list that
   /// also carries tool results, and slash commands expand into markup nobody typed.
-  private static func userTexts(in content: Any?) -> [String] {
+  /// Not private: `PromptHistory` reads the same records for the same reason, and one rule for
+  /// "what the person said" is what keeps the two from drifting apart.
+  static func userTexts(in content: Any?) -> [String] {
     let candidates: [String]
     if let text = content as? String {
       candidates = [text]

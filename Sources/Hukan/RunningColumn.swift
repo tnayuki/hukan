@@ -131,7 +131,22 @@ final class RunningColumnViewController: NSViewController {
   override func loadView() {
     input.translatesAutoresizingMaskIntoConstraints = false
     input.onSend = { [weak self] text, attachments in
-      self?.attached?.send(text, attachments: attachments)
+      guard let self else { return }
+      self.attached?.send(text, attachments: attachments)
+      // What was just sent is a past prompt from here on. The history is read once when the
+      // repository is first asked for it, so without this the one prompt the list could never
+      // offer is the one typed a minute ago.
+      if let worktreeID = self.workspace?.selectedWorktreeID {
+        self.workspace?.notePrompt(text, forWorktree: worktreeID)
+      }
+    }
+    // The past prompts the field completes against, asked as they are needed. The worktree is
+    // read at the keystroke rather than captured, so the list follows the rail's selection the
+    // way the rest of this column does.
+    input.promptSource = { [weak self] in
+      guard let self, let workspace = self.workspace, let id = workspace.selectedWorktreeID
+      else { return [] }
+      return workspace.promptHistory(forWorktree: id)
     }
     input.onSendEmpty = { [weak self] in self?.attached?.sendLastQueuedNow() }
     // Keep the attached session's unsent draft in step with the field, so switching sessions

@@ -2,21 +2,29 @@ import XCTest
 
 @testable import Hukan
 
-/// Pins the slash-command list's look, the way `HistorySnapshotTests` pins the History section's.
+/// Pins the completion list's look, the way `HistorySnapshotTests` pins the History section's.
+/// Both of the panel's row kinds, since they are laid out differently and share one box.
 ///
 /// The row is the thing worth pinning: a skill's description is a paragraph written for the model
 /// to route on, not a menu label, and left to their intrinsic widths the labels made the row wider
 /// than the panel — which laid it out from a leading edge off the side, so the names lost their
 /// left margin on exactly the rows whose description was longest. So the case is drawn at the
 /// panel's own narrow width with a description far too long for it, next to a row with an argument
-/// hint and one with neither.
+/// hint and one with neither. The prompt case is the same question asked of text that was never
+/// written to fit a row at all: a long instruction, one written over several lines, one short.
+///
+/// Both read bottom-up — the best match is the row nearest the field, and the selection starts
+/// there — which is the other thing these pin.
 ///
 /// `TEST_RUNNER_HUKAN_RECORD=1` re-records; `TEST_RUNNER_HUKAN_PREVIEW=completions` writes
-/// /tmp/hukan-preview-completions.png and leaves the reference alone.
+/// /tmp/hukan-preview-completions.png and /tmp/hukan-preview-prompts.png, leaving the
+/// references alone.
 final class CompletionSnapshotTests: XCTestCase {
-  private static let reference = URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent()
-    .appendingPathComponent("Snapshots/completions.png")
+  private static func reference(_ name: String) -> URL {
+    URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .appendingPathComponent("Snapshots/\(name).png")
+  }
 
   /// About what the composer is in a real window — wide enough that an argument hint has
   /// somewhere to go, narrow enough that a skill's description still has to truncate.
@@ -37,36 +45,55 @@ final class CompletionSnapshotTests: XCTestCase {
     ClaudeCommand(name: "compact", description: "Compact.", argumentHint: "", aliases: []),
   ]
 
+  /// Best last, the order the panel is handed. Long enough to truncate, one written over several
+  /// lines, and one that fits — which is what most of them are.
+  private static let prompts = [
+    "テストコードに実データが入っていないか確認して、入っていたら差し替えたうえでコミットまでして",
+    "まず直して\nそれからテストを走らせて\n結果を貼って",
+    "リリースビルド",
+  ]
+
   @MainActor
   func testCompletionListMatchesSnapshot() throws {
+    try verify(Self.commands.map(CompletionItem.command), named: "completions")
+  }
+
+  @MainActor
+  func testPromptListMatchesSnapshot() throws {
+    try verify(Self.prompts.map(CompletionItem.prompt), named: "prompts")
+  }
+
+  @MainActor
+  private func verify(_ items: [CompletionItem], named name: String) throws {
+    let reference = Self.reference(name)
     if ProcessInfo.processInfo.environment["HUKAN_PREVIEW"] == "completions" {
-      let out = URL(fileURLWithPath: "/tmp/hukan-preview-completions.png")
-      try render().write(to: out)
+      let out = URL(fileURLWithPath: "/tmp/hukan-preview-\(name).png")
+      try render(items).write(to: out)
       print("preview: \(out.path)")
       return
     }
 
     let record = ProcessInfo.processInfo.environment["HUKAN_RECORD"] == "1"
-    let actual = try render()
+    let actual = try render(items)
     if record {
-      try actual.write(to: Self.reference)
-      XCTFail("recorded completions snapshot — run again without HUKAN_RECORD to verify")
+      try actual.write(to: reference)
+      XCTFail("recorded \(name) snapshot — run again without HUKAN_RECORD to verify")
       return
     }
-    guard let expected = try? Data(contentsOf: Self.reference) else {
+    guard let expected = try? Data(contentsOf: reference) else {
       XCTFail(
-        "no reference at \(Self.reference.path) — record with TEST_RUNNER_HUKAN_RECORD=1 xcodebuild test"
+        "no reference at \(reference.path) — record with TEST_RUNNER_HUKAN_RECORD=1 xcodebuild test"
       )
       return
     }
     if pixels(expected) != pixels(actual) {
       let failed = FileManager.default.temporaryDirectory
-        .appendingPathComponent("hukan-snapshots/completions-actual.png")
+        .appendingPathComponent("hukan-snapshots/\(name)-actual.png")
       try? FileManager.default.createDirectory(
         at: failed.deletingLastPathComponent(), withIntermediateDirectories: true)
       try? actual.write(to: failed)
       XCTFail(
-        "completions: rendered output differs from completions.png (actual written to"
+        "\(name): rendered output differs from \(name).png (actual written to"
           + " \(failed.path); if the change is intended, re-record with"
           + " TEST_RUNNER_HUKAN_RECORD=1 xcodebuild test)")
     }
@@ -75,7 +102,7 @@ final class CompletionSnapshotTests: XCTestCase {
   /// Drawn through the panel's own `present`, so what is pinned is the layout a keystroke
   /// produces rather than a stand-in for it — the sizing is part of what went wrong.
   @MainActor
-  private func render() throws -> Data {
+  private func render(_ items: [CompletionItem]) throws -> Data {
     let appearance = NSAppearance(named: .darkAqua)!
     NSApplication.shared.appearance = appearance
 
@@ -88,7 +115,7 @@ final class CompletionSnapshotTests: XCTestCase {
 
     let panel = CommandCompletionPanel()
     panel.appearance = appearance
-    panel.present(Self.commands, below: anchor)
+    panel.present(items, below: anchor)
     defer { panel.dismiss() }
 
     guard let content = panel.contentView else { throw XCTSkip("the panel has no content view") }

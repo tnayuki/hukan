@@ -68,6 +68,24 @@ enum CommandCompletion {
   }
 }
 
+/// What a row of the composer's completion list stands for.
+///
+/// Two kinds share one panel because they are one gesture: the field is completing what the whole
+/// message is going to be, and whether that came from the engine's command list or from what this
+/// person has typed before is not a distinction the person completing it is making. Which of the
+/// two is offered is decided by the text — a leading `/` is a command, ASCII is a reading — so the
+/// panel never holds both at once.
+enum CompletionItem {
+  case command(ClaudeCommand)
+  /// A past prompt, matched by its reading. See `PromptCompletion`.
+  case prompt(String)
+
+  var isPrompt: Bool {
+    if case .prompt = self { return true }
+    return false
+  }
+}
+
 /// The keys a completion list takes before the composer sees them.
 enum CompletionKey {
   case up
@@ -80,12 +98,17 @@ enum CompletionKey {
 /// stand over the transcript, and the composer's own box clips.
 final class CommandCompletionPanel: NSPanel {
   /// A row was taken, by click or by Return.
-  var onPick: ((ClaudeCommand) -> Void)?
+  var onPick: ((CompletionItem) -> Void)?
 
   private let table = NSTableView()
   private let scroll = NSScrollView()
-  private var commands: [ClaudeCommand] = []
-  private static let rowHeight: CGFloat = 34
+  private var items: [CompletionItem] = []
+  /// A command's row is a name over a description; a prompt's is the line itself. So the height
+  /// is the list's, set when it is presented, rather than one number both kinds live with — at a
+  /// command's height a prompt floats in the middle of its row, and at a prompt's a description
+  /// has nowhere to go.
+  private static let commandRowHeight: CGFloat = 34
+  private static let promptRowHeight: CGFloat = 24
   /// Enough rows to read as a list rather than a peephole, few enough to leave the conversation
   /// visible behind it. Past this the list scrolls.
   private static let visibleRows = 8
@@ -112,7 +135,7 @@ final class CommandCompletionPanel: NSPanel {
     container.layer?.masksToBounds = true
 
     table.headerView = nil
-    table.rowHeight = Self.rowHeight
+    table.rowHeight = Self.commandRowHeight
     table.backgroundColor = .clear
     table.selectionHighlightStyle = .regular
     table.style = .plain
@@ -142,28 +165,39 @@ final class CommandCompletionPanel: NSPanel {
   /// you fall into rather than something you steer.
   override var canBecomeKey: Bool { false }
 
-  var selected: ClaudeCommand? {
+  var selected: CompletionItem? {
     let row = table.selectedRow
-    return commands.indices.contains(row) ? commands[row] : nil
+    return items.indices.contains(row) ? items[row] : nil
   }
 
-  /// Show `commands` under `anchor` (the composer, in its window's coordinates). Hides itself
-  /// when there is nothing to show, so the caller can hand over an empty list rather than having
-  /// to decide twice.
-  func present(_ commands: [ClaudeCommand], below anchor: NSView) {
-    guard !commands.isEmpty, let host = anchor.window else {
+  /// Show `items` under `anchor` (the composer, in its window's coordinates). Hides itself when
+  /// there is nothing to show, so the caller can hand over an empty list rather than having to
+  /// decide twice.
+  ///
+  /// **The list reads bottom-up**: the caller hands over its best match first and the panel puts
+  /// that on the row nearest the field, with the rest running away upwards. The panel stands over
+  /// the transcript because the composer is at the foot of the column and there is nothing under
+  /// it but the screen edge — so the row the caret is closest to is the bottom one, and a list
+  /// ranked from the top puts its best answer as far from the caret as the list is long. The
+  /// selection starts there for the same reason, which leaves the arrows reading as they look:
+  /// up walks back through the ranking, and it is one key away rather than eight.
+  func present(_ items: [CompletionItem], below anchor: NSView) {
+    guard !items.isEmpty, let host = anchor.window else {
       dismiss()
       return
     }
-    self.commands = commands
+    self.items = items.reversed()
+    table.rowHeight =
+      items.contains(where: \.isPrompt) ? Self.promptRowHeight : Self.commandRowHeight
     table.reloadData()
-    table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-    table.scrollRowToVisible(0)
+    let best = self.items.count - 1
+    table.selectRowIndexes(IndexSet(integer: best), byExtendingSelection: false)
+    table.scrollRowToVisible(best)
 
-    let rows = min(commands.count, Self.visibleRows)
+    let rows = min(items.count, Self.visibleRows)
     let frame = anchor.convert(anchor.bounds, to: nil)
     let origin = host.convertPoint(toScreen: frame.origin)
-    let size = NSSize(width: max(frame.width, 320), height: CGFloat(rows) * Self.rowHeight + 8)
+    let size = NSSize(width: max(frame.width, 320), height: CGFloat(rows) * table.rowHeight + 8)
     // Above the field, not below it: the composer sits at the foot of the column, so there is
     // nothing under it but the screen edge.
     setFrame(
@@ -181,38 +215,72 @@ final class CommandCompletionPanel: NSPanel {
 
   /// What the list is showing, for the `completions` verb: the rows carry no text a script could
   /// read, and checking where a keystroke landed any other way means clicking at coordinates.
+  /// Reported top-down, the way it is drawn, so the best match is the last line and `▸` starts
+  /// there — a report in ranking order would be describing a list nobody can see.
   var report: String {
     guard isVisible else { return "closed" }
-    guard !commands.isEmpty else { return "empty" }
+    guard !items.isEmpty else { return "empty" }
     let selected = table.selectedRow
-    return commands.enumerated().map { index, command in
+    return items.enumerated().map { index, item in
       let mark = index == selected ? "▸" : " "
-      let hint = command.argumentHint.isEmpty ? "" : " \(command.argumentHint)"
-      return "\(mark) /\(command.name)\(hint)"
+      switch item {
+      case .command(let command):
+        let hint = command.argumentHint.isEmpty ? "" : " \(command.argumentHint)"
+        return "\(mark) /\(command.name)\(hint)"
+      case .prompt(let prompt):
+        return "\(mark) \(Self.line(of: prompt))"
+      }
     }.joined(separator: "\n")
   }
 
   /// Move the selection, wrapping at both ends — a list this short is quicker to walk round than
   /// to walk back.
   func move(_ delta: Int) {
-    guard !commands.isEmpty else { return }
-    let row = (table.selectedRow + delta + commands.count) % commands.count
+    guard !items.isEmpty else { return }
+    let row = (table.selectedRow + delta + items.count) % items.count
     table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     table.scrollRowToVisible(row)
   }
 
   @objc private func rowClicked() {
-    guard let command = selected else { return }
-    onPick?(command)
+    guard let item = selected else { return }
+    onPick?(item)
   }
 }
 
 extension CommandCompletionPanel: NSTableViewDataSource, NSTableViewDelegate {
-  func numberOfRows(in tableView: NSTableView) -> Int { commands.count }
+  func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
   func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
-    guard commands.indices.contains(row) else { return nil }
-    let command = commands[row]
+    guard items.indices.contains(row) else { return nil }
+    switch items[row] {
+    case .command(let command): return commandRow(command)
+    case .prompt(let prompt): return promptRow(prompt)
+    }
+  }
+
+  /// A past prompt's row: the line itself, and nothing beside it. There is no second field to
+  /// fill — what a prompt means is what it says — and the reading that matched it is deliberately
+  /// not shown, being machinery rather than something to read.
+  private func promptRow(_ prompt: String) -> NSView {
+    let label = NSTextField(labelWithString: Self.line(of: prompt))
+    label.font = .systemFont(ofSize: 12)
+    label.lineBreakMode = .byTruncatingTail
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    return Self.row(holding: label)
+  }
+
+  /// One line of a prompt, for a row and for the `completions` verb. A message written over
+  /// several lines is still one candidate, so it is named by its first line with the rest
+  /// standing as an ellipsis.
+  static func line(of prompt: String) -> String {
+    let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    let lines = trimmed.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+    let head = String(lines.first ?? "")
+    return lines.count > 1 ? head + " …" : head
+  }
+
+  private func commandRow(_ command: ClaudeCommand) -> NSView {
     let name = NSTextField(labelWithString: "/\(command.name)")
     name.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
     let hint = NSTextField(labelWithString: command.argumentHint)
@@ -239,22 +307,26 @@ extension CommandCompletionPanel: NSTableViewDataSource, NSTableViewDelegate {
     stack.spacing = 1
     stack.alignment = .leading
 
-    // The row is pinned to the column's width and the text truncates inside it. Left to their
-    // own intrinsic sizes the labels are as wide as a skill's description — a paragraph written
-    // for the model to route on — and a stack that wide is laid out from a leading edge off the
-    // side of the panel, which takes the row's left inset with it: the names lose their margin
-    // exactly on the rows whose description is longest. So the two that may truncate are told to
-    // give way, and the stack is held to the row rather than to its contents.
+    // The two labels that may truncate are told to give way, so the name keeps its width; see
+    // `row(holding:)` for why the row is held to the column rather than to its contents.
     for label in [hint, detail] {
       label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
+    return Self.row(holding: stack)
+  }
+
+  /// The row's own box. The content is pinned to the column's width and truncates inside it:
+  /// left to its intrinsic size it is as wide as its longest label, and a stack that wide is laid
+  /// out from a leading edge off the side of the panel, which takes the row's left inset with it
+  /// — the rows whose text is longest are exactly the ones that lose their margin.
+  private static func row(holding content: NSView) -> NSView {
     let row = NSView()
-    stack.translatesAutoresizingMaskIntoConstraints = false
-    row.addSubview(stack)
+    content.translatesAutoresizingMaskIntoConstraints = false
+    row.addSubview(content)
     NSLayoutConstraint.activate([
-      stack.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 10),
-      stack.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -10),
-      stack.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+      content.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 10),
+      content.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -10),
+      content.centerYAnchor.constraint(equalTo: row.centerYAnchor),
     ])
     return row
   }

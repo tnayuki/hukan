@@ -283,7 +283,7 @@
             <result type="text"/>
         </command>
 
-        <command name="completions" code="HuknCplt" hidden="yes" description="Report the composer's slash-command list, or drive it, for automated checks">
+        <command name="completions" code="HuknCplt" hidden="yes" description="Report the composer's completion list — slash commands, or past prompts — or drive it, for automated checks">
             <cocoa class="CompletionsCommand"/>
             <parameter name="typing" code="Typg" type="text" optional="yes" description="replace the composer's text with this, as typing would">
                 <cocoa key="typing"/>
