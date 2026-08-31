@@ -409,6 +409,53 @@ final class WorktreeSyncTests: XCTestCase {
     wait(for: [sawTheCommit], timeout: 20)
   }
 
+  /// A second edit of the same shape — one line replaced by another — leaves git's answer to
+  /// the byte: the same `+1 −1` against the same file. The tab showing it still has to hear
+  /// that it moved, or an agent iterating on one file leaves a reader looking at the version
+  /// before last. What must *not* reach the window is the other half of the same batch: a build
+  /// churning inside a directory git ignores, which is why the report is gated on git knowing
+  /// the path rather than on there being a path at all.
+  func testASecondEditOfTheSameShapeStillReachesTheReader() throws {
+    let (main, _) = try makeRepositoryWithWorktree()
+    try "build/\n".write(
+      to: main.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+    git(["add", ".gitignore"], in: main)
+    git(["commit", "-q", "-m", "Ignore build"], in: main)
+    try FileManager.default.createDirectory(
+      at: main.appendingPathComponent("build"), withIntermediateDirectories: true)
+
+    let workspace = Workspace()
+    workspace.openRepository(main)
+    let worktree = try XCTUnwrap(workspace.worktree(atPath: main.path))
+    settle(workspace, worktreeID: worktree.id)
+
+    func edit(_ contents: String, naming path: String) -> Set<String>?? {
+      var reported: Set<String>??
+      let heard = expectation(description: "a report for \(path)")
+      heard.assertForOverFulfill = false
+      workspace.onWorktreeFilesChanged = { id, moved in
+        guard id == worktree.id else { return }
+        reported = moved
+        heard.fulfill()
+      }
+      try? contents.write(
+        to: main.appendingPathComponent(path), atomically: true, encoding: .utf8)
+      workspace.refreshFiles(worktreeID: worktree.id, moved: [path])
+      // Short, because what half of this test asserts is that nothing arrives.
+      _ = XCTWaiter.wait(for: [heard], timeout: 3)
+      workspace.onWorktreeFilesChanged = nil
+      return reported
+    }
+
+    XCTAssertEqual(edit("one\n", naming: "a.txt") ?? nil, ["a.txt"], "the first edit")
+    XCTAssertEqual(worktree.changedFiles, [ChangedFile(path: "a.txt", added: 1, removed: 1)])
+    // Byte for byte the same answer, and the reader has to be told all the same.
+    XCTAssertEqual(edit("two\n", naming: "a.txt") ?? nil, ["a.txt"], "and the second")
+    XCTAssertEqual(worktree.changedFiles, [ChangedFile(path: "a.txt", added: 1, removed: 1)])
+    // git has never heard of this one, and nothing should reload for it.
+    XCTAssertNil(edit("noise\n", naming: "build/out.o"), "ignored churn reaches nobody")
+  }
+
   /// Every worktree is watched twice, and the pair is the design: its files on one stream, its
   /// repository on another. The main checkout keeps its git directory inside the subtree, so its
   /// file stream is told to leave it out rather than being left to sort the two apart afterwards.

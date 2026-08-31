@@ -476,13 +476,23 @@ extension Workspace {
             reported = nil
           }
           worktree.measurementBase = base
-          if worktree.changedFiles != files || worktree.trackedFiles != trackedFiles
+          // Adopting and reporting are two questions. git's answer moving is one reason to
+          // report; a file whose content moved without moving the answer is the other, and it
+          // was missing — one line replaced by another leaves the same `+1 −1`, so the second
+          // such edit to a file was adopted by nobody and the tab showing it went on showing
+          // what was there before. The report is gated on git *knowing* the path rather than on
+          // its answer changing, which is what still keeps a build churning inside its own
+          // output directory from reloading the window: those paths git has never heard of.
+          let answerMoved =
+            worktree.changedFiles != files || worktree.trackedFiles != trackedFiles
             || worktree.history != history
-          {
+          if answerMoved {
             worktree.changedFiles = files
             worktree.trackedFiles = trackedFiles
             worktree.history = history
             worktree.hasLoadedFiles = true
+          }
+          if answerMoved || reported?.contains(where: worktree.isKnownToGit) == true {
             self.onWorktreeFilesChanged?(worktreeID, reported)
           }
         }

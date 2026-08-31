@@ -102,6 +102,28 @@ final class Worktree {
   /// What this worktree has committed past its base branch — the History section's list. Read on
   /// the same tick as the changed files, since the commit that empties one fills the other.
   var history = Git.History()
+  /// Whether git has anything to say about this path at all — it tracks it, or it is already
+  /// counted as changed. An ignored file is neither, which is what the question is for: a build
+  /// writing into its output directory must not reload the window, while a file being edited
+  /// must reach the tab showing it even on a write git measures identically.
+  ///
+  /// `trackedFiles` is git-index order, which is byte order, so this is a binary search rather
+  /// than a walk of 400,000 strings per batch.
+  func isKnownToGit(_ path: String) -> Bool {
+    if changedFiles.contains(where: { $0.path == path }) { return true }
+    var low = 0
+    var high = trackedFiles.count
+    while low < high {
+      let middle = (low + high) / 2
+      if FileTree.precedesBytewise(trackedFiles[middle], path) {
+        low = middle + 1
+      } else {
+        high = middle
+      }
+    }
+    return low < trackedFiles.count && trackedFiles[low] == path
+  }
+
   /// Where HEAD and the index stood when the last refresh read them — what decides whether that
   /// refresh reports "everything moved" or only the paths it saw move. nil until the first read.
   var measurementBase: Git.MeasurementBase?
