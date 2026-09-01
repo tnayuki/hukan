@@ -76,6 +76,29 @@ final class Repository {
   let id: String
   var worktrees: [Worktree] = []
 
+  /// Add a worktree, keeping the list in the order the rail reads down: the main checkout first,
+  /// then the linked ones by the name their row carries.
+  ///
+  /// git enumerates the worktrees and hukan followed that enumeration — but `git_worktree_list`
+  /// answers in `.git/worktrees/`'s own directory order where the CLI's `git worktree list`
+  /// sorts, so what the rail showed was neither the order they were created in nor any order
+  /// visible on screen; and a `git worktree add` noticed later was appended after all of them,
+  /// so the list drifted further the longer a window stayed up. The name is the directory's,
+  /// which is what a linked worktree's heading says (the branch is its subtitle), compared the
+  /// Finder's way — the same rule the History section's tags take, so `task-10` sits below
+  /// `task-9` rather than above it. Two worktrees can share a directory name, so the full path
+  /// settles the tie: appending then sorting has to land somewhere definite, or a row could move
+  /// under a refresh that changed nothing.
+  func add(_ worktree: Worktree) {
+    worktrees.append(worktree)
+    worktrees.sort { lhs, rhs in
+      if lhs.isMain != rhs.isMain { return lhs.isMain }
+      let byName = lhs.url.lastPathComponent.localizedStandardCompare(rhs.url.lastPathComponent)
+      if byName != .orderedSame { return byName == .orderedAscending }
+      return lhs.url.standardizedFileURL.path < rhs.url.standardizedFileURL.path
+    }
+  }
+
   /// The prompts typed in this repository, ready to be matched by their reading — what the
   /// composer completes against when the input method is off (see `PromptCompletion`). nil until
   /// the first read of the transcripts has landed; the read is the repository's, not a worktree's,

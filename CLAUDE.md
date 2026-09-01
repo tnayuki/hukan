@@ -508,6 +508,19 @@ Workspace (one window)
   kinds, and the label is what tells the block of worktree rows from the session rows above it
   — which a `Sessions` label over the sessions would not do, since a worktree's rows *are* its
   sessions and the label would name the obvious.
+  **They are ordered by name, which git only looked like it was answering.** hukan held no
+  opinion about the order at first, on the grounds that the worktrees are git's enumeration and
+  an opinion would be a second copy of something git already answers — but the enumeration is
+  `git_worktree_list`, which reads `.git/worktrees/` in the directory's own order where the CLI's
+  `git worktree list` sorts, so what the rail read down was neither the order they were made in
+  nor any order visible on screen; and a `git worktree add` noticed mid-session was appended
+  after all of them, so it drifted further the longer a window stayed up. The name is the
+  directory's, which is what the row's title says (the branch is its subtitle) and what the CLI
+  sorts on — compared the Finder's way, the same rule the History section's tags take, so
+  `task-9` comes before `task-10`. It is a rule the list is kept in rather than an arrangement
+  anyone makes, so nothing new is saved for it: the repositories' order is still yours to drag
+  and still rides the saved paths, while the worktrees under one come back sorted from the paths
+  themselves.
 - **A session leaves the rail by being archived, not by getting old.** The rail carried time
   buckets — Today, Yesterday, Last 7 days, Older, the last folded — and the proxy was wrong in
   both directions: a one-shot finished twenty minutes ago sat in Today all day, while a session

@@ -42,6 +42,41 @@ final class RailStructureTests: XCTestCase {
     XCTAssertFalse(archive.isWorktreeHeading)
   }
 
+  /// The order the rail reads down: main first, then the linked ones by directory name — and a
+  /// worktree that arrives later slots into it rather than landing at the end, which is what a
+  /// `git worktree add` noticed mid-session used to do. The names are compared the Finder's way,
+  /// so `task-9` comes before `task-10`.
+  func testWorktreesLandMainFirstThenByName() {
+    let repo = Repository(id: "/repo/main")
+    let zeta = Worktree(url: URL(fileURLWithPath: "/repo/zeta"), repository: repo)
+    let task10 = Worktree(url: URL(fileURLWithPath: "/repo/task-10"), repository: repo)
+    let main = Worktree(url: URL(fileURLWithPath: "/repo/main"), repository: repo)
+    // Deliberately out of order, and main last: git enumerates the linked ones in `.git/worktrees/`
+    // directory order, which is neither of the orders anything on screen is read in.
+    repo.add(zeta)
+    repo.add(task10)
+    repo.add(main)
+    XCTAssertEqual(
+      repo.worktrees.map { $0.url.lastPathComponent }, ["main", "task-10", "zeta"])
+
+    let task9 = Worktree(url: URL(fileURLWithPath: "/repo/task-9"), repository: repo)
+    repo.add(task9)
+    XCTAssertEqual(
+      repo.worktrees.map { $0.url.lastPathComponent }, ["main", "task-9", "task-10", "zeta"])
+  }
+
+  /// Two worktrees can be called the same thing under different parents, so the full path settles
+  /// it — an order that depended on which one was added first would move a row under a refresh
+  /// that changed nothing.
+  func testWorktreesSharingADirectoryNameAreSettledByPath() {
+    let repo = Repository(id: "/repo/main")
+    let second = Worktree(url: URL(fileURLWithPath: "/work/b/task"), repository: repo)
+    let first = Worktree(url: URL(fileURLWithPath: "/work/a/task"), repository: repo)
+    repo.add(second)
+    repo.add(first)
+    XCTAssertEqual(repo.worktrees.map { $0.url.path }, ["/work/a/task", "/work/b/task"])
+  }
+
   func testRailRepositoriesSplitMainFromLinkedAndKeepEmptyWorktrees() {
     let repo = Repository(id: "/repo/main")
     let main = Worktree(url: URL(fileURLWithPath: "/repo/main"), repository: repo)

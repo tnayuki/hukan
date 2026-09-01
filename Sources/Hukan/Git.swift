@@ -1206,9 +1206,13 @@ enum Git {
     return repository(at: URL(fileURLWithPath: String(cString: found)))
   }
 
-  /// Every worktree of the repository — the main checkout first, then each linked one — matching
-  /// `git worktree list`, which leads with the main worktree whichever one you opened. The main
-  /// checkout is the common dir's parent; the linked ones come from git by name.
+  /// Every worktree of the repository — the main checkout first, then each linked one, the way
+  /// `git worktree list` leads with the main worktree whichever one you opened. The main checkout
+  /// is the common dir's parent; the linked ones come from git by name.
+  ///
+  /// The linked ones arrive in whatever order `git_worktree_list` reads `.git/worktrees/` in,
+  /// which is the directory's and not the CLI's sort — so this is an enumeration and not an
+  /// order. What the rail reads down is `Repository.add`'s.
   static func worktrees(at url: URL) -> [URL] {
     guard let repo = openRepository(at: url) else { return [] }
     defer { git_repository_free(repo) }

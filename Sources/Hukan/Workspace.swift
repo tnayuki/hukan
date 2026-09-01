@@ -491,9 +491,9 @@ final class Workspace {
   ///
   /// Nothing new is stored for this. `encodeState` writes the worktree paths in flattening order
   /// and `decodeState` interns repositories in the order they first appear, so the order rides a
-  /// list that is already saved. The worktrees' own order is left alone for the opposite reason —
-  /// it is git's enumeration, and hukan holding an opinion about it would be a second copy of
-  /// something git already answers.
+  /// list that is already saved. The worktrees' own order is not stored at all, for the opposite
+  /// reason — it is not a choice anyone makes but a rule the list is kept in (`Repository.add`),
+  /// so it comes back from the paths themselves.
   @discardableResult
   func moveRepository(_ repositoryID: String, before otherID: String?) -> Bool {
     guard repositoryID != otherID,
@@ -652,7 +652,7 @@ final class Workspace {
     }
     let repo = repository(forID: Git.repository(at: url) ?? path)
     let worktree = Worktree(url: url, branch: Git.currentBranch(at: url), repository: repo)
-    repo.worktrees.append(worktree)
+    repo.add(worktree)
     if selectedWorktreeID == nil { selectedWorktreeID = worktree.id }
     return worktree
   }
@@ -904,8 +904,7 @@ final class Workspace {
         seen.insert(url.standardizedFileURL.path).inserted
       else { continue }
       let repo = repository(forID: Git.repository(at: url) ?? url.standardizedFileURL.path)
-      repo.worktrees.append(
-        Worktree(id: id, url: url, branch: Git.currentBranch(at: url), repository: repo))
+      repo.add(Worktree(id: id, url: url, branch: Git.currentBranch(at: url), repository: repo))
     }
 
     // Restored worktrees are built inline above rather than through addWorktree, so reconcile

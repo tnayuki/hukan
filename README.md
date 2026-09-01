@@ -66,10 +66,12 @@ process holds can be forked, but not rolled back.
 
 **Worktrees.** Repositories are opened and closed; their worktrees are enumerated from git, never
 stored. The main checkout is the repository's own rail row, naming its branch; the linked ones sit
-under a *Worktrees* heading beneath it, each folding away with its sessions. An agent moving worktree (`EnterWorktree`)
+under a *Worktrees* heading beneath it, each folding away with its sessions, in order of the
+directory name their row carries. An agent moving worktree (`EnterWorktree`)
 takes its session with it, and leaving it (`ExitWorktree`) brings the session back to the worktree
 it was started from. Dragging a repository's heading puts it somewhere else in the rail, worktrees
-and all — the insertion line falls only between repositories, never inside one. The open panel
+and all — the insertion line falls only between repositories, never inside one, the worktrees'
+own order being the name's rather than anyone's. The open panel
 takes several at once, and *Open Recent* offers the ones this app has had open and this window has
 not — in the File menu, on the rail's right-click, and beside the empty window's button. An entry
 that is no longer a directory drops itself.
