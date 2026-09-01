@@ -224,9 +224,10 @@ every folded tool call and pulls in the history above before it searches, so wha
 is the conversation and not the part of it on screen. Which of the two a find means is where the
 focus is.
 
-**Notifications.** A banner the moment a session becomes your turn, and only while hukan is not
-frontmost. Tapping it jumps to that session, and one key does the same from anywhere. A turn
-merely finishing is silent.
+**Notifications.** A banner the moment a session becomes your turn, and only while the window
+carrying that session is not the one in front of you — another window's rail is not showing it.
+Tapping it jumps to that session, and one key does the same from anywhere. A turn merely
+finishing is silent.
 
 **Scripting.** The whole surface is reachable from AppleScript.
 

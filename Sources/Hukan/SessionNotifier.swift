@@ -7,9 +7,11 @@ import UserNotifications
 /// before the hour is up. A turn merely finishing is deliberately silent — it is not blocked on
 /// you, so a banner for it would train you to ignore the ones that are.
 ///
-/// It fires *only while hukan is not the active app*. In front of the rail you already see every
-/// session's state at a glance, so a notification for what the badge is already showing is noise —
-/// and a banner is not modal, so it never covers the other sessions the way a dialog would.
+/// It fires *only while the rail carrying that session is not the one in front of you*. In front
+/// of a rail you already see every session it lists at a glance, so a notification for what the
+/// row is already showing is noise — and a banner is not modal, so it never covers the other
+/// sessions the way a dialog would. The window, not the app: a window holds one workspace, so a
+/// second window's rail is not showing this session at all.
 ///
 /// State transitions are read off `onStateChange`, which fires for many unrelated reasons (model
 /// updates, queueing, history load). A per-session snapshot diffs that down to the handful of
@@ -55,8 +57,12 @@ final class SessionNotifier: NSObject, UNUserNotificationCenterDelegate {
       center?.removeDeliveredNotifications(withIdentifiers: [session.id.uuidString])
     }
 
-    // Suppressed while you are watching the rail; only the away case earns a banner.
-    guard !NSApp.isActive else { return }
+    // Suppressed while you are watching the rail this session is on; only the away case earns a
+    // banner. Asked of that session's own window rather than of the app, because a window holds
+    // one workspace: a second window's rail is not showing this session at all, and while the
+    // question was app-wide, every repository but the one in front of you went silent for as
+    // long as you were working anywhere in hukan — which is the whole of what a banner is for.
+    guard !isBeingWatched(session) else { return }
 
     let name = session.title ?? worktreeName ?? "hukan"
     switch now.state {
@@ -73,6 +79,16 @@ final class SessionNotifier: NSObject, UNUserNotificationCenterDelegate {
       }
     default:
       break
+    }
+  }
+
+  /// Whether this session's rail is the one in front of you — the app active, and the key window
+  /// the one whose workspace holds it. The row is pulsing there already.
+  private func isBeingWatched(_ session: AgentSession) -> Bool {
+    guard NSApp.isActive else { return false }
+    return WorkspaceWindowController.all.contains { controller in
+      controller.window?.isKeyWindow == true
+        && controller.workspace.sessions.contains { $0.id == session.id }
     }
   }
 
