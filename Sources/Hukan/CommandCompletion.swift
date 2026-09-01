@@ -296,14 +296,17 @@ extension CommandCompletionPanel: NSTableViewDataSource, NSTableViewDelegate {
     return Self.row(holding: label)
   }
 
-  /// One line of a prompt, for a row and for the `completions` verb. A message written over
-  /// several lines is still one candidate, so it is named by its first line with the rest
-  /// standing as an ellipsis.
+  /// One line of a prompt, for a row and for the `completions` verb.
+  ///
+  /// A message written over several lines is one candidate, so the line breaks are read as
+  /// spaces and the whole of it goes on the row — what is being recognised is often not in the
+  /// first line, and naming the candidate by that line alone hid the rest behind an ellipsis
+  /// whether it would have fitted or not. Where it genuinely does not fit, the row's own tail
+  /// truncation says so, which is the same answer a one-line prompt too long for the panel gets.
+  /// Runs of whitespace collapse with the breaks: an indented paste is not spacing anyone chose
+  /// to see here.
   static func line(of prompt: String) -> String {
-    let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    let lines = trimmed.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
-    let head = String(lines.first ?? "")
-    return lines.count > 1 ? head + " …" : head
+    prompt.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
   }
 
   private func commandRow(_ command: ClaudeCommand) -> NSView {

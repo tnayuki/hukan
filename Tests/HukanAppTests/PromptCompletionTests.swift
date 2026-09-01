@@ -92,10 +92,15 @@ final class PromptCompletionTests: XCTestCase {
     XCTAssertLessThanOrEqual(PromptCompletion.matches("tesuto", in: prompts).count, 50)
   }
 
-  /// A prompt written over several lines is still one candidate, named by its first line.
+  /// A prompt written over several lines is one candidate, and the whole of it reads on the row:
+  /// the breaks are spaces, and what does not fit is the row's truncation to say.
   func testMultiLinePromptIsOneRow() {
-    XCTAssertEqual(CommandCompletionPanel.line(of: "まず直して\nそれからテスト"), "まず直して …")
+    XCTAssertEqual(
+      CommandCompletionPanel.line(of: "まず直して\nそれからテスト"), "まず直して それからテスト")
     XCTAssertEqual(CommandCompletionPanel.line(of: " 直して "), "直して")
+    XCTAssertEqual(
+      CommandCompletionPanel.line(of: "直して\n\n    それから\tテスト"), "直して それから テスト",
+      "a blank line and an indented paste are not spacing anyone chose to see here")
   }
 
   private func assertFinds(

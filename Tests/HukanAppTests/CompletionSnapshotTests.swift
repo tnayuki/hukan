@@ -11,7 +11,8 @@ import XCTest
 /// left margin on exactly the rows whose description was longest. So the case is drawn at the
 /// panel's own narrow width with a description far too long for it, next to a row with an argument
 /// hint and one with neither. The prompt case is the same question asked of text that was never
-/// written to fit a row at all: a long instruction, one written over several lines, one short.
+/// written to fit a row at all: a long instruction, one written over several lines — read onto
+/// the row as one, the breaks being spaces — and one short.
 ///
 /// Both read bottom-up, the best match nearest the field — and which row they open on is the
 /// other thing these pin: the command list on its best one, the prompt list on none, since it
