@@ -249,8 +249,13 @@ final class FileContentViewController: NSViewController {
     baseFileName = (newPath as NSString).lastPathComponent
     highlighter = SyntaxHighlighter(textView: textView, path: newPath)
     guard !isDirty else {
-      // The text stays; what it is measured against moves with the name.
+      // The text stays; what it is measured against moves with the name — and so does the
+      // language it is read through. No replacement is coming to ask for the re-parse, so it is
+      // asked for here, after a clear, or a rename into an extension no grammar covers would
+      // keep the old one's colours over text nothing is parsing.
       loadFileBase()
+      SyntaxHighlighting.clear(in: textView)
+      highlighter?.refresh()
       return
     }
     render(preservingScroll: true)
@@ -276,6 +281,7 @@ final class FileContentViewController: NSViewController {
         NSAttributedString(
           string: "",
           attributes: [.font: monospace]))
+      SyntaxHighlighting.clear(in: textView)
       return
     }
     let url = Self.fileURL(worktree: worktree, path: path)
@@ -289,6 +295,13 @@ final class FileContentViewController: NSViewController {
         // it is itself an edit of the storage and the answer has to be ready for it.
         self.savedText = rendered.string
         self.textView.textStorage?.setAttributedString(rendered)
+        // The highlight belongs to the text that has just been replaced, so it goes with it:
+        // the emphasis table and the rendering attributes are the only trace of the previous
+        // file left in the view, and nothing else would take them off a file no grammar covers.
+        // The re-parse is asked for here rather than left to the notification the replacement
+        // posts, which would open every file through the typing debounce.
+        SyntaxHighlighting.clear(in: self.textView)
+        self.highlighter?.refresh()
         // Always the source, so always editable. Typed text inherits its monospace.
         self.textView.isEditable = true
         self.textView.typingAttributes = [.font: monospace, .foregroundColor: NSColor.labelColor]

@@ -197,6 +197,19 @@ enum SyntaxHighlighting {
     grammars[(path as NSString).pathExtension.lowercased()] != nil
   }
 
+  /// Take every colour and emphasis off a text view. Deliberately not a `SyntaxHighlighter`
+  /// method: the case that needs it most is the one where there is no highlighter — a file no
+  /// grammar covers leaves nothing to run `apply`, so the previous file's spans would otherwise
+  /// stay on screen for good, drawn at offsets that mean nothing in the new text. Called where
+  /// the buffer's text is replaced, which is the moment the old highlight stops describing it.
+  static func clear(in textView: NSTextView) {
+    guard let layoutManager = textView.textLayoutManager,
+      let contentManager = layoutManager.textContentManager
+    else { return }
+    (layoutManager.delegate as? EmphasisTable)?.spans = []
+    layoutManager.setRenderingAttributes([:], for: contentManager.documentRange)
+  }
+
   private static func makeParser(for language: Language) -> Parser {
     let parser = Parser()
     try? parser.setLanguage(language)
@@ -406,6 +419,11 @@ final class SyntaxHighlighter {
   /// Typing is a burst; parsing every keystroke would be work nobody sees.
   private let debounce = 0.08
 
+  /// Does not parse: a highlighter is made when the file is opened, which is *before* its text
+  /// has been read off disk, so what is in the buffer at this point is the file being left. A
+  /// parse here would read the previous file through the new one's grammar and — landing after
+  /// the new text does — paint that answer onto it. The owner calls `refresh` once the text the
+  /// grammar belongs to is actually in the buffer.
   init?(textView: NSTextView, path: String) {
     guard SyntaxHighlighting.canHighlight(path: path) else { return nil }
     self.textView = textView
@@ -413,7 +431,6 @@ final class SyntaxHighlighter {
     NotificationCenter.default.addObserver(
       self, selector: #selector(textStorageDidChange),
       name: NSTextStorage.didProcessEditingNotification, object: textView.textStorage)
-    refresh()
   }
 
   deinit { pending?.cancel() }
@@ -425,7 +442,13 @@ final class SyntaxHighlighter {
     DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
   }
 
+  /// Parse the buffer as it stands now. Called directly when a file's text lands, which is why
+  /// it drops whatever the debounce had scheduled: the notification that text replacement posts
+  /// queues a parse 80ms out, and paying a typist's delay to colour a file that was just opened
+  /// is the whole of the wait between opening one and seeing it.
   func refresh() {
+    pending?.cancel()
+    pending = nil
     guard let textView, let text = textView.textStorage?.string else { return }
     generation += 1
     let generation = generation
