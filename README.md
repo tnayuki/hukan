@@ -42,7 +42,8 @@ header, and everything else folds away until the same gesture puts it back.
 calls as they are made, several sessions at once with the rail showing each one's state. Escape
 or the composer's stop button interrupts a turn. A line sent while the agent is working waits
 above the composer for the turn to end, each with its own send-now, edit and delete; Return on
-the empty composer sends the last one queued now. A session's rail row starts, stops, restarts
+the empty composer sends the last one queued now. Interrupting the turn keeps them: they go on
+waiting for you rather than opening the next turn. A session's rail row starts, stops, restarts
 and deletes it, or archives it out of the way; a stopped session resumes on the next send. The
 rail takes several rows at once, and one act reaches all of them.
 

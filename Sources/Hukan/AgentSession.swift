@@ -257,6 +257,11 @@ final class AgentSession {
   /// the engine ends the cut turn with reads as "we stopped it", not "it crashed".
   private var interruptedTurn = false
 
+  /// Set by a stop-button interrupt and read once, by the `flushQueue` that the cut turn's
+  /// `result` runs: type-ahead survives the stop, but the stop must not send it. A redirecting
+  /// send leaves this false, since there the queued line is precisely what has to go out next.
+  private var queueHeldByInterrupt = false
+
   /// True once a user message has actually gone to the engine. A New Session is started eagerly
   /// just to read the model roster, before anything is sent; until this flips it has written no
   /// transcript, so a launch-only change (effort) can respawn it fresh rather than wait.
@@ -730,6 +735,7 @@ final class AgentSession {
       // firing it into a fresh process on the next start.
       self.isTurnActive = false
       self.queuedMessages.removeAll()
+      self.queueHeldByInterrupt = false
       // A deliberate respawn of a not-yet-sent session to pick up a launch-only setting (effort):
       // reset to the un-started state and let the next send bring it back. Crucially NOT detached —
       // it wrote no transcript, so that next start must be a fresh `--session-id`, not a `--resume`.
@@ -820,6 +826,7 @@ final class AgentSession {
     // Nothing is running, and anything queued would sit in an outbox that never drains.
     isTurnActive = false
     queuedMessages.removeAll()
+    queueHeldByInterrupt = false
     pendingApproval = nil
     pendingQuestion = nil
     state = .signedOut
@@ -1032,6 +1039,12 @@ final class AgentSession {
   /// otherwise the session is genuinely idle and ready for fresh input.
   private func flushQueue() {
     isTurnActive = false
+    // The turn was stopped by hand, so what is queued waits for you rather than going out on
+    // the stop button's behalf. One turn's hold only: a later turn flushes as it always did.
+    if queueHeldByInterrupt {
+      queueHeldByInterrupt = false
+      return
+    }
     guard !queuedMessages.isEmpty else { return }
     let next = queuedMessages.removeFirst()
     deliver(next.text, attachments: next.attachments)
@@ -1263,12 +1276,18 @@ final class AgentSession {
     name == "TaskCreate" || name == "TaskUpdate"
   }
 
-  /// Stop the running turn. From the stop button (`resending: false`) this drops any type-ahead
-  /// behind it — flushing it into the interrupted turn would be a surprise. From a redirecting
-  /// send (`resending: true`) the single queued line *is* the redirect and must survive, so it
-  /// opens the next turn the moment the engine's cut-turn `result` lands and `flushQueue` runs.
+  /// Stop the running turn. Type-ahead behind it survives either way — it is text you typed,
+  /// and the stop button is the one place nothing would hand it back — but what happens to it
+  /// next is the difference between the two callers. From a redirecting send
+  /// (`resending: true`) the single queued line *is* the redirect, so it opens the next turn
+  /// the moment the engine's cut-turn `result` lands and `flushQueue` runs. From the stop
+  /// button (`resending: false`) stopping is the whole of what was asked for, so the queue is
+  /// held instead: the lines stay above the composer with their send-now, edit and drop
+  /// buttons, and going on is your next decision rather than something the stop button made on
+  /// its own. That leaves a session idle with a queue, which is the state a relaunch already
+  /// restores into.
   func interrupt(resending: Bool = false) {
-    if !resending { queuedMessages.removeAll() }
+    queueHeldByInterrupt = !resending
     isTurnActive = false
     interruptedTurn = true
     // Leaving either kind of request unanswered would strand the engine, so reply first.

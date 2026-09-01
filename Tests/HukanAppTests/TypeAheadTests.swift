@@ -49,6 +49,40 @@ final class TypeAheadTests: XCTestCase {
     XCTAssertEqual(session.queuedMessages.count, 0, "nothing queued, nothing to send")
   }
 
+  /// The stop button keeps what was typed ahead — it is text you typed, and nothing else would
+  /// hand it back — but stopping is the whole of what it does: the cut turn's result leaves the
+  /// queue where it stands rather than opening the next turn with it.
+  func testStoppingATurnHoldsTypeAheadRatherThanDroppingOrSendingIt() {
+    let session = AgentSession(worktreeID: UUID())
+    session.restoreQueue(["the line typed while it was working"])
+
+    session.interrupt()
+    XCTAssertEqual(session.queuedMessages.count, 1, "the stop button is not a delete")
+
+    session.apply(ClaudeEvent(type: "result", subtype: "error_during_execution", payload: [:]))
+    XCTAssertEqual(session.queuedMessages.count, 1, "held, not flushed into the stopped turn")
+    XCTAssertFalse(
+      session.transcript.string.contains("the line typed while it was working"),
+      "nothing was sent on the stop button's behalf")
+
+    // One turn's hold only: the next turn to end flushes the queue as it always did.
+    session.apply(ClaudeEvent(type: "result", subtype: "success", payload: [:]))
+    XCTAssertEqual(session.queuedMessages.count, 0)
+    XCTAssertTrue(session.transcript.string.contains("the line typed while it was working"))
+  }
+
+  /// The redirecting send is the other caller, and there the queued line *is* the redirect, so
+  /// it opens the next turn the moment the cut turn's result lands.
+  func testARedirectSendsItsQueuedLineWhenTheCutTurnEnds() {
+    let session = AgentSession(worktreeID: UUID())
+    session.restoreQueue(["do this instead"])
+
+    session.interrupt(resending: true)
+    session.apply(ClaudeEvent(type: "result", subtype: "error_during_execution", payload: [:]))
+    XCTAssertEqual(session.queuedMessages.count, 0)
+    XCTAssertTrue(session.transcript.string.contains("do this instead"))
+  }
+
   private func composerTextView(in view: NSView) -> ComposerTextView? {
     if let textView = view as? ComposerTextView { return textView }
     for subview in view.subviews {
