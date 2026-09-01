@@ -298,10 +298,7 @@ final class FileContentViewController: NSViewController {
         // The highlight belongs to the text that has just been replaced, so it goes with it:
         // the emphasis table and the rendering attributes are the only trace of the previous
         // file left in the view, and nothing else would take them off a file no grammar covers.
-        // The re-parse is asked for here rather than left to the notification the replacement
-        // posts, which would open every file through the typing debounce.
         SyntaxHighlighting.clear(in: self.textView)
-        self.highlighter?.refresh()
         // Always the source, so always editable. Typed text inherits its monospace.
         self.textView.isEditable = true
         self.textView.typingAttributes = [.font: monospace, .foregroundColor: NSColor.labelColor]
@@ -323,6 +320,10 @@ final class FileContentViewController: NSViewController {
           self.pendingReveal = nil
           self.reveal(line: pending.line, term: pending.term)
         }
+        // Last, because the highlighter aims its query at what is on screen and the lines above
+        // decide what that is. Asked for here rather than left to the notification the
+        // replacement posts, which would open every file through the typing debounce.
+        self.highlighter?.refresh()
       }
     }
   }

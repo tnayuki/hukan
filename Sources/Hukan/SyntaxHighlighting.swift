@@ -97,10 +97,57 @@ enum SyntaxHighlighting {
   /// are UTF-16 offsets into `text`, so they address `NSTextStorage` directly. Later captures
   /// win where patterns overlap, which is the order tree-sitter defines and the order these
   /// are applied in.
-  static func spans(in text: String, forPath path: String) -> [Span] {
-    guard text.utf16.count <= sizeLimit, let configuration = languageConfiguration(forPath: path)
-    else { return [] }
-    return spans(in: text, using: configuration, depth: 0)
+  ///
+  /// `within` narrows what is asked *of the tree*, never what is parsed. The parse has to read
+  /// the file entire — a grammar picked up in the middle gets the strings and comments wrong at
+  /// both ends, which is the same reason a commit's diff is coloured from the file's parse and
+  /// not the hunk's — but running the highlights query and re-parsing every injected language is
+  /// a search of the tree the parse already built, and on a long file that is most of the cost:
+  /// measured on this repository, a 1568-line Swift file spends 19ms parsing and 18ms querying,
+  /// and this file spends 50ms parsing and 146ms on the languages inside its fenced blocks.
+  /// Passing nil asks for all of it, which is what a commit's diff wants — it has no viewport to
+  /// speak of, and colours each file once.
+  static func spans(in text: String, forPath path: String, within: NSRange? = nil) -> [Span] {
+    guard let parsed = parse(text, forPath: path) else { return [] }
+    return spans(of: parsed, within: within)
+  }
+
+  /// A file already parsed, held so that a second question about the *same text* costs the
+  /// question and not the parse. Which is what following the viewport is: a scroll changes what
+  /// is being asked for and changes nothing about the buffer, so re-parsing for one is work with
+  /// no answer in it — no editor does it, and the ones that keep a tree keep it for exactly this.
+  ///
+  /// It is emphatically not the incremental parse this file declines: nothing is edited into a
+  /// tree here, and the text it was built from is held beside it so a caller can only reuse one
+  /// by proving the buffer has not moved. A tree that no longer matches its text is not a stale
+  /// answer to be noticed later — it is a tree that cannot be looked up.
+  final class Parsed {
+    let text: String
+    fileprivate let configuration: LanguageConfiguration
+    fileprivate let tree: MutableTree
+
+    fileprivate init(text: String, configuration: LanguageConfiguration, tree: MutableTree) {
+      self.text = text
+      self.configuration = configuration
+      self.tree = tree
+    }
+  }
+
+  /// Parse `text` as whatever language `path` names — the whole of it, always, for the reason
+  /// `within` cannot narrow. Nil when no vendored grammar covers the path or the file is past
+  /// the size limit, which is the same "left plain" answer `spans` gives.
+  static func parse(_ text: String, forPath path: String) -> Parsed? {
+    guard text.utf16.count <= sizeLimit, let configuration = languageConfiguration(forPath: path),
+      let tree = makeParser(for: configuration.language).parse(text)
+    else { return nil }
+    return Parsed(text: text, configuration: configuration, tree: tree)
+  }
+
+  /// The spans of an already-parsed file. The injected languages inside the window are still
+  /// parsed here — a fence's contents are a tree of their own, and only the host's is kept.
+  static func spans(of parsed: Parsed, within: NSRange? = nil) -> [Span] {
+    spans(
+      in: parsed.text, using: parsed.configuration, tree: parsed.tree, depth: 0, within: within)
   }
 
   /// One language's spans, plus those of every language embedded in it.
@@ -112,17 +159,28 @@ enum SyntaxHighlighting {
   /// back with its offsets moved. Cutting the text rather than using tree-sitter's included
   /// ranges keeps every offset in the UTF-16 units the rest of this file speaks; the ranges are
   /// contiguous, which is the case where the two agree.
-  private static func spans(in text: String, using configuration: LanguageConfiguration, depth: Int)
-    -> [Span]
-  {
-    guard let tree = makeParser(for: configuration.language).parse(text), let root = tree.rootNode
-    else { return [] }
+  private static func spans(
+    in text: String, using configuration: LanguageConfiguration, depth: Int, within: NSRange?
+  ) -> [Span] {
+    guard let tree = makeParser(for: configuration.language).parse(text) else { return [] }
+    return spans(in: text, using: configuration, tree: tree, depth: depth, within: within)
+  }
+
+  private static func spans(
+    in text: String, using configuration: LanguageConfiguration, tree: MutableTree, depth: Int,
+    within: NSRange?
+  ) -> [Span] {
+    guard let root = tree.rootNode else { return [] }
 
     var colored: [Span] = []
     /// The captures covering the one being read, innermost last.
     var open: [Span] = []
     if let highlights = configuration.queries[.highlights] {
       let cursor = highlights.execute(node: root, in: tree)
+      // Matches that *intersect* the range, so a node enclosing the whole of it still arrives —
+      // which is what the `open` stack below is reading, and why narrowing does not change the
+      // answer for anything inside the range.
+      if let within { cursor.setRange(within) }
       while let match = cursor.next() {
         for capture in match.captures {
           guard let name = capture.name, capture.range.length > 0,
@@ -170,8 +228,20 @@ enum SyntaxHighlighting {
     else { return colored }
     let string = text as NSString
     let cursor = injections.execute(node: root, in: tree)
+    if let within { cursor.setRange(within) }
     while let match = cursor.next() {
       guard let content = match.captures(named: "injection.content").first else { continue }
+      // The range asked for, in the injected text's own offsets — and the fence that falls
+      // outside it is not parsed at all, which is the whole of what makes a long Markdown file
+      // affordable. The cursor already dropped most of them; a match may still carry a content
+      // node that misses the range on its own.
+      var nestedRange: NSRange?
+      if let within {
+        let overlap = NSIntersectionRange(within, content.range)
+        guard overlap.length > 0 else { continue }
+        nestedRange = NSRange(
+          location: overlap.location - content.range.location, length: overlap.length)
+      }
       // Either a capture whose *text* names the language — a fence's info string — or a
       // directive that names it outright.
       let named =
@@ -180,7 +250,8 @@ enum SyntaxHighlighting {
       guard let named, let nested = languageConfiguration(named: named) else { continue }
       // Appended after the host's, so where the two cover the same text the inner one wins.
       for span in spans(
-        in: string.substring(with: content.range), using: nested, depth: depth + 1)
+        in: string.substring(with: content.range), using: nested, depth: depth + 1,
+        within: nestedRange)
       {
         colored.append(
           (
@@ -410,14 +481,46 @@ final class EmphasisTable: NSObject, NSTextLayoutManagerDelegate {
 /// keystroke is dropped rather than painted over text it never saw.
 @MainActor
 final class SyntaxHighlighter {
+  /// The last parse, reached only from `queue`. It is a box rather than a property because the
+  /// queue is where it is written as well as read, and the main actor never looks at it: what
+  /// crosses is a string going one way and spans coming back.
+  private final class ParseBox {
+    var parsed: SyntaxHighlighting.Parsed?
+  }
+
   private weak var textView: NSTextView?
   private let path: String
   private let queue = DispatchQueue(label: "dev.tnayuki.Hukan.highlight", qos: .userInitiated)
+  private let box = ParseBox()
   private var generation = 0
   private var pending: DispatchWorkItem?
 
-  /// Typing is a burst; parsing every keystroke would be work nobody sees.
+  /// Typing is a burst; parsing every keystroke would be work nobody sees. A scroll that leaves
+  /// the coloured window is a burst too, and collapses the same way.
   private let debounce = 0.08
+
+  /// What has been coloured so far, or nil once that is the whole file. It starts at the
+  /// viewport and grows outward on its own (see `fill`), so it is a moving front rather than a
+  /// setting — and a viewport still inside it has nothing to ask for.
+  private var painted: NSRange?
+
+  /// The emphasised runs handed to the fragments, accumulated as the front moves: a slice is
+  /// added to what is already drawn rather than replacing it, since the rest of the file is on
+  /// screen and must not go plain while the next slice is read.
+  private var emphasised: [(range: NSRange, emphasis: SyntaxHighlighting.Emphasis)] = []
+
+  /// How far past the visible text the *first* query reaches, in UTF-16 units — a screenful
+  /// either side, floored so a very short pane does not ask for almost nothing. It decides how
+  /// soon the reader sees colour and nothing else: the rest of the file follows on its own.
+  private static let windowMargin = 4_000
+
+  /// How much further each background step reaches. Larger than the first window because
+  /// nobody is waiting on these — what they are racing is a scroll, not the eye.
+  private static let fillStep = 40_000
+
+  /// A beat between steps, so the first screenful is drawn and the reader has the main thread
+  /// before the rest of the file starts arriving.
+  private static let fillDelay = 0.05
 
   /// Does not parse: a highlighter is made when the file is opened, which is *before* its text
   /// has been read off disk, so what is in the buffer at this point is the file being left. A
@@ -431,15 +534,63 @@ final class SyntaxHighlighter {
     NotificationCenter.default.addObserver(
       self, selector: #selector(textStorageDidChange),
       name: NSTextStorage.didProcessEditingNotification, object: textView.textStorage)
+    if let clipView = textView.enclosingScrollView?.contentView {
+      clipView.postsBoundsChangedNotifications = true
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(viewportMoved),
+        name: NSView.boundsDidChangeNotification, object: clipView)
+    }
   }
 
   deinit { pending?.cancel() }
 
   @objc private func textStorageDidChange() {
+    scheduleRefresh()
+  }
+
+  /// Text that was never coloured has come into view. Only then: inside the margin there is
+  /// nothing to add, and a scroll fires this several times a frame.
+  @objc private func viewportMoved() {
+    guard let painted, let visible = visibleRange(), visible.length > 0,
+      NSIntersectionRange(visible, painted) != visible
+    else { return }
+    scheduleRefresh()
+  }
+
+  private func scheduleRefresh() {
     pending?.cancel()
     let work = DispatchWorkItem { [weak self] in self?.refresh() }
     pending = work
     DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
+  }
+
+  /// What the text view is showing, in UTF-16 offsets — TextKit 2's own answer, since the
+  /// viewport controller is what decides which fragments exist at all. Nil before the first
+  /// layout, which is the state a file opens in.
+  private func visibleRange() -> NSRange? {
+    guard let layoutManager = textView?.textLayoutManager,
+      let contentManager = layoutManager.textContentManager,
+      let viewport = layoutManager.textViewportLayoutController.viewportRange
+    else { return nil }
+    let start = contentManager.documentRange.location
+    let from = contentManager.offset(from: start, to: viewport.location)
+    let to = contentManager.offset(from: start, to: viewport.endLocation)
+    guard from >= 0, to >= from else { return nil }
+    return NSRange(location: from, length: to - from)
+  }
+
+  /// The window to colour: what is visible, plus a margin either side — or nil once that covers
+  /// the file, which is the answer for anything short and leaves those files parsed exactly as
+  /// they were. A file that has not been laid out yet is read from the top, which is where one
+  /// that has just been opened is scrolled to.
+  private func windowOfInterest(length: Int) -> NSRange? {
+    guard length > 2 * Self.windowMargin else { return nil }
+    let visible = visibleRange() ?? NSRange(location: 0, length: 0)
+    let margin = max(visible.length, Self.windowMargin)
+    let from = max(0, visible.location - margin)
+    let to = min(length, NSMaxRange(visible) + margin)
+    guard to > from, to - from < length else { return nil }
+    return NSRange(location: from, length: to - from)
   }
 
   /// Parse the buffer as it stands now. Called directly when a file's text lands, which is why
@@ -451,27 +602,93 @@ final class SyntaxHighlighter {
     pending = nil
     guard let textView, let text = textView.textStorage?.string else { return }
     generation += 1
-    let generation = generation
+    // The viewport is read after the text has landed but before it has been drawn, so ask the
+    // controller to catch up first — otherwise the window is measured against the file that was
+    // just replaced, and the reader watches the top of the new one come in plain.
+    textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+    let length = (text as NSString).length
+    let window = windowOfInterest(length: length)
+    paint(
+      slices: [window], covering: window, replacingAll: true, text: text, length: length,
+      generation: generation)
+  }
+
+  /// The rest of the file, a step at a time, without being asked. What is on screen is coloured
+  /// first because that is what the reader is waiting for, but stopping there would mean every
+  /// scroll runs a query and waits for it — and there is nothing to wait for: the tree is
+  /// already built, so the rest is a search of it that can happen while nobody is looking. The
+  /// front grows outward from the viewport until it reaches both ends, and then this stops for
+  /// good, leaving a file coloured exactly as a whole-file read would have coloured it.
+  private func fill(text: String, length: Int, generation: Int) {
+    guard self.generation == generation, let painted else { return }
+    let from = max(0, painted.location - Self.fillStep)
+    let to = min(length, NSMaxRange(painted) + Self.fillStep)
+    var slices: [NSRange?] = []
+    if painted.location > from {
+      slices.append(NSRange(location: from, length: painted.location - from))
+    }
+    if to > NSMaxRange(painted) {
+      slices.append(NSRange(location: NSMaxRange(painted), length: to - NSMaxRange(painted)))
+    }
+    // Nil covering says the file is done, which is what stops both this and the scroll watcher.
+    let covering = from == 0 && to == length ? nil : NSRange(location: from, length: to - from)
+    paint(
+      slices: slices, covering: covering, replacingAll: false, text: text, length: length,
+      generation: generation)
+  }
+
+  /// Read `slices` off the tree, hand them to the view, and come back for the next step unless
+  /// the file is covered.
+  private func paint(
+    slices: [NSRange?], covering: NSRange?, replacingAll: Bool, text: String, length: Int,
+    generation: Int
+  ) {
+    let box = box
     let path = path
     queue.async { [weak self] in
-      let spans = SyntaxHighlighting.spans(in: text, forPath: path)
+      // The parse is reused when the buffer has not moved since it was made, which is every step
+      // of the fill and every scroll — the whole reason either is affordable. Keyed on the text
+      // itself rather than on a flag someone has to remember to clear: a tree that does not
+      // match the buffer is one this comparison cannot return, so nothing can fall out of step.
+      if box.parsed?.text != text { box.parsed = SyntaxHighlighting.parse(text, forPath: path) }
+      let spans =
+        box.parsed.map { parsed in
+          slices.flatMap { SyntaxHighlighting.spans(of: parsed, within: $0) }
+        } ?? []
       DispatchQueue.main.async {
         guard let self, self.generation == generation else { return }
-        self.apply(spans, length: (text as NSString).length)
+        self.apply(spans, length: length, replacingAll: replacingAll)
+        self.painted = covering
+        guard covering != nil else { return }
+        self.pending?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+          self?.fill(text: text, length: length, generation: generation)
+        }
+        self.pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fillDelay, execute: work)
       }
     }
   }
 
-  private func apply(_ spans: [SyntaxHighlighting.Span], length: Int) {
+  private func apply(
+    _ spans: [SyntaxHighlighting.Span], length: Int, replacingAll: Bool
+  ) {
     guard let layoutManager = textView?.textLayoutManager,
-      let contentManager = layoutManager.textContentManager,
-      let documentRange = textRange(in: contentManager, NSRange(location: 0, length: length))
+      let contentManager = layoutManager.textContentManager
     else { return }
-    // The weights and slants go to the table the fragments draw from; the colours below reset
-    // the whole document's rendering attributes, which is also what makes every fragment redraw.
-    // Everything with emphasis, and the resets that follow one — a span with no emphasis earns
-    // its place in the table only by taking emphasis away from something already in it.
-    var emphasised: [(range: NSRange, emphasis: SyntaxHighlighting.Emphasis)] = []
+    // Only a fresh read clears: a step of the fill is adding to a file that is already coloured
+    // and on screen, and clearing there would take the colour off every line the reader is
+    // looking at for as long as the next slice takes to arrive.
+    if replacingAll {
+      emphasised = []
+      guard let documentRange = textRange(in: contentManager, NSRange(location: 0, length: length))
+      else { return }
+      layoutManager.setRenderingAttributes([:], for: documentRange)
+    }
+    // The weights and slants go to the table the fragments draw from; the colours below are the
+    // rendering attributes, and setting them is also what makes a fragment redraw. Everything
+    // with emphasis, and the resets that follow one — a span with no emphasis earns its place in
+    // the table only by taking emphasis away from something already in it.
     for span in spans {
       if !span.emphasis.isEmpty {
         emphasised.append((span.range, span.emphasis))
@@ -481,7 +698,6 @@ final class SyntaxHighlighter {
       }
     }
     (layoutManager.delegate as? EmphasisTable)?.spans = emphasised
-    layoutManager.setRenderingAttributes([:], for: documentRange)
     for span in spans {
       guard let range = textRange(in: contentManager, span.range) else { continue }
       layoutManager.setRenderingAttributes([.foregroundColor: span.color], for: range)

@@ -336,6 +336,33 @@ Workspace (one window)
   that answers "nothing to say" for the second leaves the first standing. Being deliberately
   plain and never having heard of the name are different answers, and the theme gives different
   ones.
+  **The parse is the whole file; the question asked of it is what is on screen.** They are two
+  costs and only one of them can be narrowed. A parse picked up in the middle gets the strings
+  and comments wrong at both ends — the same reason a commit's diff is coloured from the file's
+  parse and not the hunk's — so it reads everything, always. Running the highlights query and
+  re-parsing every injected language is a *search of the tree the parse built*, and on a long
+  file that is most of the time: measured here, a 1568-line Swift file spends 19ms parsing and
+  18ms querying, and this file spends 50ms parsing and 146ms on the languages inside its fenced
+  blocks. So the query is aimed at the viewport with a margin either side, and a fence outside
+  it is not parsed at all. It is safe because tree-sitter returns every match that *intersects*
+  a range, so a node enclosing the whole of it still arrives and the nesting the spans are built
+  from is the nesting the whole file would have given — which is a property a runtime bump could
+  quietly break, and so is what the tests assert rather than the timings.
+  **The parse is then kept, and that is not the incremental parse this file declines.** Nothing
+  is edited into a tree here; the text it was built from is held beside it, so it can only be
+  reused by proving the buffer has not moved, and a tree that no longer matches its text is not
+  a stale answer to be noticed later but one the lookup cannot return. What it buys is that
+  asking a second question of the same text — which is what following the viewport is — costs
+  the question and not the parse.
+  **What is on screen is coloured first, and the rest follows without being asked.** Stopping at
+  the viewport would mean every scroll starts a query and waits for it, and there is nothing to
+  wait for once the tree is built. So the coloured front grows outward from the viewport a step
+  at a time until it reaches both ends, and then stops for good, leaving the file coloured
+  exactly as a whole-file read would have left it. Only the first step clears — the later ones
+  are adding to a file that is already on screen, and clearing there would take the colour off
+  the lines being read for as long as the next slice takes. A scroll faster than the front is
+  the one thing this shows: text arrives plain and fills a beat later, which is the trade every
+  editor that does this makes.
 - **The history a worktree shows is its branch's log, read a page at a time.** The History section
   at the foot of the files panel walks first-parent from HEAD, newest first, one page of 50; going
   past the last row read asks for the next page, and the limit lives on the worktree so every
