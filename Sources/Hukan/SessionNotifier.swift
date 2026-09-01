@@ -104,9 +104,29 @@ final class SessionNotifier: NSObject, UNUserNotificationCenterDelegate {
     {
       DispatchQueue.main.async {
         NSApp.activate(ignoringOtherApps: true)
-        WorkspaceWindowController.focusSession(id: id)
+        Self.whenActive { WorkspaceWindowController.focusSession(id: id) }
       }
     }
     completionHandler()
+  }
+
+  /// Run once the activation has actually landed, because the activation is itself a window
+  /// order: macOS fronts whichever window was key last, and anything ordered ahead of that is
+  /// overwritten by it. On one Space the loss is invisible — the window we asked for is on
+  /// screen either way — so this only ever showed up where the windows are spread across Spaces,
+  /// which is what a window per repository amounts to: the tapped session's window would come
+  /// forward, its Space with it, and a beat later the whole thing was dragged back to the Space
+  /// you had been on, landing on a window with nothing to do with the banner. Measured against a
+  /// standalone app rather than reasoned about, since the two orderings are indistinguishable
+  /// until a Space is in the way.
+  private static func whenActive(_ body: @escaping () -> Void) {
+    guard !NSApp.isActive else { return body() }
+    var token: NSObjectProtocol?
+    token = NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { _ in
+      if let token { NotificationCenter.default.removeObserver(token) }
+      body()
+    }
   }
 }
