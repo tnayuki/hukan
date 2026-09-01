@@ -2,37 +2,15 @@ import XCTest
 
 @testable import Hukan
 
-/// The roster label contract: the engine advertises numberless names ("Opus", "Fable") with the
-/// version only in `resolvedModel`, and `resolvedModel` carries a `[1m]` context-window suffix the
-/// transcript's id does not. `matches` bridges that suffix gap and `numberedName` restores the
-/// version — the pair that keeps "Opus 4.8" showing where a bare "Opus" or a raw id did before.
+/// The roster identity contract: `resolvedModel` carries a `[1m]` context-window suffix that the
+/// transcript's id does not, and `matches` is what bridges that gap — it is the only reading hukan
+/// does of a model id. The label is not one of them: the engine's `displayName` is shown verbatim,
+/// since it is the one party that knows whether an account needs "Fable 5" to tell two Fables apart
+/// or just "Fable". hukan spliced a version off `resolvedModel` onto the label once, and it doubled
+/// up ("Fable 5 5") as soon as the engine started numbering a label itself.
 final class ClaudeModelLabelTests: XCTestCase {
   private func model(_ value: String, _ name: String, _ resolved: String) -> ClaudeModel {
     ClaudeModel(value: value, displayName: name, resolvedModel: resolved)
-  }
-
-  func testVersionParsedOffResolvedID() {
-    XCTAssertEqual(ClaudeModel.version(fromResolved: "claude-opus-4-8[1m]"), "4.8")
-    XCTAssertEqual(ClaudeModel.version(fromResolved: "claude-fable-5"), "5")
-    XCTAssertEqual(ClaudeModel.version(fromResolved: "claude-sonnet-5"), "5")
-    // A trailing 8-digit date snapshot is not a version component.
-    XCTAssertEqual(ClaudeModel.version(fromResolved: "claude-haiku-4-5-20251001"), "4.5")
-    XCTAssertNil(ClaudeModel.version(fromResolved: "claude-experimental"))
-  }
-
-  func testNumberedNameSplicesVersionOntoLabel() {
-    XCTAssertEqual(model("opus[1m]", "Opus", "claude-opus-4-8[1m]").numberedName, "Opus 4.8")
-    XCTAssertEqual(model("claude-fable-5[1m]", "Fable", "claude-fable-5").numberedName, "Fable 5")
-    // No numeric version: the bare label stands.
-    XCTAssertEqual(model("x", "Custom", "claude-experimental").numberedName, "Custom")
-    // "Default" is the engine's own pick, not a model — no version, even though it resolves to one.
-    XCTAssertEqual(
-      model("default", "Default (recommended)", "claude-opus-5[1m]").numberedName,
-      "Default (recommended)")
-    // A label that already ends in a parenthetical takes the version before it, not after.
-    XCTAssertEqual(
-      model("opus[1m]", "Opus (1M context)", "claude-opus-5[1m]").numberedName,
-      "Opus 5 (1M context)")
   }
 
   func testMatchesToleratesContextSuffix() {
@@ -42,5 +20,14 @@ final class ClaudeModelLabelTests: XCTestCase {
     XCTAssertTrue(opus.matches("claude-opus-4-8[1m]"))
     XCTAssertTrue(opus.matches("opus[1m]"))  // the alias value, exact
     XCTAssertFalse(opus.matches("claude-sonnet-5"))
+  }
+
+  func testMatchesTellsTheTwoFablesApart() {
+    let fable = model("claude-fable-5-1[1m]", "Fable", "claude-fable-5-1")
+    let fable5 = model("claude-fable-5", "Fable 5", "claude-fable-5")
+    XCTAssertTrue(fable.matches("claude-fable-5-1"))
+    XCTAssertFalse(fable.matches("claude-fable-5"))
+    XCTAssertTrue(fable5.matches("claude-fable-5"))
+    XCTAssertFalse(fable5.matches("claude-fable-5-1"))
   }
 }

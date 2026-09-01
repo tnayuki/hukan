@@ -14,10 +14,12 @@ struct Attachment: Equatable {
 }
 
 /// One model the engine advertises in its initialize reply. `value` is what goes to `--model` /
-/// `set_model` (e.g. `opus`, `claude-fable-5[1m]`); `displayName` is the label ("Opus", "Fable").
+/// `set_model` (e.g. `opus`, `claude-fable-5[1m]`); `displayName` is the label, shown as it comes.
 /// Reading this roster instead of a fixed list keeps the picker in step with what the account can
 /// actually use — Fable, 1M-context variants, the recommended default — and never offers a value
-/// the engine would reject.
+/// the engine would reject. The label is the engine's to spell: it names a row "Fable" or "Fable 5"
+/// depending on whether the account has two Fables to tell apart, and a version hukan spliced on
+/// from `resolvedModel` doubled up ("Fable 5 5") the moment it did.
 struct ClaudeModel {
   let value: String
   let displayName: String
@@ -34,40 +36,10 @@ struct ClaudeModel {
     value == id || Self.withoutContextSuffix(resolvedModel) == Self.withoutContextSuffix(id)
   }
 
-  /// The label with its version number restored. The engine advertises `displayName` without one
-  /// ("Opus", "Fable", "Sonnet", or "Opus (1M context)"), while `resolvedModel` carries the version
-  /// — so on its own the UI reads "Opus", not "Opus 5". Splice the version back on; fall back to the
-  /// bare name when the resolved id has no numeric version. `default` is left alone — it is "let the
-  /// engine choose", not a model, so its resolved id must not read as "Default (recommended) 5".
-  var numberedName: String {
-    guard value != "default", let version = Self.version(fromResolved: resolvedModel)
-    else { return displayName }
-    // Before a trailing parenthetical, not after it, so "Opus (1M context)" reads
-    // "Opus 5 (1M context)" rather than "Opus (1M context) 5".
-    if displayName.hasSuffix(")"), let open = displayName.lastIndex(of: "(") {
-      let head = displayName[..<open].trimmingCharacters(in: .whitespaces)
-      return "\(head) \(version) \(displayName[open...])"
-    }
-    return "\(displayName) \(version)"
-  }
-
   /// A resolved id minus its `[1m]`-style context-window suffix.
   static func withoutContextSuffix(_ id: String) -> String {
     guard let bracket = id.firstIndex(of: "[") else { return id }
     return String(id[..<bracket])
-  }
-
-  /// The dotted version pulled from a resolved id: `claude-opus-4-8[1m]` → "4.8",
-  /// `claude-fable-5` → "5", `claude-haiku-4-5-20251001` → "4.5" (a trailing date snapshot is
-  /// dropped). Nil when the id carries no numeric version (an unversioned or unexpected id).
-  static func version(fromResolved resolved: String) -> String? {
-    let base = withoutContextSuffix(resolved)
-    var numbers: [String] = []
-    for part in base.split(separator: "-") where part.allSatisfy(\.isNumber) {
-      if part.count >= 6 { break }  // an 8-digit date snapshot (20251001), not a version component
-      numbers.append(String(part))
-    }
-    return numbers.isEmpty ? nil : numbers.joined(separator: ".")
   }
 }
 

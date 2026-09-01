@@ -799,6 +799,14 @@ Workspace (one window)
   poll that only runs while the window is up — while the figures themselves had to be recovered
   from an English sentence the CLI happened to print. The line is exactly there: ask a question
   and nothing is written; send a message and a conversation exists.
+  **What the engine spells, the engine spells** — a roster entry's label is shown exactly as it
+  arrives. It was recomposed for a while, the version dug out of the resolved id and spliced onto
+  a numberless name so the picker read "Opus 4.8" rather than "Opus"; that is hukan keeping a copy
+  of the engine's naming rule, and the copy went wrong the moment the rule moved. Fable 5.1 shipped
+  beside Fable 5, the engine started numbering the label itself to tell the two apart, and the
+  picker read "Fable 5 5" — while the name it was actually being asked for, "Fable 5", was sitting
+  in the reply. Which of the two Fables an account needs spelled out is the engine's to know, not
+  something to be re-derived from a model id here.
 - **The agent's task list is a card, not a transcript line, and it is read from the store rather
   than off the wire.** Claude Code keeps one JSON file per task under `~/.claude/tasks/<session
   id>/`, written by `TaskCreate` and amended in place by `TaskUpdate` — so the directory already

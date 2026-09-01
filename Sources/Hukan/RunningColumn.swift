@@ -838,7 +838,7 @@ final class RunningColumnViewController: NSViewController {
       // `matches` tolerates the `[1m]` suffix the roster's resolvedModel carries but the
       // transcript id does not — otherwise every priced line fell through to the raw-id fallback.
       if let match = models.first(where: { $0.matches(id) }) {
-        return match.numberedName
+        return match.displayName
       }
       // No roster match (a detached session, or a model the engine never advertised): the raw id,
       // minus the noisy vendor prefix and any `[1m]` suffix.
@@ -1003,10 +1003,10 @@ final class RunningColumnViewController: NSViewController {
     // The engine roster if this session has connected, else the fallback aliases. Rebuild the
     // popup items only when the set changes, so an unrelated reload does not disturb it.
     let roster = session?.availableModels ?? []
-    // `numberedName` splices the version off `resolvedModel` back onto the engine's numberless
-    // label, so the picker reads "Opus 4.8" rather than a bare "Opus".
+    // The engine's own label, verbatim: it is the one party that knows whether this account needs
+    // "Fable 5" to tell two Fables apart or just "Fable".
     let choices =
-      roster.isEmpty ? fallbackModels : roster.map { (title: $0.numberedName, id: $0.value) }
+      roster.isEmpty ? fallbackModels : roster.map { (title: $0.displayName, id: $0.value) }
     if choices.map(\.id) != modelChoices.map(\.id) {
       modelChoices = choices
       modelPicker.setTitles(
