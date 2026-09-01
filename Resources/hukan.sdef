@@ -291,8 +291,11 @@
             <parameter name="moving" code="Movg" type="integer" optional="yes" description="walk the selection by this many rows, negative for up">
                 <cocoa key="moving"/>
             </parameter>
-            <parameter name="accepting" code="Acpt" type="boolean" optional="yes" description="take the selected row, as Return would; returns the composer's text">
+            <parameter name="accepting" code="Acpt" type="boolean" optional="yes" description="take the selected row, as Return would — fails when nothing is selected; returns the composer's text">
                 <cocoa key="accepting"/>
+            </parameter>
+            <parameter name="completing" code="Cplt" type="boolean" optional="yes" description="take the selected row, or the best one when nothing is selected, as Tab would; returns the composer's text">
+                <cocoa key="completing"/>
             </parameter>
             <result type="text"/>
         </command>

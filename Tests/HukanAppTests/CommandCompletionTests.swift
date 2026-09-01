@@ -90,3 +90,128 @@ final class CommandCompletionTests: XCTestCase {
       ["login", "logout"])
   }
 }
+
+/// Which row a list opens on, and what Return means once it has.
+///
+/// The mistake this guards is a send that completes instead: the prompt list opens by itself over
+/// ordinary text, so a row selected before anything was aimed at it turns the acknowledgements
+/// this composer sends most — `yes`, `ok`, `dou`, each of them a query that opens a list — into a
+/// prompt nobody chose. The command list is the other case and keeps its selected row: a `/` was
+/// typed, so Return can mean nothing else.
+final class CompletionSelectionTests: XCTestCase {
+  private static let commands = [
+    ClaudeCommand(name: "compact", description: "Compact.", argumentHint: "", aliases: []),
+    ClaudeCommand(name: "config", description: "Configure.", argumentHint: "", aliases: []),
+  ]
+  private static let prompts = ["検討して", "これも検討して"]
+
+  /// The host windows the panel and the composer hang off. Held by the case rather than by the
+  /// test, since a window that goes away under a child panel takes the view being asked about
+  /// with it.
+  private var hosts: [NSWindow] = []
+
+  override func tearDown() {
+    hosts.removeAll()
+    super.tearDown()
+  }
+
+  // MARK: - The panel
+
+  @MainActor
+  func testACommandListOpensOnItsBestRow() throws {
+    let (panel, window) = host()
+    defer { panel.dismiss() }
+    panel.present(Self.commands.map(CompletionItem.command), below: try anchor(of: window))
+    guard case .command(let command)? = panel.selected else {
+      return XCTFail("a command list opens with its best row selected")
+    }
+    XCTAssertEqual(command.name, "compact", "the best match, on the row nearest the field")
+    XCTAssertTrue(panel.report.hasSuffix("▸ /compact"), panel.report)
+  }
+
+  @MainActor
+  func testAPromptListOpensWithNothingSelected() throws {
+    let (panel, window) = host()
+    defer { panel.dismiss() }
+    panel.present(Self.prompts.map(CompletionItem.prompt), below: try anchor(of: window))
+    XCTAssertNil(panel.selected, "nothing was aimed at yet")
+    XCTAssertFalse(panel.report.contains("▸"), panel.report)
+  }
+
+  /// With nothing selected the walk starts from the field, which sits below the bottom row: up
+  /// enters at the best match one key away, down wraps round to the far end.
+  @MainActor
+  func testAnArrowEntersAnUnselectedListAtItsBestRow() throws {
+    let (panel, window) = host()
+    defer { panel.dismiss() }
+    let items = Self.prompts.map(CompletionItem.prompt)
+    panel.present(items, below: try anchor(of: window))
+    panel.move(-1)
+    guard case .prompt(let first)? = panel.selected else { return XCTFail("up selects nothing") }
+    XCTAssertEqual(first, "検討して")
+
+    panel.present(items, below: try anchor(of: window))
+    panel.move(1)
+    guard case .prompt(let last)? = panel.selected else { return XCTFail("down selects nothing") }
+    XCTAssertEqual(last, "これも検討して", "the far end of the list")
+  }
+
+  // MARK: - What the keys then do
+
+  /// Return is refused while nothing is selected, so it goes on meaning send; Tab takes the best
+  /// row, which is the one-key completion Return handed back.
+  @MainActor
+  func testReturnSendsAndTabCompletesAPromptList() throws {
+    let composer = hostedComposer()
+    defer { composer.removeFromSuperview() }
+    composer.promptSource = { PromptCompletion.index(Self.prompts) }
+    composer.typeForScripting("kentou")
+    XCTAssertFalse(composer.completionReportForScripting.isEmpty)
+
+    XCTAssertFalse(composer.completionKeyForScripting(.accept), "Return is the composer's")
+    XCTAssertEqual(composer.stringValue, "kentou", "and it left the message alone")
+    XCTAssertTrue(composer.completionKeyForScripting(.complete))
+    XCTAssertEqual(composer.stringValue, "検討して")
+  }
+
+  /// The command list is unchanged: Return takes the row it opened on.
+  @MainActor
+  func testReturnStillTakesACommandRow() throws {
+    let composer = hostedComposer()
+    defer { composer.removeFromSuperview() }
+    composer.commands = Self.commands
+    composer.typeForScripting("/comp")
+    XCTAssertTrue(composer.completionKeyForScripting(.accept))
+    XCTAssertEqual(composer.stringValue, "/compact")
+  }
+
+  // MARK: - Fixtures
+
+  @MainActor
+  private func host() -> (CommandCompletionPanel, NSWindow) {
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 440, height: 200), styleMask: .borderless,
+      backing: .buffered, defer: true)
+    window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 200))
+    hosts.append(window)
+    return (CommandCompletionPanel(), window)
+  }
+
+  @MainActor
+  private func anchor(of window: NSWindow) throws -> NSView {
+    try XCTUnwrap(window.contentView)
+  }
+
+  @MainActor
+  private func hostedComposer() -> ComposerInput {
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 440, height: 200), styleMask: .borderless,
+      backing: .buffered, defer: true)
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 200))
+    let composer = ComposerInput(frame: NSRect(x: 0, y: 0, width: 440, height: 40))
+    content.addSubview(composer)
+    window.contentView = content
+    hosts.append(window)
+    return composer
+  }
+}

@@ -90,7 +90,13 @@ enum CompletionItem {
 enum CompletionKey {
   case up
   case down
+  /// Return. It takes the selected row and only a selected row: a prompt list opens with none,
+  /// and there Return is the composer's own send, exactly as it is with no list on screen.
   case accept
+  /// Tab. It takes the selected row, or the best one when nothing is selected — Tab has no other
+  /// meaning while a list is open, which is what keeps completing to one key after Return gave
+  /// its meaning back to sending.
+  case complete
   case dismiss
 }
 
@@ -170,6 +176,10 @@ final class CommandCompletionPanel: NSPanel {
     return items.indices.contains(row) ? items[row] : nil
   }
 
+  /// The best match, whether or not the selection is on it: the bottom row, the list reading
+  /// bottom-up. What Tab takes when nothing has been aimed at yet.
+  var best: CompletionItem? { items.last }
+
   /// Show `items` under `anchor` (the composer, in its window's coordinates). Hides itself when
   /// there is nothing to show, so the caller can hand over an empty list rather than having to
   /// decide twice.
@@ -178,20 +188,32 @@ final class CommandCompletionPanel: NSPanel {
   /// that on the row nearest the field, with the rest running away upwards. The panel stands over
   /// the transcript because the composer is at the foot of the column and there is nothing under
   /// it but the screen edge — so the row the caret is closest to is the bottom one, and a list
-  /// ranked from the top puts its best answer as far from the caret as the list is long. The
-  /// selection starts there for the same reason, which leaves the arrows reading as they look:
-  /// up walks back through the ranking, and it is one key away rather than eight.
+  /// ranked from the top puts its best answer as far from the caret as the list is long. That is
+  /// also where an arrow enters it, which leaves the two reading as they look: up walks back
+  /// through the ranking, and the best match is one key away rather than eight.
+  ///
+  /// **A command list opens on its best row; a prompt list opens on none.** A command is asked
+  /// for — `/` is typed, and while it stands there Return can mean nothing but "take a row" — so
+  /// selecting the best one costs nothing and saves a keystroke. A prompt list opens by itself,
+  /// over ordinary text, where Return already means send; a row selected before anything was
+  /// aimed at it turns that send into a prompt nobody chose, which is the one mistake a list
+  /// offered unasked must not be able to cause. So it opens beside the message rather than in
+  /// front of it, and an arrow — or Tab, which takes the best row outright — is what enters it.
   func present(_ items: [CompletionItem], below anchor: NSView) {
     guard !items.isEmpty, let host = anchor.window else {
       dismiss()
       return
     }
     self.items = items.reversed()
-    table.rowHeight =
-      items.contains(where: \.isPrompt) ? Self.promptRowHeight : Self.commandRowHeight
+    let unasked = items.contains(where: \.isPrompt)
+    table.rowHeight = unasked ? Self.promptRowHeight : Self.commandRowHeight
     table.reloadData()
     let best = self.items.count - 1
-    table.selectRowIndexes(IndexSet(integer: best), byExtendingSelection: false)
+    if unasked {
+      table.deselectAll(nil)
+    } else {
+      table.selectRowIndexes(IndexSet(integer: best), byExtendingSelection: false)
+    }
     table.scrollRowToVisible(best)
 
     let rows = min(items.count, Self.visibleRows)
@@ -234,10 +256,14 @@ final class CommandCompletionPanel: NSPanel {
   }
 
   /// Move the selection, wrapping at both ends — a list this short is quicker to walk round than
-  /// to walk back.
+  /// to walk back. With nothing selected the walk starts from the field itself, which sits below
+  /// the bottom row: up enters at the best match, down wraps round to the far end.
   func move(_ delta: Int) {
     guard !items.isEmpty else { return }
-    let row = (table.selectedRow + delta + items.count) % items.count
+    let row =
+      table.selectedRow < 0
+      ? (delta < 0 ? items.count - 1 : 0)
+      : (table.selectedRow + delta + items.count) % items.count
     table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     table.scrollRowToVisible(row)
   }

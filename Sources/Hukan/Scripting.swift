@@ -245,7 +245,9 @@ final class FilesPanelCommand: NSScriptCommand {
 }
 
 /// `completions` reports whichever list the composer has open — the engine's slash commands, or
-/// the past prompts a romaji query found — and `typing`/`moving`/`accepting` drive it. Hidden,
+/// the past prompts a romaji query found — and `typing`/`moving`/`accepting`/`completing` drive
+/// it. The last two are Return and Tab, which differ on a prompt list: it opens with no row
+/// selected, so Return is still the send and Tab is what takes the best row. Hidden,
 /// like `files` and `commit`, and for the same reason: the list is rows on a floating panel, so
 /// checking that a `/` opened it — and that Return took the right row — would otherwise mean
 /// clicking at coordinates. `typing` goes through the text view's own edit path, which is what
@@ -267,7 +269,13 @@ final class CompletionsCommand: NSScriptCommand {
       return composer.completionReportForScripting
     }
     if argument("accepting", as: Bool.self) == true {
-      guard composer.completionKeyForScripting(.accept) else { return fail("no list open") }
+      guard composer.completionKeyForScripting(.accept) else {
+        return fail("no list open, or no row selected")
+      }
+      return composer.stringValue
+    }
+    if argument("completing", as: Bool.self) == true {
+      guard composer.completionKeyForScripting(.complete) else { return fail("no list open") }
       return composer.stringValue
     }
     return composer.completionReportForScripting

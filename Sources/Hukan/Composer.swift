@@ -19,7 +19,8 @@ final class ComposerTextView: NSTextView, UndoStackOwner {
   /// The completion list's first refusal on the keys it needs — the arrows to walk it, Return
   /// and Tab to take a row, Esc to put it away. Returns true when it used the key. Every one of
   /// these already means something in the composer, so the list only ever borrows them while it
-  /// is open, and gives each back the moment it closes.
+  /// is open, and gives each back the moment it closes — Return included, which a list with no
+  /// row selected does not take at all.
   var onCompletionKey: ((CompletionKey) -> Bool)?
 
   /// Esc is the keyboard twin of the in-field stop button: while a turn runs it interrupts it,
@@ -39,13 +40,15 @@ final class ComposerTextView: NSTextView, UndoStackOwner {
       super.insertNewline(sender)
       return
     }
-    // A list on screen is what Return is answering; sending would post a half-typed command name.
+    // A row under the selection is what Return is answering; sending then would post a
+    // half-typed command name. A list with nothing selected — a prompt list nobody asked for —
+    // answers nothing and the message goes.
     if onCompletionKey?(.accept) == true { return }
     onSend?()
   }
 
   override func insertTab(_ sender: Any?) {
-    if onCompletionKey?(.accept) == true { return }
+    if onCompletionKey?(.complete) == true { return }
     super.insertTab(sender)
   }
 
@@ -277,6 +280,11 @@ final class ComposerInput: NSView {
         self.completionPanel.dismiss()
       case .accept:
         guard let item = self.completionPanel.selected else { return false }
+        self.take(item)
+      case .complete:
+        guard let item = self.completionPanel.selected ?? self.completionPanel.best else {
+          return false
+        }
         self.take(item)
       }
       return true

@@ -861,15 +861,27 @@ Workspace (one window)
   in a Japanese sentence findable as itself.
   **It shares the slash list's panel and its keys**, because it is one act: the field is completing
   what the whole message will be, and where the candidate came from is not a distinction the person
-  completing it is making. Sharing Return is not free, and the cost was measured before it was
-  taken: the ASCII messages sent as they stand are acknowledgements — `yes` 248 sends, `ok` 111,
-  `dou` 33 — and each now opens a list Return answers rather than sends, so those go Esc then
-  Return. A digit or a single letter is the one thing kept out, by the two-character floor and by
-  there having to be a letter at all.
+  completing it is making. **What it does not share is the selection, and that is the difference
+  between a list asked for and a list offered.** A slash list is reached for — `/` is typed, and
+  while it stands there Return can mean nothing but "take a row" — so it opens on its best match
+  and Return is a keystroke saved. A reading's list opens by itself over ordinary text, where
+  Return already means send, so it opens on no row at all: the ASCII messages sent as they stand
+  are acknowledgements — `yes` 248 sends, `ok` 111, `dou` 33 — and every one of them is also a
+  query that opens this list, so a row selected before anything was aimed at it turns the sends
+  this composer makes most into a prompt nobody chose. Sharing Return was tried and that is the
+  cost it carried: those sends went Esc then Return, which is a list standing in front of the
+  message rather than beside it. What enters it is an arrow — up, since the list reads bottom-up,
+  so the best match is one key away — or Tab, which takes the best row outright and is where the
+  keystroke Return gave back is kept: Tab has no other meaning while a list is open, and Return
+  now has one. A digit or a single letter is still kept out, by the two-character floor and by
+  there having to be a letter at all, since a query that matches most of the history answers
+  nothing whether it is selected or not.
   **The list reads bottom-up, best nearest the field.** The panel stands over the transcript
   because the composer is at the foot of the column, so a ranking that starts at the top puts the
   best answer as far from the caret as the list is long. The slash list turned round with it: one
-  panel, one order, and the arrows then read as they look.
+  panel, one order, and the arrows then read as they look. With nothing selected the walk starts
+  from the field itself, which sits below the bottom row — up enters at the best match, down wraps
+  round to the far end.
   **The store is the transcripts**, the same stance as git and the session list — nothing is
   written and there is no cache, a cache being a second copy of another tool's master data.
   `~/.claude/history.jsonl` looks like the source and is not: the CLI writes it from its
@@ -1257,7 +1269,7 @@ osascript -e 'tell application "Hukan Dev" to get transcript of (selected sessio
 osascript -e 'tell application "Hukan Dev" to get history of worktree "main" of repository 1 of window 1'
 osascript -e 'tell application "Hukan Dev" to commit "<full oid>"'   # then: commit / commit toggling 3 / commit finding "…"'
 osascript -e 'tell application "Hukan Dev" to tabs'
-osascript -e 'tell application "Hukan Dev" to completions typing "/co"'   # then: completions moving 1 / completions accepting true
+osascript -e 'tell application "Hukan Dev" to completions typing "/co"'   # then: completions moving 1 / accepting true / completing true
 osascript -e 'tell application "Hukan Dev" to recents'   # then: recents opening "<path>"
 ```
 

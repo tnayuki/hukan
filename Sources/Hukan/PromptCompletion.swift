@@ -24,10 +24,11 @@ enum PromptCompletion {
   /// The shortest query that opens a list. Two: a single letter matches most of the history and
   /// so answers nothing, and everything above that is worth offering.
   ///
-  /// It is not free, because the list borrows Return: the ASCII messages that are sent as they
-  /// stand are acknowledgements — `yes` (248 sends here), `ok` (111), `dou` (33) — and each of
-  /// them now opens a list that Return answers instead of sending, so they go Esc then Return. A
-  /// digit or a single letter is the one thing kept out of it, by the length and by there having
+  /// The ASCII messages that are sent as they stand are acknowledgements — `yes` (248 sends
+  /// here), `ok` (111), `dou` (33) — so most of what opens this list is not asking for it. That
+  /// is why the list does not borrow Return: it opens with no row selected (see
+  /// `CommandCompletionPanel.present`), an arrow or Tab is what enters it, and those sends cost
+  /// nothing. A digit or a single letter is kept out even so, by the length and by there having
   /// to be a letter at all.
   static let minimumQueryLength = 2
 
