@@ -194,19 +194,28 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
     runningItem = NSSplitViewItem(viewController: running)
     runningItem.minimumThickness = 320
-    // Collapsible only so a maximized desk can fold it away (⌃⌘M, or a double-click on a tab).
-    // The side effect is that the divider can now be dragged shut by hand as well, which is the
-    // same act by another route — and ⌃⌘M is the way back from either.
-    runningItem.canCollapse = true
+    // Folded away only by a maximized desk (⌃⌘M, or a double-click on a tab), which sets
+    // `isCollapsed` and needs nothing from this flag: `canCollapse` governs the drag alone. It is
+    // off because a divider dragged shut is a fold with no way back — this column has no toggle
+    // of its own, and ⌃⌘M is not the way back it reads as: the memento takes whatever is folded
+    // when the mode is entered and puts it straight back on the way out. So the drag stops at
+    // the minimum instead, and the only fold either middle column has is the one that undoes
+    // itself. See `deskItem` below, which is the half that survived a relaunch.
+    runningItem.canCollapse = false
     runningItem.holdingPriority = .init(261)
 
     deskItem = NSSplitViewItem(viewController: files.desk)
     // The desk alone now — the panel used to be inside it, and its 420 covered the pair.
     deskItem.minimumThickness = Self.deskMinimumWidth
-    // Collapsible for the same reason the transcript beside it is: a maximized session has to
-    // fold it away. Nothing else collapses it, and there is no toggle for it — the way back is
-    // the same ⌃⌘M either column's maximize is undone with.
-    deskItem.canCollapse = true
+    // Off for the same reason the transcript beside it is, and this is the column that showed
+    // why: dragged shut, the desk stayed shut across a relaunch. `recordColumnWidths` measures
+    // the transcript, which a folded desk leaves standing at the whole width of the pair — a
+    // number no guard there can tell from a deliberate one — and `arrangeColumnsIfNeeded` hands
+    // it back to `setPosition`, which answers a position past the minimum by collapsing. With
+    // the drag refused, that same replay clamps at `deskMinimumWidth` and the column is simply
+    // there. A maximized session still folds it, by `isCollapsed`, which this flag does not
+    // govern.
+    deskItem.canCollapse = false
     deskItem.holdingPriority = Self.deskHoldingPriority
 
     columnsController.addSplitViewItem(runningItem)

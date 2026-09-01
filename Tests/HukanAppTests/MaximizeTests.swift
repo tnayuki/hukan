@@ -88,6 +88,41 @@ final class MaximizeTests: XCTestCase {
     XCTAssertFalse(controller.showingColumns.rail)
   }
 
+  /// Neither middle column can be dragged shut, only maximized out of the way. They have no
+  /// toggle of their own, so a fold a divider can reach is a fold with nothing to undo it —
+  /// ⌃⌘M reads the layout it is entered from and puts that same fold straight back — and the
+  /// desk's version of it outlived a relaunch, `recordColumnWidths` having no way to tell a
+  /// transcript grown over the fold from a width somebody meant. A position past the minimum is
+  /// how the drag and that replay both arrive, and it has to land on the minimum.
+  func testTheMiddleColumnsCannotBeFoldedByADivider() {
+    let (controller, _, window) = openWindow()
+    defer { window.close() }
+    window.setContentSize(NSSize(width: 1600, height: 900))
+    window.layoutIfNeeded()
+
+    // The inner split, reached the way the window builds it: the columns pair is the middle item
+    // of the outer split, wrapped in the controller that insets it under the toolbar.
+    let outer = window.contentViewController as! NSSplitViewController
+    let columns = outer.splitViewItems[1].viewController.children.first as! NSSplitViewController
+
+    columns.splitView.setPosition(columns.splitView.bounds.width, ofDividerAt: 0)
+    columns.view.layoutSubtreeIfNeeded()
+    XCTAssertTrue(controller.showingColumns.desk, "the desk was squeezed out by its divider")
+
+    columns.splitView.setPosition(0, ofDividerAt: 0)
+    columns.view.layoutSubtreeIfNeeded()
+    XCTAssertTrue(
+      controller.showingColumns.session, "the transcript was squeezed out by its divider")
+
+    // What the fold is still for: maximizing sets `isCollapsed` outright, which is not the drag
+    // the refusal above is about.
+    controller.focusComposer()
+    controller.toggleMaximize(nil)
+    XCTAssertFalse(controller.showingColumns.desk)
+    controller.toggleMaximize(nil)
+    XCTAssertTrue(controller.showingColumns.desk)
+  }
+
   /// The transcript's counterpart to the desk's last tab closing: the session gone, the column
   /// has nothing left it was given the window for.
   func testTheSessionGoingAwayEndsTheMode() {

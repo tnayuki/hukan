@@ -104,8 +104,15 @@ Workspace (one window)
   of their own and keep whatever the act that ended the mode makes of them, but the transcript
   and the desk have none, so a mode dropped where it stood would leave whichever of them it had
   folded with no way to it. Everything that can fold does; the strip stays, because it is the way
-  back. The strip's right-click menu is the same set of acts spelled out — the four ways to close
-  from a tab, `Keep Open` while it is still a preview, and that maximize.
+  back. **Which is also why neither middle column can be dragged shut**: they were collapsible so
+  that the maximize could fold them, and the divider inherited that as a second way in — one with
+  no way out, since the only key that unfolds them reads the layout it is entered from and puts
+  the same fold straight back. The desk's version of it even outlived a relaunch: what is saved
+  is the transcript's width, and a transcript grown over a folded desk is a number nothing can
+  tell from one somebody dragged, so the arrangement was replayed and the desk collapsed again.
+  Now the drag stops at the column's minimum and the fold belongs to the maximize alone, which is
+  what it was added for. The strip's right-click menu is the same set of acts spelled out — the
+  four ways to close from a tab, `Keep Open` while it is still a preview, and that maximize.
 - **The desk's plain `⌘T` is the browser's; the terminal takes `⌃⌘T`.** Creation is two families,
   `⌘N` for the rail and `⌘T` for the desk, and within the desk the plain key goes to what is
   actually opened most: the shell work here is the agent's, so a terminal a person opens by hand
