@@ -563,10 +563,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// The rail's floor, on the same rule. What the captions cost here is the sidebar toggle
   /// AppKit itself draws — 44pt becomes 58 with "Sidebar" under it — and the section's own
   /// filter is what runs out of room: a toolbar item that no longer fits is not shrunk but
-  /// moved to the overflow menu, so the field does not narrow, it vanishes. Measured: captioned,
-  /// the filter survives down to 281, which is the one point above the uncaptioned floor that
-  /// makes this a second number at all.
-  static func railMinimumWidth(labelled: Bool) -> CGFloat { labelled ? 288 : 280 }
+  /// moved to the overflow menu, so the field does not narrow, it vanishes.
+  ///
+  /// 296 captioned, re-measured when the filter went from 130 to the 144 its placeholder needs
+  /// (see `sessionFilterWidth`): the item is dropped at a 292pt rail and survives at 296. The
+  /// uncaptioned floor did not move — 144 is the last width 280 absorbs — so the widening is
+  /// paid for in the mode that caused it and the ordinary window keeps its minimum.
+  static func railMinimumWidth(labelled: Bool) -> CGFloat { labelled ? 296 : 280 }
 
   /// What the desk is allowed to ask for, and how hard it holds it. A tab whose content resists
   /// compression harder than this does not get a wider desk — it wins the argument, moves the
@@ -855,8 +858,21 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// It also has to finish inside the rail — the traffic lights and the toggle spend the
   /// section's first ~160pt, and an item asking for more than its section holds is dropped
   /// outright rather than shrunk, which is how this one vanished the first time it was tried.
+  ///
+  /// 144 rather than the 130 it was built at, because the placeholder outgrew it: the two fields
+  /// took a verb and a noun each so that the keys aiming at them could be told apart from the
+  /// field rather than from a toolbar label icon mode never draws, and `Filter Sessions` needs
+  /// 87.9pt of text where 130 leaves 75.5 — it read `Filter Sessio`. A search field spends 54.5
+  /// of its width on the magnifier and its insets, so the number is that plus the string, and it
+  /// is measured rather than derived: what a bare field answers about its own chrome is not what
+  /// one in the bar does. `ToolbarRowFitsTests` measures the placeholder against the field, so
+  /// the next string to outgrow this fails there instead of being clipped in silence.
+  ///
+  /// 144 is also the last width the uncaptioned floor absorbs: measured, the item survives at a
+  /// 280pt rail at 144 and is dropped at 148, so the ordinary window keeps its minimum and only
+  /// `Icon and Text` pays — see `railMinimumWidth`.
   private lazy var sessionFilterWidth: NSLayoutConstraint = {
-    let constraint = rail.filterSearchField.widthAnchor.constraint(equalToConstant: 130)
+    let constraint = rail.filterSearchField.widthAnchor.constraint(equalToConstant: 144)
     constraint.isActive = true
     return constraint
   }()
@@ -872,8 +888,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   private weak var filesToolbarItem: NSToolbarItem?
   private weak var filesFilterToolbarItem: NSToolbarItem?
   private weak var filesScopeToolbarItem: NSToolbarItem?
-  /// A constant, for the reason the rail's filter is one — see `sessionFilterWidth`. Sized to
-  /// leave the ± and the toggle their room inside the panel's own section.
+  /// A constant, for the reason the rail's filter is one — see `sessionFilterWidth`. It stays at
+  /// the 130 both were built at: `Filter Files` is 61.9pt of text against the 75.5 this leaves,
+  /// so the placeholder that clipped on the rail fits here with room to spare, and a wider field
+  /// would only take the panel's floor up for nothing. Sized to leave the ± and the toggle their
+  /// room inside the panel's own section.
   private lazy var filesFilterWidth: NSLayoutConstraint = {
     let constraint = files.panel.filterSearchField.widthAnchor.constraint(equalToConstant: 130)
     constraint.isActive = true

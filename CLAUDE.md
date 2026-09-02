@@ -695,7 +695,7 @@ Workspace (one window)
   works, but refusing the mode is refusing to lay out, which is the wrong half of the problem to
   solve. So the floors are read off the mode instead (KVO; the property is documented
   observable) and the columns are pushed as wide as the captions need — 372 for the panel
-  against 280, 288 for the rail against 280, each measured the way the originals were. The desk
+  against 280, 296 for the rail against 280, each measured the way the originals were. The desk
   pays the difference, which is the right pocket: it is the cost of a choice its owner made, and
   it is refunded the moment the bar is icons again. The window's own minimum is the three floors
   added up, so it moves with them — leave it behind and the split view is asked to honour floors

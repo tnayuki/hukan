@@ -109,6 +109,43 @@ final class ToolbarRowFitsTests: XCTestCase {
     }
   }
 
+  /// A field that cannot finish its own placeholder names the wrong gesture. Each of the two
+  /// says the verb and its subject, because the keys that aim at them are told apart from the
+  /// field and not from a toolbar label icon mode never draws — and at the flat 130 both were
+  /// built at, `Filter Sessions` came out `Filter Sessio`. The width is now the cell's own answer
+  /// for the placeholder, so this asserts the field as laid out, against the string it is
+  /// actually holding: the next placeholder to outgrow its field fails here rather than being
+  /// clipped in silence.
+  @MainActor
+  func testEachFilterFieldFitsItsPlaceholder() throws {
+    let workspace = RailPreviewTests.sampleWorkspace()
+    let controller = WorkspaceWindowController(workspace: workspace)
+    let window = try XCTUnwrap(controller.window)
+    workspace.selectedWorktreeID = workspace.worktrees.first?.id
+    controller.reload()
+    window.setFrame(NSRect(x: 0, y: -4000, width: 1600, height: 800), display: true)
+    window.makeKeyAndOrderFront(nil)
+    controller.arrangeColumnsIfNeeded()
+    RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+
+    let toolbar = try XCTUnwrap(window.toolbar)
+    for identifier in [NSToolbarItem.Identifier.sessionFilter, .filesFilter] {
+      let field = try XCTUnwrap(
+        toolbar.items.first { $0.itemIdentifier == identifier }?.view as? NSSearchField,
+        "no field in \(identifier.rawValue)")
+      let placeholder = try XCTUnwrap(field.placeholderString)
+      field.layoutSubtreeIfNeeded()
+      let title = try XCTUnwrap(field.cell as? NSSearchFieldCell)
+        .titleRect(forBounds: field.bounds).width
+      let needed = (placeholder as NSString).size(
+        withAttributes: [.font: field.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)]
+      ).width
+      XCTAssertGreaterThanOrEqual(
+        title, needed,
+        "\"\(placeholder)\" needs \(needed)pt and the field gives it \(title) — it is clipped")
+    }
+  }
+
   /// The toggle AppKit builds for `.toggleSidebar`: a button in the bar wired to the split view
   /// controller's own action, which is the one thing that names it.
   private func sidebarToggle(in view: NSView) -> NSView? {
