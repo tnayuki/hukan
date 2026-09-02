@@ -1,6 +1,6 @@
 import AppKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   func applicationWillFinishLaunching(_ notification: Notification) {
     // Wind libgit2 up before window restoration, which runs next and asks git about its
     // worktrees. Every git query hukan makes goes through libgit2 in-process — no subprocess.
@@ -109,6 +109,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// Opt into secure coding for restorable state. Not returning true warns, and it also
   /// states the constraint: only strings, numbers and arrays survive restoration.
+  /// Ask the tap now rather than waiting for the hour to turn.
+  ///
+  /// The check runs by itself and a 304 costs no body, so this is not what keeps the answer
+  /// current — it is the way to *make* it current at the moment you thought to wonder, without
+  /// hukan having to grow a second place that states what the toolbar already states. Where the
+  /// answer goes is unchanged: the arrow appears if there is a release ahead, and nothing appears
+  /// if there is not.
+  @objc func checkForUpdates(_ sender: Any?) {
+    AppUpdate.shared.check()
+  }
+
+  /// Disabled only while a check is in flight, so pressing it twice does not read as though the
+  /// first press had missed.
+  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    guard menuItem.action == #selector(checkForUpdates(_:)) else { return true }
+    return !AppUpdate.shared.isChecking
+  }
+
   func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -169,6 +187,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     appMenu.addItem(
       withTitle: "About hukan",
       action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+    // Under About, the block that names the app itself, since the question it asks is about which
+    // hukan this is. No ellipsis: nothing opens — the answer lands in the toolbar, an arrow if
+    // there is one to show and nothing if there is not.
+    appMenu.addItem(
+      withTitle: "Check for Updates", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
     appMenu.addItem(.separator())
     // The standard app-menu block AppKit runs for free once the hooks are set: the system
     // fills the Services submenu, and the hide/show trio is NSApplication's own.

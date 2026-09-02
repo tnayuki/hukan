@@ -110,3 +110,51 @@ final class AppUpdateToolbarTests: XCTestCase {
     window.close()
   }
 }
+
+/// The app menu's Check for Updates row. Three ways for a menu row to be quietly dead — missing,
+/// wired to nothing, or permanently disabled — so all three are pinned.
+final class AppUpdateMenuItemTests: XCTestCase {
+  @MainActor
+  private func appMenu() throws -> NSMenu {
+    try XCTUnwrap(AppDelegate.makeMainMenu().items.first?.submenu)
+  }
+
+  @MainActor
+  func testTheRowSitsUnderAbout() throws {
+    let menu = try appMenu()
+    let about = try XCTUnwrap(menu.items.firstIndex { $0.title == "About hukan" })
+    let check = try XCTUnwrap(
+      menu.items.firstIndex { $0.action == #selector(AppDelegate.checkForUpdates(_:)) })
+    XCTAssertEqual(check, about + 1)
+    // No ellipsis: nothing opens, the answer lands in the toolbar.
+    XCTAssertEqual(menu.items[check].title, "Check for Updates")
+  }
+
+  /// Enabled unless a check is already in flight, and never a readout: the row's title does not
+  /// move, because what it would say is what the toolbar is already saying.
+  @MainActor
+  func testTheRowIsEnabledAndSaysTheSameThingEitherWay() throws {
+    let delegate = AppDelegate()
+    let menu = try appMenu()
+    let item = try XCTUnwrap(
+      menu.items.first { $0.action == #selector(AppDelegate.checkForUpdates(_:)) })
+
+    AppUpdate.shared.apply(AppUpdate.shared.runningVersion)
+    XCTAssertTrue(delegate.validateMenuItem(item))
+    XCTAssertEqual(item.title, "Check for Updates")
+
+    AppUpdate.shared.apply("99.0.0")
+    XCTAssertTrue(delegate.validateMenuItem(item))
+    XCTAssertEqual(item.title, "Check for Updates")
+    AppUpdate.shared.apply(AppUpdate.shared.runningVersion)
+  }
+
+  /// Everything else in the menu is left alone: validation is asked about every row.
+  @MainActor
+  func testValidationLeavesOtherRowsAlone() {
+    let delegate = AppDelegate()
+    let other = NSMenuItem(title: "About hukan", action: nil, keyEquivalent: "")
+    XCTAssertTrue(delegate.validateMenuItem(other))
+    XCTAssertEqual(other.title, "About hukan")
+  }
+}

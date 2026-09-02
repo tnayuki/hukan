@@ -890,6 +890,16 @@ Workspace (one window)
   shows only once there is a plan. Accented rather than secondary-tinted, because it is the one
   item in that cluster that acts instead of reads; both version numbers are in the tooltip, the bar
   having no room for them and the glyph having only to carry that there is something to do.
+  **Asking early is a menu item, and it is pointedly not a second answer.** `Check for Updates`
+  sits under About, the block that names the app itself, since what it asks about is which hukan
+  this is. The check is hourly and a 304 costs no body, so the command is not what keeps the answer
+  current — it is only the way to make it current at the moment you thought to wonder. So its title
+  never moves and it opens nothing: a row reading `0.5.1 available` under a bar already carrying
+  that would be the same fact twice, and one reading `up to date` would be a second place to look
+  for one answer. It carries no ellipsis for the same reason. The About panel held the reading
+  first and that is the wrong room — About is where you go once you already suspect, where a menu
+  is already open in front of you. Disabled only while a check is in flight, so a second press
+  does not read as the first having missed.
   **Pressing it hands one command line to Terminal.app, the road `/login` already takes** — one
   handoff (`ExternalTerminal`) rather than two, for opposite reasons: the login needs a TTY the
   stream-json engine has not got, and the upgrade needs a process that is not hukan's child, since

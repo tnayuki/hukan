@@ -149,6 +149,11 @@ final class AppUpdate {
     lhs.compare(rhs, options: .numeric)
   }
 
+  /// True while the tap is being asked. The menu's Check for Updates is disabled for as long as
+  /// it is, which is the whole of the feedback that command gets: the answer itself lands in the
+  /// toolbar, where an arrow appears if there is one to show and nothing appears if there is not.
+  var isChecking: Bool { task != nil }
+
   /// Hand the upgrade to Terminal.app. hukan neither waits for it nor learns how it went — the
   /// terminal window is the report, and the next launch's check is the verdict.
   func upgrade() {
