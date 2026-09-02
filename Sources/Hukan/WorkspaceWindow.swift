@@ -5,6 +5,7 @@ extension NSToolbarItem.Identifier {
   static let status = NSToolbarItem.Identifier("status")
   static let systemUsage = NSToolbarItem.Identifier("systemUsage")
   static let usage = NSToolbarItem.Identifier("usage")
+  static let appUpdate = NSToolbarItem.Identifier("appUpdate")
   static let toggleFiles = NSToolbarItem.Identifier("toggleFiles")
   static let toggleHistory = NSToolbarItem.Identifier("toggleHistory")
   static let filesFilter = NSToolbarItem.Identifier("filesFilter")
@@ -266,6 +267,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     window.titleVisibility = .hidden
     window.titlebarSeparatorStyle = .line
     window.toolbar = toolbar
+    // Every window's bar carries the same answer, so the checker is app-wide and the bars listen
+    // to it rather than each asking for itself.
+    AppUpdate.shared.observe(self) { [weak self] in self?.updateAppUpdateToolbarItem() }
     // `.iconOnly` above is where the bar starts, not where it stays: the toolbar's own
     // right-click menu offers `Icon and Text`, there is no supported way to decline it, and the
     // captions it adds are wider than the columns the sections were measured against. So the
@@ -429,6 +433,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   private var observers: [NSObjectProtocol] = []
 
   deinit {
+    AppUpdate.shared.stopObserving(self)
     observers.forEach(NotificationCenter.default.removeObserver)
     systemUsageTimer?.invalidate()
     terminalTitleTimer?.invalidate()
@@ -681,8 +686,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // slid left by that much and the toggle stood in the middle of the rail.
     [
       .sessionFilter, .flexibleSpace, .toggleSidebar, .sidebarTrackingSeparator, .status,
-      .flexibleSpace, .usage, .systemUsage, .filesSeparator, .filesFilter, .flexibleSpace,
-      .filesScope, .toggleHistory, .toggleFiles,
+      .flexibleSpace, .appUpdate, .usage, .systemUsage, .filesSeparator, .filesFilter,
+      .flexibleSpace, .filesScope, .toggleHistory, .toggleFiles,
     ]
   }
 
@@ -778,6 +783,22 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       filesToolbarItem = item
       updateFilesToolbarItem()
       return item
+    case .appUpdate:
+      let item = NSToolbarItem(itemIdentifier: identifier)
+      item.label = "Update hukan"
+      // Accented rather than bordered, the way the ± says it is on: the bar carries glyphs, not a
+      // row of capsules. It is the one item here that acts rather than reads, which is what the
+      // accent is doing — the two figures beside it are secondary-tinted and stay that way.
+      item.image = Self.updateImage()
+      item.isBordered = false
+      item.target = self
+      item.action = #selector(upgradeApp(_:))
+      // Born hidden and revealed only by a check that came back ahead of this build, like the
+      // usage item beside it: on a build that is current there is nothing here at all.
+      item.isHidden = AppUpdate.shared.available == nil
+      appUpdateToolbarItem = item
+      updateAppUpdateToolbarItem()
+      return item
     case .usage:
       let item = NSToolbarItem(itemIdentifier: identifier)
       item.view = usageLabel
@@ -789,6 +810,41 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     default:
       return nil
     }
+  }
+
+  private weak var appUpdateToolbarItem: NSToolbarItem?
+
+  /// The glyph for "there is a newer hukan than this one", in the accent colour. A downward arrow
+  /// into a tray is what every installer on this machine draws for the same sentence.
+  private static func updateImage() -> NSImage? {
+    let configuration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+      .applying(NSImage.SymbolConfiguration(paletteColors: [.controlAccentColor]))
+    return NSImage(
+      systemSymbolName: "arrow.down.circle", accessibilityDescription: "Update hukan")?
+      .withSymbolConfiguration(configuration)
+  }
+
+  /// Show the item exactly while a newer version is being distributed, and say which in the
+  /// tooltip — the bar has no room for two version numbers, and the only thing the glyph has to
+  /// carry on its own is that there is something to do.
+  private func updateAppUpdateToolbarItem() {
+    guard let item = appUpdateToolbarItem else { return }
+    guard let available = AppUpdate.shared.available else {
+      item.isHidden = true
+      item.toolTip = nil
+      return
+    }
+    item.isHidden = false
+    item.toolTip =
+      "hukan \(AppUpdate.shared.runningVersion) → \(available)\n"
+      + "Upgrades with Homebrew in a terminal. Restart hukan afterwards."
+  }
+
+  /// Hand the upgrade to a terminal and get out of the way. No confirmation: nothing is destroyed
+  /// and nothing is quit — the terminal window shows the whole of it and is interruptible there,
+  /// which is more than an alert would have said.
+  @objc func upgradeApp(_ sender: Any?) {
+    AppUpdate.shared.upgrade()
   }
 
   private weak var sessionFilterToolbarItem: NSToolbarItem?
@@ -1626,15 +1682,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// `auth` subcommand, and a bare `claude login` treats "login" as a *prompt* — it opens an
   /// ordinary chat instead of signing in, so the sign-in silently never happens.
   private func runLogin(_ verb: String, for session: AgentSession) {
-    // Terminal.app runs a login shell that sources the user's profile, so `claude` is on PATH
-    // there the same way it is for the agent. The verb is a fixed literal, never user input.
-    let script =
-      "tell application \"Terminal\"\nactivate\ndo script \"claude auth \(verb)\"\nend tell"
-    let task = Process()
-    task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-    task.arguments = ["-e", script]
+    // The verb is a fixed literal, never user input. Handed over by `ExternalTerminal`, which is
+    // the one way out to a real shell — the upgrade takes the same road for the opposite reason.
     do {
-      try task.run()
+      try ExternalTerminal.run("claude auth \(verb)")
       reconnectAfterLoginSessionID = session.id
       session.note("Opening a terminal to \(verb). Come back once it finishes to reconnect.")
     } catch {

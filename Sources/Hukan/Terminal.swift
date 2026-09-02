@@ -319,3 +319,31 @@ final class HukanTerminalView: LocalProcessTerminalView {
     return menu
   }
 }
+
+/// Terminal.app, asked to run one command — the other kind of terminal hukan has, and the one it
+/// reaches for when the work cannot happen inside the window.
+///
+/// Two things need it, for the same reason from opposite directions. `/login` and `/logout` need a
+/// real TTY for their browser flow, which the stream-json engine has not got. The Homebrew upgrade
+/// needs a process that is not hukan's child, since what it replaces is the bundle hukan is running
+/// out of. Both are handed over the same way rather than two ways, which is also what keeps the
+/// thing handed over to one shape: a single command line, never a script with quoting inside it.
+///
+/// Terminal.app runs a login shell that sources the user's profile, so `claude` and `brew` are on
+/// PATH there the same way they are for the agent — which is the whole reason this is Terminal.app
+/// and not a `Process` of our own.
+enum ExternalTerminal {
+  /// Open Terminal.app and run `command` in a new window. The caller is not told when it finishes;
+  /// nothing here waits, and the window is the report.
+  ///
+  /// `command` is composed here, never taken from a document or a page: it goes into an AppleScript
+  /// string literal, so a double quote in it would end that literal early. Every caller passes a
+  /// fixed literal with at most a fixed verb spliced in.
+  static func run(_ command: String) throws {
+    let script = "tell application \"Terminal\"\nactivate\ndo script \"\(command)\"\nend tell"
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    task.arguments = ["-e", script]
+    try task.run()
+  }
+}

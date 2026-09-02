@@ -845,6 +845,43 @@ Workspace (one window)
   fork, or a fresh session are still choices. It is re-read when a turn ends, when the engine
   starts and when a rollback shortens the conversation — the three things that move it — rather
   than on a timer.
+- **hukan says when a newer hukan has been released, and Claude Code is not watched at all.** The
+  engine updates itself — the native installer writes `autoUpdates: false` to disable the *legacy*
+  npm updater and sets `autoUpdatesProtectedForNative`, which exempts its own — so there is nothing
+  to tell you that will not have happened by morning anyway. The cask does not follow anything, so
+  hukan is the one of the two that can go quietly stale.
+  **This is hukan's one outbound request, and the line around it is the whole of why it is
+  allowed**: one fixed URL, GET, nothing sent, no credentials, nothing about the work. libgit2 is
+  built network-less on purpose and the browser's traffic is the user's own; this is neither, so it
+  is stated as a constraint rather than as a beginning.
+  **It reads the cask, not the tag's GitHub Release.** The two disagree for a minute at a time —
+  `release.yml` publishes the Release and pushes the cask that points at it afterwards — so a check
+  against the Release API lights up in a window where `brew` still has nothing to give, which is
+  hukan and Homebrew answering one question two ways in one glance. Reading what actually installs
+  makes them one file. Hourly, `If-None-Match` so a 304 costs no body, and a failed read leaves the
+  last answer standing: a machine with no network has not learned there is no new version. Release
+  builds only, since a Dev build's version is whatever the working tree says and would announce
+  every release from the moment it shipped.
+  **The arrow sits at the toolbar's trailing edge** by the scope rule above — true of the whole
+  window, as its two neighbours are — and only while a release is ahead, the way the plan usage
+  shows only once there is a plan. Accented rather than secondary-tinted, because it is the one
+  item in that cluster that acts instead of reads; both version numbers are in the tooltip, the bar
+  having no room for them and the glyph having only to carry that there is something to do.
+  **Pressing it hands one command line to Terminal.app, the road `/login` already takes** — one
+  handoff (`ExternalTerminal`) rather than two, for opposite reasons: the login needs a TTY the
+  stream-json engine has not got, and the upgrade needs a process that is not hukan's child, since
+  what it replaces is the bundle hukan is running out of. **Nothing quits**, which is what keeps
+  what is handed over to a single literal instead of a script with quoting inside it: Homebrew
+  unlinks the old bundle rather than writing over it, so the running process keeps the inode it
+  started from and is untouched until it exits. A quit-first version had to wait for the app to go,
+  abort if a Cancel on an unsaved edit refused it, and carry all of that through three levels of
+  escaping — for nothing, since the last word is a relaunch either way, said in that terminal.
+  **The cask is named in full** (`tnayuki/hukan/hukan`), which is not decoration: Homebrew
+  auto-updates before `upgrade` once every 24 hours by default, so a release published today is
+  invisible to a plain `brew upgrade --cask hukan` for the rest of the day — hukan pointing at a
+  version Homebrew then reports it already has. An argument naming a third-party tap in full drops
+  that interval to five minutes, which the shell does for exactly this reason. `brew update` in
+  front would close the remaining minutes and pay for every tap on the machine to do it.
 - **A `/` at the head of the composer completes, and the list is the engine's.** Its built-ins
   and every skill and user command it found arrive together in the startup reply, undistinguished
   — which is exactly what a completion list wants, since the person typing `/` is not asking
@@ -1205,6 +1242,11 @@ is a **deploy key** (`hukan-release-bot`, registered read-write on the tap and n
 rather than a personal token, because a token in a runner's environment carries an account's whole
 reach — every repository it can touch — where a deploy key reaches exactly the one repository it
 was cut for. That is the whole of what a workflow writes to either repository.
+
+**The cask is also what the running app reads to know it is behind** (see the update bullet in the
+model), so the order of these two steps is load-bearing: the Release is published first and the
+cask pushed after, which is the window in which the Release API would answer ahead of anything
+`brew` could install. Swapping them would be fine; leaving a gap between them would not.
 
 ### One module, one convention
 

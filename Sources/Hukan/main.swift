@@ -57,6 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // you back. No-op unless we are running from a real .app bundle.
     SessionNotifier.shared.requestAuthorization()
 
+    // Ask the tap whether a newer hukan is being distributed — once now, then hourly. Release
+    // builds only; see `AppUpdate`.
+    AppUpdate.shared.start()
+
     NSApp.activate(ignoringOtherApps: true)
   }
 

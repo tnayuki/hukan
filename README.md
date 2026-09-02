@@ -273,6 +273,12 @@ the Gatekeeper quarantine so it launches; `brew upgrade` follows new versions. h
 Claude Code CLI (`claude`) per session, so
 [install that separately](https://docs.anthropic.com/en/docs/claude-code).
 
+**hukan says when a newer one has been released.** It reads the version out of the cask that
+installs it — one HTTPS GET, hourly, sending nothing — and while that is ahead of the running
+build the toolbar's trailing edge carries an arrow, with both version numbers in its tooltip.
+Pressing it opens Terminal.app and runs the `brew upgrade`; nothing quits, and the terminal says
+to restart hukan afterwards. Claude Code is not watched the same way, because it updates itself.
+
 Building from source instead is one `xcodebuild` — see [CLAUDE.md](CLAUDE.md).
 
 ---
