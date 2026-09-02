@@ -44,6 +44,20 @@ enum Git {
   /// those paths are now; a path it was asked about and did not name no longer differs from the
   /// base at all, which is how a file edited back to what HEAD holds leaves the set.
   ///
+  /// **A path asked about may be a directory, and then the answer is about everything under it.**
+  /// That is libgit2's reading of a pathspec, and this fold has to take the same one or the two
+  /// disagree: a directory arrives here whenever one is renamed, deleted or dropped, and FSEvents
+  /// names the directory itself for an `mv` of one. What a whole read would then say about the
+  /// files under it, an exact-match fold could not — a *tracked* file that left is answered for,
+  /// as a deletion at its old path, but an untracked one is simply not mentioned, so its entry
+  /// survived every later read as a file that no longer exists, and the ± went on counting it
+  /// until something moved HEAD or the index and forced a whole read.
+  ///
+  /// Read as each path's ancestors against the asked set rather than as a scan of that set, so
+  /// the cost is the depth of a path and not `existing × asked` — and so that whether a path is
+  /// a directory never has to be asked of the disk, which is exactly what nobody can answer for
+  /// one that has just been moved away.
+  ///
   /// Byte order, because that is the order libgit2 hands its deltas over in and the result has to
   /// be indistinguishable from a whole read's — the answers are compared to decide whether the UI
   /// has anything to redraw, and a set that merely re-sorted itself would redraw everything.
@@ -53,9 +67,20 @@ enum Git {
     -> [ChangedFile]
   {
     var byPath: [String: ChangedFile] = [:]
-    for file in existing where !asked.contains(file.path) { byPath[file.path] = file }
+    for file in existing where !wasAsked(about: file.path, in: asked) { byPath[file.path] = file }
     for file in answered { byPath[file.path] = file }
     return byPath.values.sorted { FileTree.precedesBytewise($0.path, $1.path) }
+  }
+
+  /// Whether `path` is one of `asked` or sits under one of them.
+  private static func wasAsked(about path: String, in asked: Set<String>) -> Bool {
+    if asked.contains(path) { return true }
+    var directory = (path as NSString).deletingLastPathComponent
+    while !directory.isEmpty {
+      if asked.contains(directory) { return true }
+      directory = (directory as NSString).deletingLastPathComponent
+    }
+    return false
   }
 
   /// How many paths one repository open answers for. The index's walk asks about a whole level

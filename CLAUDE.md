@@ -1032,8 +1032,16 @@ Workspace (one window)
   one path on a synthesized 50,000-file repository, nearly all of the 12 being the index both of
   them load. What comes back answers for those paths and no others, so it is folded into the
   changed set rather than replacing it — a path asked about that the diff did not name no longer
-  differs from HEAD, which is how a file edited back to what HEAD holds leaves the set. The index
-  is not read again at all then: it lives inside git's own directory, so a batch that named
+  differs from HEAD, which is how a file edited back to what HEAD holds leaves the set. **A path
+  asked about may be a directory, and the fold reads it as one**: libgit2 answers a pathspec with
+  everything under it, so what leaves the set is what is under the path as well as the path
+  itself. The two disagreed for a while, and the case that says so is an *untracked* file moved
+  out of a folder — a tracked one comes back as a deletion at its old path, where an untracked one
+  is not mentioned at all, so its entry survived every later read as a file that no longer existed
+  and the ± went on counting it until something moved HEAD or the index and forced a whole read.
+  Directories reach the fold from every side: a folder renamed, deleted or dropped on, and an
+  agent's `mv`, which FSEvents names as the directory itself. The index is not read again at all
+  then: it lives inside git's own directory, so a batch that named
   nothing there cannot have moved it. **hukan's own writes ask the same question and answer the
   other one differently**: a save and the files panel's edits raise no event at all (every watcher
   carries `IgnoreSelf`), so they say what they wrote and git is asked about exactly that — but

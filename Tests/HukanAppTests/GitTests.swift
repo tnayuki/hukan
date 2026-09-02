@@ -224,6 +224,43 @@ final class GitTests: XCTestCase {
       Git.merged(none, into: whole, for: ["z.txt"]).map(\.path), ["a-b.txt", "a.txt", "a/b.txt"])
   }
 
+  /// A path asked about may be a directory, and then the answer is about everything under it —
+  /// libgit2's reading of a pathspec, which the fold has to share. The case that says so is an
+  /// *untracked* file moved out of a directory: a tracked one is answered for at its old path, as
+  /// a deletion, but an untracked one is not mentioned at all, so an exact-match fold kept its
+  /// entry for a file that no longer exists and the ± went on counting it. Directories reach this
+  /// from every side — a rename or a delete on a folder row, a file dropped into one, and an
+  /// agent's `mv`, which FSEvents reports as the directory itself.
+  func testAFoldedDirectoryAnswersForWhatIsUnderIt() throws {
+    makeRepository()
+    try write("one\n", to: "src/tracked.txt")
+    git(["add", "."])
+    git(["commit", "-q", "-m", "first"])
+    try write("loose\n", to: "src/pack/x.txt")
+    try write("loose\n", to: "src/pack/y.txt")
+
+    let before = Git.changedFiles(at: root, since: "HEAD")
+    XCTAssertEqual(before.map(\.path), ["src/pack/x.txt", "src/pack/y.txt"], "untracked counts")
+
+    // The folder moves, as a drop or an `mv` does it — no git command, so nothing but this read
+    // will ever notice.
+    try FileManager.default.moveItem(
+      at: root.appendingPathComponent("src/pack"), to: root.appendingPathComponent("docs"))
+    let asked: Set<String> = ["src/pack", "docs"]
+    let answered = Git.changedFiles(at: root, since: "HEAD", paths: Array(asked))
+    XCTAssertEqual(
+      Git.merged(answered, into: before, for: asked), Git.changedFiles(at: root, since: "HEAD"),
+      "what is under a directory asked about leaves with it")
+
+    // The other half of the same reading: a tracked file under a directory asked about is
+    // answered for, so the fold must not drop what the answer replaced it with.
+    try FileManager.default.removeItem(at: root.appendingPathComponent("src/tracked.txt"))
+    let deleted = Git.changedFiles(at: root, since: "HEAD", paths: ["src"])
+    let folded = Git.merged(
+      deleted, into: Git.changedFiles(at: root, since: "HEAD", paths: Array(asked)), for: ["src"])
+    XCTAssertEqual(folded.first(where: { $0.path == "src/tracked.txt" })?.removed, 1)
+  }
+
   /// The files panel asks this about the directories git produced no path for, so that a
   /// checkout's build directory — which holds nothing git can see, and would otherwise be the one
   /// row nobody wants — stays out of the tree.
