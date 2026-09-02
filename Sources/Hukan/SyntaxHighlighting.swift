@@ -46,6 +46,14 @@ enum SyntaxHighlighting {
     "yaml": ("yaml", tree_sitter_yaml()),
     "md": ("markdown", tree_sitter_markdown()),
     "markdown": ("markdown", tree_sitter_markdown()),
+    // A patch is not a language and its grammar knows it: what the diff grammar reads is the
+    // frame — which file, which hunk, which side — and what it says about the payload is that
+    // the payload belongs to the file it names. Three extensions and no more, because a patch
+    // read from a pipe has no name to be found by: `git format-patch` writes `.patch`, a
+    // redirected `git diff` is `.diff` by convention, and `git apply --reject` leaves `.rej`.
+    "diff": ("diff", tree_sitter_diff()),
+    "patch": ("diff", tree_sitter_diff()),
+    "rej": ("diff", tree_sitter_diff()),
   ]
 
   /// Grammars no file extension reaches: they exist to be injected into another language.
@@ -87,11 +95,33 @@ enum SyntaxHighlighting {
     /// A colour of its own — or nil to keep the one already there, which is how Markdown's
     /// emphasis bolds a word without flattening a link inside it — and emphasis to add.
     case marked(color: NSColor?, adds: Emphasis)
+    /// Painted behind the row rather than into it, and saying nothing about what is drawn on
+    /// top. A patch's `+` and `-` rows are what this exists for: which side of the change a row
+    /// is on is the frame, and what the row *says* is the language it is a patch of, so the two
+    /// cannot both be the foreground colour. The commit tab settled that one — the band carries
+    /// the side, the syntax carries the content — and a patch opened as a file reads the same
+    /// way, in the same colours, or one window would read a diff two ways.
+    case banded(NSColor)
   }
 
   /// A resolved run: what the glyphs in `range` should actually look like, with everything
   /// enclosing it already folded in. Consumers apply these in order and the last one wins.
   typealias Span = (range: NSRange, color: NSColor, emphasis: Emphasis)
+
+  /// A row to paint behind: the range the grammar named, and the fill.
+  typealias Band = (range: NSRange, color: NSColor)
+
+  /// What one read of a file comes back with. The two are separate because they are drawn in
+  /// separate places — the spans are rendering attributes on the text, the bands are painted
+  /// under it by the layout fragment — and because a band must not join the nesting the spans
+  /// are built from: a `+` row encloses its whole line, and were it a colour every token on
+  /// that line would inherit it, which is exactly the reading the band exists to avoid.
+  struct Highlight {
+    var spans: [Span] = []
+    var bands: [Band] = []
+
+    var isEmpty: Bool { spans.isEmpty && bands.isEmpty }
+  }
 
   /// The colored spans of `text`, or empty when no vendored grammar covers the path. Ranges
   /// are UTF-16 offsets into `text`, so they address `NSTextStorage` directly. Later captures
@@ -108,8 +138,15 @@ enum SyntaxHighlighting {
   /// Passing nil asks for all of it, which is what a commit's diff wants — it has no viewport to
   /// speak of, and colours each file once.
   static func spans(in text: String, forPath path: String, within: NSRange? = nil) -> [Span] {
-    guard let parsed = parse(text, forPath: path) else { return [] }
-    return spans(of: parsed, within: within)
+    highlight(in: text, forPath: path, within: within).spans
+  }
+
+  /// The colours *and* the bands. Only the editor wants both — a commit's diff is banded by the
+  /// tab that built it, and every other reader is asking about text.
+  static func highlight(in text: String, forPath path: String, within: NSRange? = nil) -> Highlight
+  {
+    guard let parsed = parse(text, forPath: path) else { return Highlight() }
+    return highlight(of: parsed, within: within)
   }
 
   /// A file already parsed, held so that a second question about the *same text* costs the
@@ -146,7 +183,11 @@ enum SyntaxHighlighting {
   /// The spans of an already-parsed file. The injected languages inside the window are still
   /// parsed here — a fence's contents are a tree of their own, and only the host's is kept.
   static func spans(of parsed: Parsed, within: NSRange? = nil) -> [Span] {
-    spans(
+    highlight(of: parsed, within: within).spans
+  }
+
+  static func highlight(of parsed: Parsed, within: NSRange? = nil) -> Highlight {
+    highlight(
       in: parsed.text, using: parsed.configuration, tree: parsed.tree, depth: 0, within: within)
   }
 
@@ -159,20 +200,20 @@ enum SyntaxHighlighting {
   /// back with its offsets moved. Cutting the text rather than using tree-sitter's included
   /// ranges keeps every offset in the UTF-16 units the rest of this file speaks; the ranges are
   /// contiguous, which is the case where the two agree.
-  private static func spans(
+  private static func highlight(
     in text: String, using configuration: LanguageConfiguration, depth: Int, within: NSRange?
-  ) -> [Span] {
-    guard let tree = makeParser(for: configuration.language).parse(text) else { return [] }
-    return spans(in: text, using: configuration, tree: tree, depth: depth, within: within)
+  ) -> Highlight {
+    guard let tree = makeParser(for: configuration.language).parse(text) else { return Highlight() }
+    return highlight(in: text, using: configuration, tree: tree, depth: depth, within: within)
   }
 
-  private static func spans(
+  private static func highlight(
     in text: String, using configuration: LanguageConfiguration, tree: MutableTree, depth: Int,
     within: NSRange?
-  ) -> [Span] {
-    guard let root = tree.rootNode else { return [] }
+  ) -> Highlight {
+    guard let root = tree.rootNode else { return Highlight() }
 
-    var colored: [Span] = []
+    var result = Highlight()
     /// The captures covering the one being read, innermost last.
     var open: [Span] = []
     if let highlights = configuration.queries[.highlights] {
@@ -200,6 +241,13 @@ enum SyntaxHighlighting {
           let enclosing = open.last
           let span: Span
           switch style {
+          case .banded(let fill):
+            // Nothing about the foreground, so it neither joins `open` nor ends what is open:
+            // the row is coloured by whatever is drawn on it, and this only says what goes
+            // behind. Deliberately last-wins with the rest, since a band is one row and rows
+            // do not nest.
+            result.bands.append((capture.range, fill))
+            continue
           case .plain:
             // The colour, and only the colour. Saying a range is punctuation says what it is,
             // not that whatever encloses it has stopped: the `**` around a bold word is still
@@ -219,49 +267,186 @@ enum SyntaxHighlighting {
             )
           }
           open.append(span)
-          colored.append(span)
+          result.spans.append(span)
         }
       }
     }
 
     guard depth < injectionDepth, let injections = configuration.queries[.injections]
-    else { return colored }
+    else { return result }
     let string = text as NSString
     let cursor = injections.execute(node: root, in: tree)
     if let within { cursor.setRange(within) }
     while let match = cursor.next() {
-      guard let content = match.captures(named: "injection.content").first else { continue }
+      let offset = contentOffset(of: injections.predicates(for: match.patternIndex))
+      let injection = Injection(
+        pieces: match.captures(named: "injection.content")
+          .map { moving($0.range, by: offset, within: string.length) }
+          .filter { $0.length > 0 }
+          .sorted { $0.location < $1.location })
+      guard !injection.isEmpty else { continue }
       // The range asked for, in the injected text's own offsets — and the fence that falls
       // outside it is not parsed at all, which is the whole of what makes a long Markdown file
-      // affordable. The cursor already dropped most of them; a match may still carry a content
-      // node that misses the range on its own.
+      // affordable. The cursor already dropped most of them; a match may still carry content
+      // that misses the range on its own.
       var nestedRange: NSRange?
       if let within {
-        let overlap = NSIntersectionRange(within, content.range)
-        guard overlap.length > 0 else { continue }
-        nestedRange = NSRange(
-          location: overlap.location - content.range.location, length: overlap.length)
+        guard let narrowed = injection.narrowed(to: within) else { continue }
+        nestedRange = narrowed
       }
-      // Either a capture whose *text* names the language — a fence's info string — or a
-      // directive that names it outright.
-      let named =
-        match.captures(named: "injection.language").first.map { string.substring(with: $0.range) }
-        ?? match.metadata["injection.language"]
-      guard let named, let nested = languageConfiguration(named: named) else { continue }
+      // Three ways a grammar says which language: a capture whose *text* names it — a fence's
+      // info string — a directive that names it outright, or a filename to read it off. That
+      // last is a diff's, which says what its payload is by naming the file it patches, and the
+      // question it asks is the one the extension table already answers. It only ever asks it
+      // for a patch carrying the `diff` line it was produced by: without one the grammar builds
+      // no hunks, so a bare `diff -u` is read as a frame and its payload left plain. Every patch
+      // git writes carries the line.
+      let nested =
+        match.captures(named: "injection.language").first
+        .map { string.substring(with: $0.range) }
+        .flatMap(languageConfiguration(named:))
+        ?? match.metadata["injection.language"].flatMap(languageConfiguration(named:))
+        ?? match.captures(named: "injection.filename").first
+        .map { filename(string.substring(with: $0.range)) }
+        .flatMap(languageConfiguration(forPath:))
+      guard let nested else { continue }
       // Appended after the host's, so where the two cover the same text the inner one wins.
-      for span in spans(
-        in: string.substring(with: content.range), using: nested, depth: depth + 1,
-        within: nestedRange)
-      {
-        colored.append(
-          (
-            NSRange(
-              location: content.range.location + span.range.location, length: span.range.length),
-            span.color, span.emphasis
-          ))
+      let inner = highlight(
+        in: injection.text(in: string), using: nested, depth: depth + 1, within: nestedRange)
+      for span in inner.spans {
+        for range in injection.ranges(of: span.range) {
+          result.spans.append((range, span.color, span.emphasis))
+        }
+      }
+      for band in inner.bands {
+        for range in injection.ranges(of: band.range) {
+          result.bands.append((range, band.color))
+        }
       }
     }
-    return colored
+    return result
+  }
+
+  /// An injection's text, cut out of its host and joined, and the map back.
+  ///
+  /// Most injections are one piece — a fenced block — and this is a substring. A diff's is one
+  /// piece per line: every line of a hunk that survives into the file it names, with the `+`,
+  /// the `-` or the leading space taken off. Those are one injection rather than one each,
+  /// because a grammar handed a single line gets its strings and comments wrong at both ends —
+  /// the same reason a commit's diff is coloured from the file's parse and not the hunk's. The
+  /// pieces need not be adjacent in the host, so a span coming back is placed by which of them
+  /// it fell in, and one crossing a join comes back as one range per piece.
+  private struct Injection {
+    /// The pieces' ranges in the host, in the order they are joined and in host order.
+    private let pieces: [NSRange]
+    /// Where each piece begins in the joined text. Same count as `pieces`.
+    private let starts: [Int]
+
+    init(pieces: [NSRange]) {
+      self.pieces = pieces
+      var starts: [Int] = []
+      var start = 0
+      for piece in pieces {
+        starts.append(start)
+        start += piece.length
+      }
+      self.starts = starts
+    }
+
+    var isEmpty: Bool { pieces.isEmpty }
+
+    func text(in string: NSString) -> String {
+      pieces.count == 1
+        ? string.substring(with: pieces[0])
+        : pieces.reduce(into: "") { $0 += string.substring(with: $1) }
+    }
+
+    /// Where `range`, in the joined text's own offsets, sits in the host.
+    func ranges(of range: NSRange) -> [NSRange] {
+      var found: [NSRange] = []
+      var index = firstPiece(endingAfter: range.location)
+      while index < pieces.count, starts[index] < NSMaxRange(range) {
+        let piece = pieces[index]
+        let overlap = NSIntersectionRange(
+          range, NSRange(location: starts[index], length: piece.length))
+        if overlap.length > 0 {
+          found.append(
+            NSRange(
+              location: piece.location + overlap.location - starts[index], length: overlap.length))
+        }
+        index += 1
+      }
+      return found
+    }
+
+    /// `within`, a range of the host, in the joined text's own offsets — nil when no piece of
+    /// this injection falls inside it.
+    func narrowed(to within: NSRange) -> NSRange? {
+      var start: Int?
+      var end: Int?
+      for (index, piece) in pieces.enumerated() {
+        let overlap = NSIntersectionRange(within, piece)
+        guard overlap.length > 0 else { continue }
+        let from = starts[index] + overlap.location - piece.location
+        if start == nil { start = from }
+        end = from + overlap.length
+      }
+      guard let start, let end else { return nil }
+      return NSRange(location: start, length: end - start)
+    }
+
+    /// The first piece whose end is past `location`, by bisection: a patch is one piece per
+    /// changed line, so walking them for every span coming back would be the file twice over.
+    private func firstPiece(endingAfter location: Int) -> Int {
+      var low = 0
+      var high = pieces.count
+      while low < high {
+        let middle = (low + high) / 2
+        if starts[middle] + pieces[middle].length <= location {
+          low = middle + 1
+        } else {
+          high = middle
+        }
+      }
+      return low
+    }
+  }
+
+  /// The path in a diff's `---` or `+++` line, which is not always the whole of what the grammar
+  /// calls its filename: a unified diff written by `diff -u` puts the file's timestamp after it,
+  /// separated by a tab, and that is where the format says the name ends. git never writes one,
+  /// so this is only ever the patch that came from somewhere else.
+  private static func filename(_ captured: String) -> String {
+    captured.prefix { $0 != "\t" }.description
+  }
+
+  /// The `#offset!` a pattern puts on its content, as a delta on each end of the range.
+  ///
+  /// A diff's injection uses it to take the marker off the head of every line and take the
+  /// newline back at the tail, which is what makes the joined lines read as a file rather than
+  /// as a run of statements. Only the column halves are honoured — a row delta would need the
+  /// line index and no vendored grammar asks for one — and they are read in the UTF-16 units the
+  /// rest of this file speaks rather than tree-sitter's bytes, which agree wherever what is
+  /// being stepped over is ASCII. A marker, a fence or a quote always is.
+  private static func contentOffset(of predicates: [SwiftTreeSitter.Predicate])
+    -> (start: Int, end: Int)
+  {
+    for predicate in predicates {
+      guard case .generic("offset!", let strings, let captures) = predicate,
+        captures.first == "injection.content", strings.count == 4,
+        let start = Int(strings[1]), let end = Int(strings[3])
+      else { continue }
+      return (start, end)
+    }
+    return (0, 0)
+  }
+
+  private static func moving(_ range: NSRange, by offset: (start: Int, end: Int), within limit: Int)
+    -> NSRange
+  {
+    let start = min(max(range.location + offset.start, 0), limit)
+    let end = min(max(NSMaxRange(range) + offset.end, start), limit)
+    return NSRange(location: start, length: end - start)
   }
 
   static func canHighlight(path: String) -> Bool {
@@ -277,7 +462,10 @@ enum SyntaxHighlighting {
     guard let layoutManager = textView.textLayoutManager,
       let contentManager = layoutManager.textContentManager
     else { return }
-    (layoutManager.delegate as? EmphasisTable)?.spans = []
+    (layoutManager.delegate as? EmphasisTable).map {
+      $0.spans = []
+      $0.bands = []
+    }
     layoutManager.setRenderingAttributes([:], for: contentManager.documentRange)
   }
 
@@ -346,6 +534,13 @@ enum SyntaxHighlighting {
     // reading one language's keys as keys and another's as strings was an accident of which
     // grammar names them how.
     case "string.special.key": return .marked(color: .systemTeal, adds: [])
+    // A patch's frame: which side of the change a row is on, painted behind it in the commit
+    // tab's own colours so the two readings of a diff in this window are one reading. The `!`
+    // row of a context diff is neither added nor removed but rewritten, which is the blue the
+    // editor's gutter already draws for that.
+    case "diff.plus": return .banded(CommitTheme.addedBand)
+    case "diff.minus": return .banded(CommitTheme.removedBand)
+    case "diff.delta": return .banded(NSColor.systemBlue.withAlphaComponent(0.12))
     // Not a highlight at all: a grammar marks the ranges a spell checker should look at.
     case "spell": return nil
     default: break
@@ -386,21 +581,52 @@ enum SyntaxHighlighting {
 /// which is the same line the colours already hold to.
 ///
 /// A fragment with nothing emphasised in it draws the stock way, so a source file costs nothing.
+///
+/// It is also where a band is painted, which is a patch's and nothing else's: a `+` row says
+/// which side of a change it is on, and its text says what the change *is* in the language being
+/// patched, so the side cannot also be the foreground colour. Painted here rather than into the
+/// storage because the buffer is exactly what `⌘S` writes, which is the same line the colours
+/// and the emphasis already hold to.
 final class EmphasisFragment: NSTextLayoutFragment {
   /// The emphasised ranges, in document UTF-16 offsets, read through the layout delegate that
   /// made this fragment. Looked up at draw time rather than copied, so a re-highlight is one
   /// table swap and a redraw.
   weak var table: EmphasisTable?
 
-  override func draw(at point: CGPoint, in context: CGContext) {
-    guard let table, !table.spans.isEmpty,
-      let contentManager = textLayoutManager?.textContentManager
-    else { return super.draw(at: point, in: context) }
+  private var textView: NSTextView? { textLayoutManager?.textContainer?.textView }
+
+  /// This fragment's range in document UTF-16 offsets, which is what both tables are keyed by.
+  private var extent: NSRange? {
+    guard let contentManager = textLayoutManager?.textContentManager else { return nil }
     let base = contentManager.offset(
       from: contentManager.documentRange.location, to: rangeInElement.location)
-    let extent = NSRange(
+    return NSRange(
       location: base,
       length: contentManager.offset(from: rangeInElement.location, to: rangeInElement.endLocation))
+  }
+
+  /// The fill behind this row. One band or none: rows do not nest, and a patch's grammar names
+  /// each of them once.
+  private var band: NSColor? {
+    guard let table, !table.bands.isEmpty, let extent else { return nil }
+    return table.bands.first { NSIntersectionRange($0.range, extent).length > 0 }?.color
+  }
+
+  /// A band reaches past the row's own text, which the transcript's fragment does to every
+  /// paragraph and this editor was built not to (see `makeEditorTextView`). So the widening is
+  /// asked for only where a band can land at all — a file whose grammar bands rows, which is a
+  /// patch — and every other file keeps the stock surface.
+  override var renderingSurfaceBounds: CGRect {
+    guard let table, !table.bands.isEmpty else { return super.renderingSurfaceBounds }
+    return super.renderingSurfaceBounds.union(bandSurface(in: textView))
+  }
+
+  override func draw(at point: CGPoint, in context: CGContext) {
+    if let band { fillBand(band, at: point, in: context, of: textView) }
+    guard let table, !table.spans.isEmpty, let extent,
+      let contentManager = textLayoutManager?.textContentManager
+    else { return super.draw(at: point, in: context) }
+    let base = extent.location
     let hits = table.spans.filter { NSIntersectionRange($0.range, extent).length > 0 }
     guard !hits.isEmpty else { return super.draw(at: point, in: context) }
 
@@ -462,6 +688,10 @@ final class EmphasisFragment: NSTextLayoutFragment {
 final class EmphasisTable: NSObject, NSTextLayoutManagerDelegate {
   /// The emphasised spans of the current highlight, in document UTF-16 offsets.
   var spans: [(range: NSRange, emphasis: SyntaxHighlighting.Emphasis)] = []
+  /// The banded rows of the current highlight, in the same offsets. Only a patch has any, and
+  /// whether there are any at all is also what decides the fragments' rendering surface — so
+  /// going from none to some has to be a relayout and not just a redraw, which is `SyntaxHighlighter`'s.
+  var bands: [SyntaxHighlighting.Band] = []
 
   func textLayoutManager(
     _ textLayoutManager: NSTextLayoutManager, textLayoutFragmentFor location: any NSTextLocation,
@@ -508,6 +738,9 @@ final class SyntaxHighlighter {
   /// added to what is already drawn rather than replacing it, since the rest of the file is on
   /// screen and must not go plain while the next slice is read.
   private var emphasised: [(range: NSRange, emphasis: SyntaxHighlighting.Emphasis)] = []
+
+  /// The bands, kept the same way and for the same reason.
+  private var banded: [SyntaxHighlighting.Band] = []
 
   /// How far past the visible text the *first* query reaches, in UTF-16 units — a screenful
   /// either side, floored so a very short pane does not ask for almost nothing. It decides how
@@ -651,13 +884,17 @@ final class SyntaxHighlighter {
       // itself rather than on a flag someone has to remember to clear: a tree that does not
       // match the buffer is one this comparison cannot return, so nothing can fall out of step.
       if box.parsed?.text != text { box.parsed = SyntaxHighlighting.parse(text, forPath: path) }
-      let spans =
+      let read =
         box.parsed.map { parsed in
-          slices.flatMap { SyntaxHighlighting.spans(of: parsed, within: $0) }
-        } ?? []
+          slices.reduce(into: SyntaxHighlighting.Highlight()) {
+            let slice = SyntaxHighlighting.highlight(of: parsed, within: $1)
+            $0.spans += slice.spans
+            $0.bands += slice.bands
+          }
+        } ?? SyntaxHighlighting.Highlight()
       DispatchQueue.main.async {
         guard let self, self.generation == generation else { return }
-        self.apply(spans, length: length, replacingAll: replacingAll)
+        self.apply(read, length: length, replacingAll: replacingAll)
         self.painted = covering
         guard covering != nil else { return }
         self.pending?.cancel()
@@ -671,16 +908,18 @@ final class SyntaxHighlighter {
   }
 
   private func apply(
-    _ spans: [SyntaxHighlighting.Span], length: Int, replacingAll: Bool
+    _ read: SyntaxHighlighting.Highlight, length: Int, replacingAll: Bool
   ) {
     guard let layoutManager = textView?.textLayoutManager,
       let contentManager = layoutManager.textContentManager
     else { return }
+    let spans = read.spans
     // Only a fresh read clears: a step of the fill is adding to a file that is already coloured
     // and on screen, and clearing there would take the colour off every line the reader is
     // looking at for as long as the next slice takes to arrive.
     if replacingAll {
       emphasised = []
+      banded = []
       guard let documentRange = textRange(in: contentManager, NSRange(location: 0, length: length))
       else { return }
       layoutManager.setRenderingAttributes([:], for: documentRange)
@@ -697,7 +936,20 @@ final class SyntaxHighlighter {
         emphasised.append((span.range, []))
       }
     }
-    (layoutManager.delegate as? EmphasisTable)?.spans = emphasised
+    let table = layoutManager.delegate as? EmphasisTable
+    table?.spans = emphasised
+    // Whether the file has bands at all is what the fragments' rendering surface is read off, and
+    // that is read once, when a fragment is laid out. So the first bands to arrive are a relayout
+    // — the fragments already standing were measured for a file that had none — while every later
+    // one is only a redraw, which the rendering attributes below already provoke.
+    let hadBands = !banded.isEmpty
+    banded += read.bands
+    table?.bands = banded
+    if !hadBands, !banded.isEmpty,
+      let documentRange = textRange(in: contentManager, NSRange(location: 0, length: length))
+    {
+      layoutManager.invalidateLayout(for: documentRange)
+    }
     for span in spans {
       guard let range = textRange(in: contentManager, span.range) else { continue }
       layoutManager.setRenderingAttributes([.foregroundColor: span.color], for: range)

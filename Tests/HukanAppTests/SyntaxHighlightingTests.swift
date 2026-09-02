@@ -106,6 +106,40 @@ final class SyntaxHighlightingTests: XCTestCase {
       "a fence far outside the window was parsed anyway")
   }
 
+  /// The same for an injection made of many pieces. A patch's hunk is one piece per line, joined
+  /// and parsed as one — so a window over the middle of it has to place what comes back on the
+  /// same lines the whole-file read placed it on, which is the join's map read backwards.
+  func testANarrowedQueryAgreesWithTheWholeFileInAPatch() throws {
+    let hunk = """
+      diff --git a/a.swift b/a.swift
+      --- a/a.swift
+      +++ b/a.swift
+      @@ -1,4 +1,4 @@
+       func f() -> Int {
+      -  let gone = "old"
+      +  let added = "new"
+         return 0
+       }
+
+      """
+    let source = String(repeating: hunk, count: 20)
+    let whole = SyntaxHighlighting.spans(in: source, forPath: "a.diff")
+    XCTAssertFalse(whole.isEmpty)
+    let window = NSRange(location: (source as NSString).length / 3, length: 400)
+    let narrowed = SyntaxHighlighting.spans(in: source, forPath: "a.diff", within: window)
+    XCTAssertLessThan(narrowed.count, whole.count, "the window did not narrow anything")
+    let inside = whole.filter {
+      $0.range.location >= window.location && NSMaxRange($0.range) <= NSMaxRange(window)
+    }
+    XCTAssertFalse(inside.isEmpty)
+    for span in inside {
+      XCTAssertTrue(
+        narrowed.contains {
+          $0.range == span.range && $0.color == span.color && $0.emphasis == span.emphasis
+        }, "\(span.range) came out differently when the query was narrowed")
+    }
+  }
+
   /// The kept parse and the one-shot are one code path with the parse lifted out, so asking a
   /// held tree for a window has to answer exactly what asking from the text would. This is what
   /// a scroll rides on: the buffer has not moved, so nothing about the answer may move either.

@@ -177,6 +177,10 @@ its emphasis drawn bold and italic — with a gutter carrying its changes agains
 solid while not. The bars measure the buffer, so an edit is marked as it is typed; hover one for
 the lines it replaced. Lines never wrap.
 
+A patch — `.diff`, `.patch`, `.rej` — reads as the file it patches: the payload of each hunk is
+colored as the language the patch names, with the added and removed rows carrying the commit
+tab's own bands behind them rather than a color of their own.
+
 A double-click takes the whole token — a hash, a path, a URL, an option — here and in the
 transcript alike, on a Japanese line as readily as an English one.
 

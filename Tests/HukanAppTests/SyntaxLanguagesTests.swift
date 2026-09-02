@@ -25,6 +25,19 @@ final class SyntaxLanguagesTests: XCTestCase {
     ("a.json", "{\"a\": 1, \"b\": [true, null]}\n"),
     ("a.yml", "key: value\nlist:\n  - one\n"),
     ("a.md", "# Heading\n\nsome text\n\n```swift\nlet x = 1\n```\n"),
+    (
+      "a.diff",
+      """
+      diff --git a/a.swift b/a.swift
+      index 1111111..2222222 100644
+      --- a/a.swift
+      +++ b/a.swift
+      @@ -1,3 +1,3 @@
+       let kept = 0
+      -let gone = 1
+      +let added = 2
+      """
+    ),
   ]
 
   func testEveryVendoredLanguageColours() {
@@ -48,6 +61,85 @@ final class SyntaxLanguagesTests: XCTestCase {
     XCTAssertFalse(
       SyntaxHighlighting.spans(in: "template <class T> class A {};\n", forPath: "a.h").isEmpty,
       "a C++ header has to read too, which is the whole reason .h is not C")
+  }
+
+  /// A patch says what its payload is by naming the file it patches, so the lines of a hunk have
+  /// to come back coloured as *that* language — Swift's `func` is a keyword and the diff grammar
+  /// has no idea of one.
+  func testAPatchIsColouredByTheLanguageItPatches() {
+    let source = """
+      diff --git a/a.swift b/a.swift
+      index 1111111..2222222 100644
+      --- a/a.swift
+      +++ b/a.swift
+      @@ -1,4 +1,4 @@
+       func f() -> Int {
+      -  let gone = "old"
+      +  let added = "new"
+         return 0
+       }
+      """
+    let text = source as NSString
+    let coloured = Set(
+      SyntaxHighlighting.spans(in: source, forPath: "a.diff").map { text.substring(with: $0.range) }
+    )
+    XCTAssertTrue(coloured.contains("func"), "the payload was not read as Swift")
+    XCTAssertTrue(coloured.contains("let"), "the payload was not read as Swift")
+    // Both sides: the addition rule builds the file as it will be, the deletion rule as it was.
+    // Swift's grammar captures a string's quotes apart from what is between them, so the content
+    // is what to look for — the two sides differ in nothing else.
+    XCTAssertTrue(coloured.contains("new"), "the added line was not coloured")
+    XCTAssertTrue(coloured.contains("old"), "the removed line was not coloured")
+    // The frame is still the diff's own.
+    XCTAssertTrue(coloured.contains("@@ -1,4 +1,4 @@"))
+  }
+
+  /// The lines of a hunk are one injection, not one each. A grammar handed a single line gets
+  /// its strings and comments wrong at both ends, so what is parsed is the lines joined — with
+  /// each marker taken off and each newline taken back, which is what `#offset!` says and what
+  /// makes the join read as a file. A comment opened on one line and closed on the next is the
+  /// cheapest proof: line by line, neither half is a comment.
+  func testAHunksLinesAreParsedTogether() {
+    let source = """
+      diff --git a/a.swift b/a.swift
+      --- a/a.swift
+      +++ b/a.swift
+      @@ -1,3 +1,3 @@
+      +/* opened here
+      +   and closed here */
+      +let after = 1
+      """
+    let text = source as NSString
+    let spans = SyntaxHighlighting.spans(in: source, forPath: "a.diff")
+    XCTAssertTrue(
+      spans.contains {
+        text.substring(with: $0.range).contains("and closed here */")
+          && $0.color == .secondaryLabelColor
+      }, "the second line of the comment was not read as part of it")
+    XCTAssertTrue(
+      spans.contains { text.substring(with: $0.range) == "let" },
+      "the line after the comment was not read as code")
+  }
+
+  /// Only a patch carrying the `diff` line it was produced by builds the hunks the injection
+  /// query reads, and that form is also the one that puts a timestamp after each filename — a
+  /// tab and then the time, which is where the format says the name ends. Read it whole and the
+  /// extension is the clock's.
+  func testAPatchsFilenameStopsAtItsTimestamp() {
+    let source = """
+      diff -u a.py b.py
+      --- a.py\t2026-09-02 10:00:00
+      +++ b.py\t2026-09-02 10:01:00
+      @@ -1,2 +1,2 @@
+      -x = 'old'
+      +y = "new"
+      """
+    let text = source as NSString
+    let coloured = Set(
+      SyntaxHighlighting.spans(in: source, forPath: "a.diff").map { text.substring(with: $0.range) }
+    )
+    XCTAssertTrue(coloured.contains("\"new\""), "the payload was not read as Python")
+    XCTAssertTrue(coloured.contains("'old'"), "the payload was not read as Python")
   }
 
   /// A fenced block is another language, and the grammar says so in `injections.scm`. Its code

@@ -22,9 +22,9 @@ set -eu
 # Markdown splits into block and inline — where `src` and `queries` are one level down.
 #
 # Three sources, because there is no one place that has them all: the tree-sitter organization
-# maintains most of these, the community `tree-sitter-grammars` organization has YAML and
-# Markdown (which the first has never had), and Swift's official grammar was archived in 2022,
-# so the live one is alex-pinkus's. That grammar is also the only one whose generated parser
+# maintains most of these, the community `tree-sitter-grammars` organization has YAML, Markdown
+# and diff (none of which the first has ever had), and Swift's official grammar was archived in
+# 2022, so the live one is alex-pinkus's. That grammar is also the only one whose generated parser
 # ships in a *release* rather than in the repository, which is why its URL is a release asset
 # and everything else is a tag archive.
 GRAMMARS="
@@ -33,6 +33,7 @@ bash|bash|v0.25.1|https://github.com/tree-sitter/tree-sitter-bash/archive/refs/t
 c|c|v0.24.2|https://github.com/tree-sitter/tree-sitter-c/archive/refs/tags/v0.24.2.tar.gz|
 cpp|cpp|v0.23.4|https://github.com/tree-sitter/tree-sitter-cpp/archive/refs/tags/v0.23.4.tar.gz|
 c-sharp|c_sharp|v0.23.5|https://github.com/tree-sitter/tree-sitter-c-sharp/archive/refs/tags/v0.23.5.tar.gz|
+diff|diff|v0.2.0|https://github.com/tree-sitter-grammars/tree-sitter-diff/archive/refs/tags/v0.2.0.tar.gz|
 go|go|v0.25.0|https://github.com/tree-sitter/tree-sitter-go/archive/refs/tags/v0.25.0.tar.gz|
 javascript|javascript|v0.25.0|https://github.com/tree-sitter/tree-sitter-javascript/archive/refs/tags/v0.25.0.tar.gz|
 json|json|v0.24.8|https://github.com/tree-sitter/tree-sitter-json/archive/refs/tags/v0.24.8.tar.gz|

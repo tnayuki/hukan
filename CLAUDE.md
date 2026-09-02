@@ -332,6 +332,29 @@ Workspace (one window)
   belong to somebody else is followed rather than ignored: a fenced block in Markdown is
   coloured as the language it names, and Markdown's emphasis is a second grammar again. A
   language named but not vendored is left plain.
+  **A patch is the case that says what an injection actually is.** A `.diff` opened here reads as
+  the file it patches: the grammar names the language by naming the file, so the extension table
+  answers it, and the rows of a hunk are cut out, joined and parsed *together* — a grammar handed
+  a single line gets its strings and comments wrong at both ends, the same reason a commit's diff
+  is coloured from the file's parse and not the hunk's. So an injection is a set of ranges rather
+  than one, and a span coming back is placed by which of them it fell in. What the join costs is
+  that it is approximate by construction: the hunks skip what lies between them, so the text
+  parsed is not any file that ever existed. Every editor that colours a patch takes that trade,
+  and there is no other on offer — a patch on disk has no file behind it to read instead.
+  **Which side a row is on is a band, not a colour.** They are two facts about one row — this
+  line was added, this line says `func` — and only one of them can be the foreground. The commit
+  tab settled that already, so a patch opened as a file takes the same reading and the same
+  colours, or one window would read a diff two ways. It costs a rendering surface that reaches
+  past the row's own text, which is what the transcript's fragment does to every paragraph and
+  what this editor was built not to; so it is asked for only in a file whose grammar bands rows
+  at all, and every other file keeps the stock surface. The band never enters the storage — the
+  buffer is exactly what `⌘S` writes, which is the line the colours already hold to — so unlike
+  the commit tab's, which reads a fill off an attribute in text hukan itself built, this one is
+  looked up in a table beside the document.
+  **Only a patch carrying the `diff` line it was produced by** is read this way: without one the
+  grammar builds no hunks and the payload is left plain. Every patch git writes carries the line,
+  which is what makes this worth having in a git-only app; a bare `diff -u` gets its frame
+  coloured and nothing else.
   **Bold and italic are drawn, not set.** A rendering attribute cannot carry a font — the
   advances were measured before it arrived — and putting the font in the storage instead would
   be the end of the document not knowing about highlighting. So emphasis is drawn over the
@@ -1130,18 +1153,18 @@ so its module map cannot collide with Clibgit2's in the shared products `include
 `SWIFT_INCLUDE_PATHS` points into that subdirectory). Adding a language is one line in the
 script's grammar list, one entry in `SyntaxHighlighting.grammars`, and a rerun.
 
-Sixteen parsers for fifteen languages — Swift, TypeScript, TSX, JavaScript, Python, Ruby, Rust,
-Go, C, C++, C#, shell, JSON, YAML and Markdown, the last of which is two grammars. **There is no
-one place that has them all**, which is the fact that shapes the script: most come from the
-tree-sitter organization, YAML and Markdown from the community `tree-sitter-grammars` one that
-has what the first never had, and Swift from alex-pinkus — the official Swift grammar was
+Seventeen parsers for sixteen languages — Swift, TypeScript, TSX, JavaScript, Python, Ruby, Rust,
+Go, C, C++, C#, shell, JSON, YAML, Markdown and diff, the second-to-last of which is two grammars.
+**There is no one place that has them all**, which is the fact that shapes the script: most come
+from the tree-sitter organization, YAML, Markdown and diff from the community
+`tree-sitter-grammars` one that has what the first never had, and Swift from alex-pinkus — the official Swift grammar was
 archived in 2022 and stopped at roughly Swift 5.5, so the live grammar is a community one and
 every editor that highlights Swift uses it. Swift is also the only one whose generated parser
 ships in a *release* rather than in the repository. Nobody's set is all from one place — Zed
 pulls eight of its twenty-two from outside the official one, two of them its own forks — so
 the script takes a source per grammar rather than a rule.
 
-**The committed archive is 43 MB.** C# and C++ are the two largest grammars, bigger even than
+**The committed archive is 44 MB.** C# and C++ are the two largest grammars, bigger even than
 Swift, and those three are half of it; JSON is 8 KB. That is the price of the decision, paid
 once: a grammar is a table, so it never changes between version bumps.
 
@@ -1289,7 +1312,9 @@ new PNGs before committing. The approval, question and task cards — real AppKi
 transcript's harness cannot reach — are pinned the same way by `CardSnapshotTests`, and the
 editor pane — highlighted source, gutter, every change-bar state — by `EditorSnapshotTests`
 (`editor.png`; eyeball it with `TEST_RUNNER_HUKAN_PREVIEW=editor`, which writes
-/tmp/hukan-preview-editor.png instead). The files panel's History section is pinned by
+/tmp/hukan-preview-editor.png instead). That suite has a second reference, `patch.png`
+(`…PREVIEW=patch`), because a patch is the same pane answering the same question differently —
+rows banded, the payload coloured by the language being patched — and one image cannot hold both. The files panel's History section is pinned by
 `HistorySnapshotTests` (`history.png`, `…PREVIEW=history`), drawn at the panel's minimum width
 because that is where a summary truncates, and the commit tab by `CommitSnapshotTests`
 (`commit.png`, `…PREVIEW=commit`), drawn through `present(_:sections:)` so the cards can be posed

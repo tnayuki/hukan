@@ -66,38 +66,46 @@ final class DiffBandFragment: NSTextLayoutFragment {
   weak var textView: NSTextView?
 
   override var renderingSurfaceBounds: CGRect {
-    super.renderingSurfaceBounds.union(
-      CGRect(
-        x: -layoutFragmentFrame.origin.x - leftReach, y: 0,
-        width: bandWidth + leftReach, height: layoutFragmentFrame.height))
+    super.renderingSurfaceBounds.union(bandSurface(in: textView))
   }
 
   override func draw(at point: CGPoint, in context: CGContext) {
-    if let fill {
-      context.saveGState()
-      context.setFillColor(fill.cgColor)
-      context.fill(
-        CGRect(
-          x: point.x - layoutFragmentFrame.origin.x - leftReach, y: point.y,
-          width: bandWidth + leftReach, height: layoutFragmentFrame.height))
-      context.restoreGState()
-    }
+    if let fill { fillBand(fill, at: point, in: context, of: textView) }
     super.draw(at: point, in: context)
   }
+}
 
-  /// How far left of the text container the band reaches: the container's own inset, so the band
-  /// meets the gutter's half of it (`CommitGutter`) instead of leaving a stripe of window
-  /// between two halves of one row.
-  private var leftReach: CGFloat {
-    (textView?.textContainerInset.width ?? 0) + (textView?.textContainer?.lineFragmentPadding ?? 0)
+/// The geometry of a full-width band behind one row, shared by the two fragments that draw one:
+/// a commit's diff, where every row is banded and the sign has been taken out of the text, and
+/// the editor's, where a patch's rows are banded and every other file's are not.
+///
+/// The band spans the view rather than the row, because the fragment's own frame is the width of
+/// its text — which is the ragged edge being avoided — and the container reports nothing usable
+/// at draw time. It reaches left of the container by the container's own inset, so the band meets
+/// the gutter's half of it instead of leaving a stripe of window between two halves of one row.
+extension NSTextLayoutFragment {
+  func fillBand(_ fill: NSColor, at point: CGPoint, in context: CGContext, of textView: NSTextView?)
+  {
+    context.saveGState()
+    context.setFillColor(fill.cgColor)
+    context.fill(bandSurface(in: textView).offsetBy(dx: point.x, dy: point.y))
+    context.restoreGState()
   }
 
-  private var bandWidth: CGFloat {
-    guard let textView else { return layoutFragmentFrame.width }
-    let padding = textView.textContainer?.lineFragmentPadding ?? 0
-    return max(
-      layoutFragmentFrame.width,
-      textView.bounds.width - textView.textContainerInset.width * 2 - padding * 2)
+  /// The band in the fragment's own coordinates, which is what a rendering surface is measured
+  /// in and what a draw offsets by its origin. Deliberately not folded into
+  /// `renderingSurfaceBounds` here: an override calls this and unions it with `super`'s, and
+  /// reading its own property to build it would be a loop.
+  func bandSurface(in textView: NSTextView?) -> CGRect {
+    let inset = textView?.textContainerInset.width ?? 0
+    let padding = textView?.textContainer?.lineFragmentPadding ?? 0
+    let reach = inset + padding
+    let width =
+      textView.map { max(layoutFragmentFrame.width, $0.bounds.width - inset * 2 - padding * 2) }
+      ?? layoutFragmentFrame.width
+    return CGRect(
+      x: -layoutFragmentFrame.origin.x - reach, y: 0, width: width + reach,
+      height: layoutFragmentFrame.height)
   }
 }
 

@@ -13,6 +13,9 @@ final class EditorSnapshotTests: XCTestCase {
   private static let reference = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .appendingPathComponent("Snapshots/editor.png")
+  private static let patchReference = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .appendingPathComponent("Snapshots/patch.png")
 
   private static let source = """
     import AppKit
@@ -47,6 +50,33 @@ final class EditorSnapshotTests: XCTestCase {
       14: Git.LineChanges.Bar(kind: .added, staged: false),
     ],
     deletions: [0: false, 12: true])
+
+  /// A patch, which the pane reads as two things at once: the diff's own frame — the command,
+  /// the index, the hunk's location — and, behind and inside the hunk's rows, the side each row
+  /// is on and what it says in the language being patched. What has to be visible here is that
+  /// the two do not fight: a green row's `func` is still pink, and the band is what carries the
+  /// `+`. The last hunk crosses the foot of the pane, which is where a band drawn to the row
+  /// rather than to the view would show its ragged edge.
+  private static let patch = """
+    diff --git a/Sources/Hukan/Renderer.swift b/Sources/Hukan/Renderer.swift
+    index 1a2b3c4..5d6e7f8 100644
+    --- a/Sources/Hukan/Renderer.swift
+    +++ b/Sources/Hukan/Renderer.swift
+    @@ -1,9 +1,10 @@
+     import AppKit
+
+     struct Renderer {
+    -  let name = "old"
+    +  let name = "editor"  // a trailing comment long enough to cross the right edge
+    +  var count: Int = 42
+
+       func render(scale: Double) -> Bool {
+    -    guard count > 0 else { return false }
+    +    guard count > 0, scale > 0 else { return false }
+         return true
+       }
+     }
+    """
 
   /// The card a hover opens, posed beside the run it belongs to.
   private static let peeked = Git.Hunk(
@@ -92,12 +122,56 @@ final class EditorSnapshotTests: XCTestCase {
     }
   }
 
+  /// The same pane showing a patch. Its own reference, because what it pins is a different
+  /// answer to the same question — a file whose grammar bands rows, against every file that has
+  /// none — and one image cannot hold both.
+  @MainActor
+  func testPatchMatchesSnapshot() throws {
+    let render = {
+      try self.render(
+        source: Self.patch, path: "change.diff", lineChanges: Git.LineChanges(), peek: nil)
+    }
+    if ProcessInfo.processInfo.environment["HUKAN_PREVIEW"] == "patch" {
+      let out = URL(fileURLWithPath: "/tmp/hukan-preview-patch.png")
+      try render().write(to: out)
+      print("preview: \(out.path)")
+      return
+    }
+    let actual = try render()
+    if ProcessInfo.processInfo.environment["HUKAN_RECORD"] == "1" {
+      try actual.write(to: Self.patchReference)
+      XCTFail("recorded patch snapshot — run again without HUKAN_RECORD to verify")
+      return
+    }
+    guard let expected = try? Data(contentsOf: Self.patchReference) else {
+      XCTFail(
+        "no reference at \(Self.patchReference.path) — record with TEST_RUNNER_HUKAN_RECORD=1 xcodebuild test"
+      )
+      return
+    }
+    if pixels(expected) != pixels(actual) {
+      let failed = FileManager.default.temporaryDirectory
+        .appendingPathComponent("hukan-snapshots/patch-actual.png")
+      try? FileManager.default.createDirectory(
+        at: failed.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try? actual.write(to: failed)
+      XCTFail(
+        "patch: rendered output differs from patch.png (actual written to \(failed.path);"
+          + " if the change is intended, re-record with TEST_RUNNER_HUKAN_RECORD=1 xcodebuild test)"
+      )
+    }
+  }
+
   /// Draw the editor stack offscreen. The views live in a real (never shown) window because
   /// the ruler only draws against a live scroll relationship — but the drawing itself is
   /// manual, fragment by fragment like `TranscriptPreview`: `cacheDisplay` on a windowless
   /// TextKit 2 text view comes back without the text.
   @MainActor
-  private func render() throws -> Data {
+  private func render(
+    source: String = EditorSnapshotTests.source, path: String = "editor.swift",
+    lineChanges: Git.LineChanges = EditorSnapshotTests.lineChanges,
+    peek: Git.Hunk? = EditorSnapshotTests.peeked
+  ) throws -> Data {
     let appearance = NSAppearance(named: .darkAqua)!
     NSApplication.shared.appearance = appearance
 
@@ -105,14 +179,14 @@ final class EditorSnapshotTests: XCTestCase {
     scrollView.hasVerticalScroller = false
     textView.textStorage?.setAttributedString(
       NSAttributedString(
-        string: Self.source,
+        string: source,
         attributes: [.font: monospace, .foregroundColor: NSColor.labelColor]))
 
     let gutter = EditorGutter(scrollView: scrollView, textView: textView)
     scrollView.verticalRulerView = gutter
     scrollView.hasVerticalRuler = true
     scrollView.rulersVisible = true
-    gutter.lineChanges = Self.lineChanges
+    gutter.lineChanges = lineChanges
 
     let size = NSSize(width: 520, height: 300)
     let window = NSWindow(
@@ -125,11 +199,15 @@ final class EditorSnapshotTests: XCTestCase {
     guard let layoutManager = textView.textLayoutManager,
       let contentManager = layoutManager.textContentManager
     else { throw XCTSkip("no TextKit 2 layout manager") }
+    // The bands go in before the layout: whether a file has any is what the fragments' own
+    // rendering surface is read off, and that is read once, when a fragment is laid out.
+    let read = SyntaxHighlighting.highlight(in: source, forPath: path)
+    (layoutManager.delegate as? EmphasisTable)?.bands = read.bands
     layoutManager.ensureLayout(for: layoutManager.documentRange)
 
     // The colors, through the channel the live highlighter uses.
     let start = contentManager.documentRange.location
-    for span in SyntaxHighlighting.spans(in: Self.source, forPath: "editor.swift") {
+    for span in read.spans {
       guard let from = contentManager.location(start, offsetBy: span.range.location),
         let to = contentManager.location(start, offsetBy: NSMaxRange(span.range)),
         let range = NSTextRange(location: from, end: to)
@@ -165,15 +243,17 @@ final class EditorSnapshotTests: XCTestCase {
         return true
       }
       // The peek card, posed where a hover over the modified run would put it.
-      let card = DiffPeekView(hunk: Self.peeked)
-      context.saveGState()
-      context.translateBy(x: -inset.width + 8, y: 150)
-      let cardContext = NSGraphicsContext(cgContext: context, flipped: true)
-      let previousCard = NSGraphicsContext.current
-      NSGraphicsContext.current = cardContext
-      card.draw(card.bounds)
-      NSGraphicsContext.current = previousCard
-      context.restoreGState()
+      if let peek {
+        let card = DiffPeekView(hunk: peek)
+        context.saveGState()
+        context.translateBy(x: -inset.width + 8, y: 150)
+        let cardContext = NSGraphicsContext(cgContext: context, flipped: true)
+        let previousCard = NSGraphicsContext.current
+        NSGraphicsContext.current = cardContext
+        card.draw(card.bounds)
+        NSGraphicsContext.current = previousCard
+        context.restoreGState()
+      }
 
       context.restoreGState()
     }
