@@ -20,17 +20,17 @@ extension NSAttributedString.Key {
 /// on, while the line's own syntax colours carry what it says, and a saturated fill would drown
 /// the second under the first.
 enum CommitTheme {
-  static let addedBand = NSColor.systemGreen.withAlphaComponent(0.13)
-  static let removedBand = NSColor.systemRed.withAlphaComponent(0.12)
+  static let addedBand = NSColor.systemGreen.withDynamicAlpha(0.13)
+  static let removedBand = NSColor.systemRed.withDynamicAlpha(0.12)
   /// A file card's header strip, behind the path and its counts.
   static let fileBand = NSColor.quaternaryLabelColor
   static let font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
   static let gutterFont = NSFont.monospacedDigitSystemFont(
     ofSize: NSFont.smallSystemFontSize, weight: .regular)
   /// What a search paints behind every occurrence of what it found.
-  static let match = NSColor.systemYellow.withAlphaComponent(0.35)
+  static let match = NSColor.systemYellow.withDynamicAlpha(0.35)
   /// The card: a quiet slab the window's material shows through, with its own hairline.
-  static let card = NSColor.textBackgroundColor.withAlphaComponent(0.35)
+  static let card = NSColor.textBackgroundColor.withDynamicAlpha(0.35)
 
   static func band(for kind: Git.FileDiff.Kind) -> NSColor? {
     switch kind {

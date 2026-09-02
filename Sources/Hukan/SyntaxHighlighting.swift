@@ -540,7 +540,7 @@ enum SyntaxHighlighting {
     // editor's gutter already draws for that.
     case "diff.plus": return .banded(CommitTheme.addedBand)
     case "diff.minus": return .banded(CommitTheme.removedBand)
-    case "diff.delta": return .banded(NSColor.systemBlue.withAlphaComponent(0.12))
+    case "diff.delta": return .banded(NSColor.systemBlue.withDynamicAlpha(0.12))
     // Not a highlight at all: a grammar marks the ranges a spell checker should look at.
     case "spell": return nil
     default: break

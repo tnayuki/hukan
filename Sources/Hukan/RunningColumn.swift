@@ -246,10 +246,11 @@ final class RunningColumnViewController: NSViewController {
     pillStack.translatesAutoresizingMaskIntoConstraints = false
     thinkingPill.wantsLayer = true
     thinkingPill.layer?.cornerRadius = 10
-    thinkingPill.layer?.backgroundColor =
-      NSColor.windowBackgroundColor.withAlphaComponent(0.92).cgColor
     thinkingPill.layer?.borderWidth = 1
-    thinkingPill.layer?.borderColor = NSColor.separatorColor.cgColor
+    thinkingPill.paintLayer = {
+      $0.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.92).cgColor
+      $0.borderColor = NSColor.separatorColor.cgColor
+    }
     thinkingPill.translatesAutoresizingMaskIntoConstraints = false
     thinkingPill.isHidden = true
     thinkingPill.addSubview(pillStack)
@@ -374,7 +375,7 @@ final class RunningColumnViewController: NSViewController {
   var highlightTerms: [String] = []
   /// A translucent wash rather than an opaque find-yellow, so the transcript's own text colour
   /// stays legible over it in both light and dark — no foreground override to undo on clear.
-  private static let matchHighlight = NSColor.systemYellow.withAlphaComponent(0.38)
+  private static let matchHighlight = NSColor.systemYellow.withDynamicAlpha(0.38)
 
   /// Re-highlight the current transcript for the live terms, scrolling to the first hit. Called
   /// when the query changes while a session is already open (no reattach, so `attach`'s own

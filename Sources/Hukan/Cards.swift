@@ -9,10 +9,31 @@ import AppKit
 /// never realizes attachment views, see the charter — but a card is a plain view, so it can).
 /// Grows to fit short content and caps at `maxHeight`, scrolling internally past that, so a long
 /// plan reads in place without shoving the composer off screen.
-final class ScrollBox: NSView {
+/// A card whose layer carries the app's own colours.
+///
+/// A `CALayer` holds a `CGColor`, which is a colour already resolved — so a catalog colour handed
+/// to one in an `init` freezes whatever appearance happened to be current at that moment, and the
+/// card keeps it for good. `updateLayer` is the drawing moment instead: AppKit puts the view's own
+/// appearance in force before calling it, and calls it again whenever that appearance changes. The
+/// same fault as the transcript's `withDynamicAlpha`, one layer down.
+class CardSurface: NSView {
+  /// The colours, and only the colours — a radius and a width are not appearance's business and
+  /// belong where the view is built. Called at every display, with the view's appearance in force.
+  var paintLayer: ((CALayer) -> Void)?
+
+  override var wantsUpdateLayer: Bool { true }
+
+  override func updateLayer() {
+    super.updateLayer()
+    if let layer { paintLayer?(layer) }
+  }
+}
+
+final class ScrollBox: CardSurface {
   private let content: NSAttributedString
   private let maxHeight: CGFloat
   private let inset: NSSize
+  private let bordered: Bool
   private lazy var heightConstraint = heightAnchor.constraint(equalToConstant: maxHeight)
 
   init(
@@ -22,6 +43,7 @@ final class ScrollBox: NSView {
     self.content = content
     self.maxHeight = maxHeight
     self.inset = inset
+    self.bordered = bordered
     let (scrollView, textView) = makeTranscriptTextView()
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
@@ -31,7 +53,7 @@ final class ScrollBox: NSView {
     if bordered {
       layer?.cornerRadius = 6
       layer?.borderWidth = 1
-      layer?.borderColor = NSColor.separatorColor.cgColor
+      paintLayer = { $0.borderColor = NSColor.separatorColor.cgColor }
     }
     textView.textContainerInset = inset
     textView.textStorage?.setAttributedString(content)
@@ -61,7 +83,7 @@ final class ScrollBox: NSView {
   }
 }
 
-final class ApprovalCard: NSView {
+final class ApprovalCard: CardSurface {
   private let onDecision: (Bool) -> Void
 
   init(approval: PendingApproval, onDecision: @escaping (Bool) -> Void) {
@@ -70,8 +92,11 @@ final class ApprovalCard: NSView {
     wantsLayer = true
     layer?.cornerRadius = 8
     layer?.borderWidth = 1
-    layer?.borderColor = NSColor.systemOrange.withAlphaComponent(0.5).cgColor
-    layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.08).cgColor
+    // Orange, because the card is stopped on a decision of yours.
+    paintLayer = {
+      $0.borderColor = NSColor.systemOrange.withAlphaComponent(0.5).cgColor
+      $0.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.08).cgColor
+    }
 
     let icon = NSImageView()
     icon.image = NSImage(
@@ -157,7 +182,7 @@ final class ApprovalCard: NSView {
 /// The card is redrawn from the session on every state change, so what is ticked and what is
 /// open live in `PendingQuestion` rather than in this view — a view holding them would lose them
 /// to any refresh that landed mid-answer.
-final class QuestionCard: NSView {
+final class QuestionCard: CardSurface {
   private let onAnswer: ([String]) -> Void
   private let onToggleOption: (Int) -> Void
   private let onTogglePreview: (Int) -> Void
@@ -181,8 +206,10 @@ final class QuestionCard: NSView {
     wantsLayer = true
     layer?.cornerRadius = 8
     layer?.borderWidth = 1
-    layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.5).cgColor
-    layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
+    paintLayer = {
+      $0.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.5).cgColor
+      $0.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
+    }
 
     let total = question.questions.count
     let progress = total > 1 ? "Question \(question.index + 1)/\(total)" : "Question"
@@ -345,7 +372,7 @@ final class QuestionCard: NSView {
 /// Quiet chrome on purpose. The cards below it — an approval, a question, the type-ahead — are
 /// things stopped on you; this one is the agent saying what it is doing, so it borrows the
 /// queued card's bordered grey rather than an orange or an accent that would read as a demand.
-final class TaskCard: NSView {
+final class TaskCard: CardSurface {
   private let onToggle: () -> Void
   private let header = NSStackView()
 
@@ -355,8 +382,11 @@ final class TaskCard: NSView {
     wantsLayer = true
     layer?.cornerRadius = 6
     layer?.borderWidth = 1
-    layer?.borderColor = NSColor.separatorColor.cgColor
-    layer?.backgroundColor = NSColor.quaternarySystemFill.cgColor
+    // The queued card's quiet grey: this one is the agent saying what it is doing, not a demand.
+    paintLayer = {
+      $0.borderColor = NSColor.separatorColor.cgColor
+      $0.backgroundColor = NSColor.quaternarySystemFill.cgColor
+    }
 
     let chevron = NSTextField(labelWithString: expanded ? "▾" : "▸")
     chevron.font = .systemFont(ofSize: 9)

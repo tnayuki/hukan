@@ -162,8 +162,9 @@ final class ComposerTextView: NSTextView, UndoStackOwner {
 }
 
 /// A view that shows the arrow cursor instead of inheriting the I-beam from the text it floats
-/// over — a pill floating over the transcript.
-final class ArrowCursorView: NSView {
+/// over — a pill floating over the transcript. A `CardSurface` because it is one: its layer
+/// carries catalog colours, which have to be re-resolved where they are drawn.
+final class ArrowCursorView: CardSurface {
   override func resetCursorRects() {
     addCursorRect(bounds, cursor: .arrow)
   }
