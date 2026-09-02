@@ -3,15 +3,23 @@ import XCTest
 
 @testable import Hukan
 
-/// The reader keeps their place in the conversation while the column changes width under them —
-/// through the real window, because that is where it went wrong. `ScrollAnchorTests` proves the
-/// anchor arithmetic on a bare text view; what it cannot see is the column's chrome, and the
-/// drift was AppKit's: `NSTextView` runs a live resize — the split view collapsing under a
-/// maximize, a divider drag — with its frame notifications switched off, so the handler that
-/// put the reader back never ran, and the reader was left at a point offset that now named
+/// The reader keeps their place in the conversation while the text moves under them — through
+/// the real window, because that is where it went wrong both times. `ScrollAnchorTests` proves
+/// the anchor arithmetic on a bare text view; what it cannot see is the column's chrome, and on
+/// a bare view `NSTextView` compensates for an insertion by itself, so neither failure shows
+/// there at all.
+///
+/// A width change was the first: `NSTextView` runs a live resize — the split view collapsing
+/// under a maximize, a divider drag — with its frame notifications switched off, so the handler
+/// that put the reader back never ran, and the reader was left at a point offset that now named
 /// another part of the text. And the text is re-wrapped only when the *container* moves, which
 /// under that resize is at the end rather than per frame, so a placement made on the frame's
 /// width was laid out against the old one.
+///
+/// Earlier conversation landing above them is the other, and it had a placement of its own that
+/// laid out only as far as the anchor. That pass read the geometry the document had before the
+/// insert, so the y it aimed at was the y the reader was already at and the scroll did nothing:
+/// they stayed where they stood, which was a whole slice further back in the conversation.
 final class TranscriptReaderTests: XCTestCase {
   /// A window on a session whose transcript is long enough for a re-wrap to move the reader by
   /// thousands of points, and wide enough that the maximize doubles its width.
@@ -135,5 +143,76 @@ final class TranscriptReaderTests: XCTestCase {
       NSRect(x: 0, y: -4000, width: 1600, height: 800), display: true, animate: true)
     RunLoop.current.run(until: Date().addingTimeInterval(0.8))
     XCTAssertEqual(topLine(of: scrollView, textView), line, "widened again")
+  }
+
+  /// A conversation long enough that opening it renders the tail and leaves the rest on disk, so
+  /// scrolling up pulls a slice in above the reader — the transcript hukan actually opens.
+  @MainActor
+  private func openWindowOnALazyConversation() throws -> (
+    NSWindow, NSScrollView, NSTextView, URL
+  ) {
+    let worktree = URL(fileURLWithPath: "/repo/hukan")
+    let workspace = RailPreviewTests.sampleWorkspace()
+    let session = try XCTUnwrap(workspace.sessions.first)
+    var lines: [String] = []
+    var parent = "root"
+    for index in 0..<900 {
+      let uuid = "u\(index)"
+      lines.append(
+        "{\"type\":\"assistant\",\"uuid\":\"\(uuid)\",\"parentUuid\":\"\(parent)\","
+          + "\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":"
+          + "\"record \(index) — a line of conversation long enough to wrap in this column\"}]}}")
+      parent = uuid
+    }
+    let url = ClaudeSessionStore.transcriptURL(id: session.id, worktree: worktree)
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+
+    let controller = WorkspaceWindowController(workspace: workspace)
+    let window = try XCTUnwrap(controller.window)
+    workspace.selectedWorktreeID = session.worktreeID
+    workspace.selectedSessionID = session.id
+    controller.reload()
+    window.setFrame(NSRect(x: 0, y: -4000, width: 1600, height: 800), display: true)
+    window.makeKeyAndOrderFront(nil)
+    controller.arrangeColumnsIfNeeded()
+    // The history is read off disk on a background queue; the pane lands at the bottom of it.
+    RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+    let textView = try XCTUnwrap(transcriptTextView(in: try XCTUnwrap(window.contentView)))
+    return (window, try XCTUnwrap(textView.enclosingScrollView), textView, url)
+  }
+
+  /// Scrolling up until the next slice of history lands must leave the reader on the line they
+  /// were reading — the slice goes in above them, and their place moves down with it.
+  @MainActor
+  func testTheReadersLineHoldsWhenEarlierConversationLands() throws {
+    let (window, scrollView, textView, url) = try openWindowOnALazyConversation()
+    defer {
+      window.close()
+      try? FileManager.default.removeItem(at: url)
+    }
+    let height = textView.frame.height
+    XCTAssertGreaterThan(height, 4000, "the rendered tail is a long transcript")
+
+    // Walk up towards the top, which is what asks for the slice before this one.
+    var landed = false
+    for _ in 0..<80 {
+      let line = topLine(of: scrollView, textView)
+      let before = textView.frame.height
+      scrollView.contentView.scroll(
+        to: NSPoint(x: 0, y: scrollView.documentVisibleRect.minY - 300))
+      scrollView.reflectScrolledClipView(scrollView.contentView)
+      let asked = topLine(of: scrollView, textView)
+      RunLoop.current.run(until: Date().addingTimeInterval(0.08))
+      if textView.frame.height > before {
+        landed = true
+        XCTAssertEqual(
+          topLine(of: scrollView, textView), asked,
+          "a slice landed above the reader and took their line with it (from \(line))")
+      }
+      if scrollView.documentVisibleRect.minY <= 0 { break }
+    }
+    XCTAssertTrue(landed, "the walk up never pulled a slice in — nothing was under test")
   }
 }

@@ -31,13 +31,27 @@ public struct TranscriptScrollAnchor: Equatable {
       within: top - fragment.layoutFragmentFrame.minY)
   }
 
-  /// Put the reader back on their own text.
+  /// Put the reader back on their own text — after a re-wrap, and after earlier conversation was
+  /// inserted *above* them, where the anchor's offset has already moved by the insertion's length.
   ///
   /// The whole document is laid out first, not just the part above the anchor: a narrower column
   /// makes the transcript taller, and a clip view clamps a scroll to the height the document view
   /// currently claims — so anchoring to the second half of a re-wrapped transcript lands short
   /// unless the new height is already known. That full pass is why this belongs on a width change
-  /// and not on every append.
+  /// and on a prefix landing, not on every append.
+  ///
+  /// **The prefix case had a bounded version of its own, and the bound is what made it wrong.**
+  /// It laid out only from the document's start through the anchor, on the grounds that
+  /// everything above the anchor is exactly what was inserted and the reader's own y is small.
+  /// It did the work — 25ms of it on a 900-record conversation — and then reported the geometry
+  /// the document had *before* the insert: `textLayoutFragment(for:)` handed back the anchor's
+  /// old frame and `usageBoundsForTextContainer` the old height, so the y it computed was the y
+  /// the reader was already at, and the scroll that followed was a no-op. They stayed exactly
+  /// where they stood, which was now a whole slice earlier in the conversation — the jump this
+  /// anchor exists to prevent, arriving from the one direction it was not being read for.
+  /// Invalidating that range first did not move it either. Only the pass over the whole document
+  /// does, and on the same conversation it cost 28ms against the 25 the bounded one spent to be
+  /// wrong.
   public func restore(in scrollView: NSScrollView, of textView: NSTextView) {
     guard let layout = textView.textLayoutManager, let content = layout.textContentManager,
       let location = content.location(content.documentRange.location, offsetBy: offset)
@@ -62,21 +76,6 @@ public struct TranscriptScrollAnchor: Equatable {
     if height != textView.frame.height {
       textView.setFrameSize(NSSize(width: textView.frame.width, height: height))
     }
-  }
-
-  /// Put the reader back after earlier conversation was inserted *above* them — the anchor's
-  /// offset already moved by the insertion's length. Unlike `restore` this lays out only from
-  /// the document's start through the anchor: everything above the anchor is exactly what was
-  /// inserted, the anchor's own y is small, and a full pass here would grow with each backward
-  /// load until scrolling through a long history froze the way opening it used to.
-  public func restoreAfterPrefixGrowth(in scrollView: NSScrollView, of textView: NSTextView) {
-    guard let layout = textView.textLayoutManager, let content = layout.textContentManager,
-      let location = content.location(content.documentRange.location, offsetBy: offset)
-    else { return }
-    if let head = NSTextRange(location: content.documentRange.location, end: location) {
-      layout.ensureLayout(for: head)
-    }
-    scroll(to: location, in: scrollView, of: textView)
   }
 
   private func scroll(

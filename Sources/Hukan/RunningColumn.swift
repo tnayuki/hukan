@@ -412,7 +412,7 @@ final class RunningColumnViewController: NSViewController {
     let moved = delegate.expandAllFolds(in: textView, preserving: anchor?.offset ?? 0)
     if let anchor {
       TranscriptScrollAnchor(offset: moved, within: anchor.within)
-        .restoreAfterPrefixGrowth(in: scrollView, of: textView)
+        .restore(in: scrollView, of: textView)
     }
     isRestoringAnchor = false
     scrollAnchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView)
@@ -568,8 +568,10 @@ final class RunningColumnViewController: NSViewController {
     // where they are first (the last scroll's anchor may already describe a mutated document),
     // insert, and put them back at the same character — now `inserted.length` further in. The
     // highlight pass re-runs so matches inside the new text get their wash too; it never
-    // scrolls. Layout is bounded to the inserted slice (see `restoreAfterPrefixGrowth`), which
-    // is what keeps a long upward scroll from re-buying the full-layout freeze slice by slice.
+    // scrolls. The placement is the same `restore` a re-wrap takes, whole-document layout and
+    // all — a pass bounded to the text above the reader reads the geometry the document had
+    // before the insert, and leaves them standing exactly where they were (see
+    // `TranscriptScrollAnchor.restore`).
     session?.onPrepend = { [weak self] inserted in
       guard let self, let storage = self.textView.textStorage else { return }
       let anchor = TranscriptScrollAnchor.capture(in: self.scrollView, of: self.textView)
@@ -578,7 +580,7 @@ final class RunningColumnViewController: NSViewController {
       self.applyTranscriptHighlight(scrollToFirst: false)
       if let anchor {
         TranscriptScrollAnchor(offset: anchor.offset + inserted.length, within: anchor.within)
-          .restoreAfterPrefixGrowth(in: self.scrollView, of: self.textView)
+          .restore(in: self.scrollView, of: self.textView)
       }
       self.isRestoringAnchor = false
       self.scrollAnchor = TranscriptScrollAnchor.capture(in: self.scrollView, of: self.textView)
