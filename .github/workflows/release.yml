@@ -53,6 +53,7 @@ jobs:
             -skip-testing:HukanAppTests/EmphasisTests/testEmphasisIsDrawnOnTheWordAndOnlyTheWord \
             -skip-testing:HukanAppTests/EmphasisTests/testItalicSlantsTheWordWithoutMovingIt \
             -skip-testing:HukanAppTests/TranscriptReaderTests/testTheBottomStaysTheBottomAcrossAMaximize \
+            -skip-testing:HukanAppTests/TranscriptReaderTests/testTheReadersLineHoldsAcrossAMaximize \
             > xcodebuild-test.log 2>&1
           status=$?
           R=$(ls -td .build/DerivedData/Logs/Test/*.xcresult 2>/dev/null | head -1)

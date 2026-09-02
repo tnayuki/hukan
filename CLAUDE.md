@@ -1344,8 +1344,9 @@ of it: the suites that already build their own 2× bitmap come back the right si
 differ, an eighth of the commit tab's pixels and nearly all of the command list's, because the
 runner's text rendering is not this machine's. A tolerance is the one answer this comparison
 refuses, so the workflow skips the pixel-pinned tests by name — the snapshot suites, the two
-emphasis tests that measure the same drawing, and the reader test that wants a window taller than
-the runner's screen. CI is the gate on the logic; the look stays the gate this machine keeps.
+emphasis tests that measure the same drawing, and the two reader tests that maximize a window
+larger than the runner's screen, which is constrained to fit it and so is not the width the
+maximize was measured against. CI is the gate on the logic; the look stays the gate this machine keeps.
 
 ### Verifying the GUI: AppleScript, not coordinates
 
