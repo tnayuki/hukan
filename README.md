@@ -136,8 +136,15 @@ a renamed file follows the new name, and one showing a deleted file closes. On t
 background the same menu makes a file at the worktree root.
 
 Dragging a file out of the panel onto the composer attaches it, the same way dropping one from
-the Finder does — the agent reads it from there, and the chip above the field carries its name. A directory does not drag; nor does it out to
-the Finder or another editor, which the same drag is good for.
+the Finder does — the agent reads it from there, and the chip above the field carries its name. The
+same drag is good out to the Finder or another editor, and a folder drags as well, though a folder
+never becomes a chip. Dropping files back onto the panel is the other direction: onto a folder row,
+or between rows, which means the folder those rows are in. Anything from outside is copied in; a
+row of the panel's own moves, which is the rename that carries directories done as a gesture, and
+⌥ copies it instead. An open tab follows the file wherever it lands, everything under a folder
+included. A name the destination already has gets the Finder's answer — Keep Both, Replace or Stop,
+with Apply to All when several collide — except for a folder, which is refused rather than
+replaced.
 
 Tabs are files (always editable source), commits (read-only), web tabs (one shared cookie store,
 passing as this machine's Safari) and terminals (named as Terminal.app names one). The plain

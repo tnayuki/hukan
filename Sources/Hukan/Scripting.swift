@@ -202,7 +202,9 @@ final class FoldCommand: NSScriptCommand {
 /// cannot assert. `menu` reads back the right-click menu a row would carry, for the same reason;
 /// `creating`/`folder`/`renaming`/`deleting` run what that menu does, and are guarded, since each
 /// of them stands in for a human's answer — a name typed on the row, or the alert before a
-/// delete.
+/// delete. `dropping … into …` is the drop, guarded for both halves of the same reason: the
+/// collision alert is a human's answer, and which of the two acts a drag is — `moving` — is
+/// otherwise only reachable by holding a modifier over a drag at coordinates.
 @objc(FilesPanelCommand)
 final class FilesPanelCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {
@@ -239,6 +241,22 @@ final class FilesPanelCommand: NSScriptCommand {
     if let path = argument("deleting", as: String.self) {
       guard guardedScriptingEnabled() else { return fail("guarded") }
       return panel.writeForScripting(delete: path)
+    }
+    if let paths = argument("dropping", as: [String].self) {
+      guard guardedScriptingEnabled() else { return fail("guarded") }
+      guard let directory = argument("into", as: String.self) else {
+        return fail("a directory is required")
+      }
+      let answer: FilesPanelViewController.DropAnswer
+      switch argument("answering", as: String.self) ?? "stop" {
+      case "keep both": answer = .keepBoth
+      case "replace": answer = .replace
+      case "stop": answer = .stop
+      default: return fail("answering is “keep both”, “replace” or “stop”")
+      }
+      return panel.writeForScripting(
+        drop: paths, into: directory, moving: argument("moving", as: Bool.self) ?? false,
+        answering: answer)
     }
     return panel.report
   }

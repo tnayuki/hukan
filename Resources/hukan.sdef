@@ -280,6 +280,18 @@
             <parameter name="deleting" code="Rmfl" type="text" optional="yes" description="delete this path, as the menu's Delete does (guarded)">
                 <cocoa key="deleting"/>
             </parameter>
+            <parameter name="dropping" code="Drop" type="list of text" optional="yes" description="POSIX paths dropped on the panel — copied into the destination, or moved when they are this worktree's own (guarded)">
+                <cocoa key="dropping"/>
+            </parameter>
+            <parameter name="into" code="Drin" type="text" optional="yes" description="the directory a drop lands in (empty text for the worktree root)">
+                <cocoa key="into"/>
+            </parameter>
+            <parameter name="moving" code="Drmv" type="boolean" optional="yes" description="read the drop as a move rather than a copy, the way a drag from this panel's own rows is">
+                <cocoa key="moving"/>
+            </parameter>
+            <parameter name="answering" code="Dran" type="text" optional="yes" description="what a name already taken is answered with — “keep both”, “replace” or “stop” (the default), standing in for the alert">
+                <cocoa key="answering"/>
+            </parameter>
             <result type="text"/>
         </command>
 

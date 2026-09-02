@@ -107,6 +107,11 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     case createdFolder(String)
     case renamed(from: String, to: String)
     case deleted(String)
+    /// Files a drop landed here, contents and all — a copy, or one either act replaced. Not
+    /// `created`: that one opens the file as a tab, which is right for a file you just made in
+    /// order to write in it and wrong for twenty arriving at once. What these do owe is a
+    /// re-read, since a tab may be showing a file whose contents have just been written over.
+    case copiedIn([String])
   }
 
   private let filterField = GestureSearchField()
@@ -279,10 +284,15 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     outline.onRename = { [weak self] in self?.renameSelected() }
     contextMenu.delegate = self
     outline.menu = contextMenu
-    // Copy, inside the window and out. An index must never be able to *move* the file it points
-    // at: the row is a reference to the file, not the file's home.
-    outline.setDraggingSourceOperationMask(.copy, forLocal: true)
+    // Out of the window it is a copy and only a copy: an index must never be able to *move* the
+    // file it points at somewhere hukan cannot see, since the row is a reference to the file and
+    // not the file's home. Inside the window a move is exactly what a drag means — the tree is
+    // the worktree, so landing a row in another directory is the rename that carries directories,
+    // read as a gesture rather than typed. ⌥ turns it back into a copy without a word here:
+    // AppKit intersects the modifier keys into the mask the destination is handed.
+    outline.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
     outline.setDraggingSourceOperationMask(.copy, forLocal: false)
+    outline.registerForDraggedTypes([.fileURL])
     outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
     listScroll.documentView = outline
     listScroll.hasVerticalScroller = true
@@ -1052,6 +1062,22 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     return delete(path) ?? "ok"
   }
 
+  /// A drop, with the drag session taken out: `paths` land in `directory` — copied, or moved when
+  /// they are this worktree's own — and a name already taken is answered with `answer` instead of
+  /// by the alert. Guarded like the rest, since that alert is a human's decision; what it buys is
+  /// a check of the two halves a screenshot cannot see, which of the two acts ran and where the
+  /// file ended up.
+  func writeForScripting(
+    drop paths: [String], into directory: String, moving: Bool, answering answer: DropAnswer
+  ) -> String {
+    loadViewIfNeeded()
+    let outcome = take(
+      paths.map { URL(fileURLWithPath: $0) }, into: directory, moving: moving,
+      answering: { _ in answer })
+    if let problem = outcome.problem { return problem }
+    return outcome.landed.isEmpty ? "stopped" : "ok \(outcome.landed.joined(separator: " "))"
+  }
+
   /// Type into the field and press Return.
   func searchForScripting(_ query: String) {
     loadViewIfNeeded()
@@ -1588,25 +1614,316 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
 
   // MARK: Dragging out
 
-  /// A file row drags as its own file URL, and that is the whole of the feature: the composer
-  /// already takes a file dropped from the Finder and turns it into an attachment chip, so a row
-  /// that writes the same thing needs nothing at the other end — dropping a file on the field
-  /// attaches it, and the agent reads it from the path the chip carries. Absolute for that
-  /// reason: the path is what goes to the engine, and it must not depend on where the engine is
-  /// standing.
+  /// A row drags as its own file URL, absolute — the path is what goes to the engine, and it must
+  /// not depend on where the engine is standing. That is the whole of "add this to the context":
+  /// the composer already takes a file dropped from the Finder and turns it into an attachment
+  /// chip, so a row that writes the same thing needs nothing at the other end.
   ///
-  /// Files only, the same rule that decides which rows have a tab to open — a directory has no
-  /// content to attach, and a chip for one would be a document icon in front of something that is
-  /// not a document. Unlike the rail's rows, which stand for a checkout and so refuse `.fileURL`
-  /// outright, these rows *are* files: the drag is good anywhere a file is, the Finder included,
-  /// and it is offered as a copy so nothing can drag the file out of the worktree.
+  /// Directories drag too, now that a drag back into the tree is a move: a folder that could not
+  /// be picked up would be a move that worked on half the rows. The rule it used to carry — no
+  /// attachment chip for a directory — did not survive being kept here anyway, since a folder
+  /// dragged out of the Finder walked straight past it; it lives at the composer, which is the
+  /// side that has the reason. Unlike the rail's rows, which stand for a checkout and so refuse
+  /// `.fileURL` outright, these rows *are* files: the drag is good anywhere a file is, the Finder
+  /// included, and outside this window it is offered as a copy so nothing can take the file out
+  /// of the worktree.
   func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any)
     -> NSPasteboardWriting?
   {
-    guard let pick = picked(item), let url = url(for: pick.path) else { return nil }
+    let path: String
+    switch item {
+    case let node as FileNode: path = node.relativePath
+    case let file as ResultFile: path = file.path
+    case let line as ResultLine: path = line.path
+    default: return nil
+    }
+    guard !path.isEmpty, let url = url(for: path) else { return nil }
     let entry = NSPasteboardItem()
     entry.setString(url.absoluteString, forType: .fileURL)
     return entry
+  }
+
+  // MARK: Dropping in
+
+  /// What a name the destination already has is answered with — the Finder's three, since a drop
+  /// is the Finder's gesture and this panel is where hukan runs it. `stop` answers the whole drop
+  /// rather than the one file, which is what the word means there too.
+  enum DropAnswer {
+    case keepBoth
+    case replace
+    case stop
+  }
+
+  /// Where a proposed drop lands, and the row that should light up for it: a directory row is the
+  /// destination, a file row means the directory it is in, the background is the worktree root.
+  /// The parent is read off the outline rather than looked up by path, because the lookup opens
+  /// the directories it walks through and a drag merely passing over a row must not unfold it.
+  private func dropDestination(for item: Any?) -> (directory: String, row: FileNode?)? {
+    switch item {
+    case nil: return ("", nil)
+    case let node as FileNode where node.isDirectory: return (node.relativePath, node)
+    case let node as FileNode:
+      return (
+        (node.relativePath as NSString).deletingLastPathComponent,
+        outlineParent(of: node)
+      )
+    default: return nil
+    }
+  }
+
+  private func outlineParent(of node: FileNode) -> FileNode? {
+    outline.parent(forItem: node) as? FileNode
+  }
+
+  /// The way back in: a row drags out as its file URL, and the same URL dropped on a row is that
+  /// file arriving. Two acts told apart by where the drag came from — a row of this panel moves,
+  /// anything else copies — which is the Finder's own reading, and the modifier keys arrive
+  /// already applied in `draggingSourceOperationMask`, so ⌥ over an internal drag is a copy and ⌘
+  /// over one from outside is refused rather than silently doing the other thing.
+  ///
+  /// Never onto a result list: those rows are hits rather than places, and a hit is not a
+  /// directory anything can land in.
+  func outlineView(
+    _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
+    proposedChildIndex index: Int
+  ) -> NSDragOperation {
+    guard let operation = proposedOperation(info, item: item) else { return [] }
+    // Retarget rather than refuse, the way the rail's reorder does: a drop *between* two rows is
+    // not a position in an order — the tree's order is the disk's, not anyone's — so it is read as
+    // a drop into the directory those rows are in.
+    outlineView.setDropItem(operation.row, dropChildIndex: NSOutlineViewDropOnItemIndex)
+    return operation.operation
+  }
+
+  func outlineView(
+    _ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int
+  ) -> Bool {
+    guard let proposed = proposedOperation(info, item: item) else { return false }
+    let outcome = take(
+      proposed.sources, into: proposed.directory, moving: proposed.operation.contains(.move),
+      answering: askingAboutNames())
+    if let problem = outcome.problem { report(problem) }
+    return !outcome.landed.isEmpty
+  }
+
+  /// What this drag would do if it were dropped where it is: the sources, the directory they would
+  /// land in, the row to light up, and which of the two acts it is. nil is "nothing here" — the
+  /// one answer both delegate methods share.
+  private func proposedOperation(_ info: NSDraggingInfo, item: Any?)
+    -> (sources: [URL], directory: String, row: FileNode?, operation: NSDragOperation)?
+  {
+    guard !isShowingResults, let worktree, let destination = dropDestination(for: item),
+      let sources = droppedFiles(from: info.draggingPasteboard)
+    else { return nil }
+    let root =
+      destination.directory.isEmpty
+      ? worktree.url : worktree.url.appendingPathComponent(destination.directory)
+    // Ours only when the rows came from this panel *and* every one of them is this worktree's:
+    // another window's panel is another checkout, and moving a file between two of them is a
+    // change to two worktrees at once with nothing to say which one it was.
+    let ours =
+      (info.draggingSource as? NSOutlineView) === outline
+      && sources.allSatisfy { relativePath(of: $0) != nil }
+    let operation = Self.dropOperation(
+      sources: sources, into: root, allowed: info.draggingSourceOperationMask, fromThisPanel: ours)
+    guard !operation.isEmpty else { return nil }
+    return (sources, destination.directory, destination.row, operation)
+  }
+
+  /// Which act a drag over `directory` is, as a rule with no drag session behind it — the shape
+  /// the rail's `dropBoundary` already takes, and for the same reason: the rule is the part worth
+  /// checking, and an `NSDraggingInfo` is not something a test can make.
+  ///
+  /// `allowed` is what the source offered narrowed by the modifier keys, so this only has to
+  /// choose within it. What it refuses outright is the pair of things a drop can never mean: a
+  /// directory landing inside itself, which a copy would follow for as long as the disk lasted,
+  /// and a move onto the directory the file is already in.
+  static func dropOperation(
+    sources: [URL], into directory: URL, allowed: NSDragOperation, fromThisPanel: Bool
+  ) -> NSDragOperation {
+    guard !sources.isEmpty else { return [] }
+    let root = resolved(directory)
+    guard !sources.contains(where: { root == resolved($0) || root.hasPrefix(resolved($0) + "/") })
+    else { return [] }
+    if fromThisPanel, allowed.contains(.move) {
+      guard !sources.contains(where: { resolved($0.deletingLastPathComponent()) == root }) else {
+        return []
+      }
+      return .move
+    }
+    return allowed.contains(.copy) ? .copy : []
+  }
+
+  /// A path with the symlinks taken out, which is what any two of them have to be compared as:
+  /// a worktree under `/tmp` is reached through one on this system, so the same directory arrives
+  /// spelt two ways depending on who wrote the URL.
+  private static func resolved(_ url: URL) -> String {
+    url.resolvingSymlinksInPath().path
+  }
+
+  /// `url` as a path relative to this worktree, or nil when it is somewhere else — which is also
+  /// what says a drag is this panel's own rather than another checkout's.
+  private func relativePath(of url: URL) -> String? {
+    guard let worktree else { return nil }
+    let root = Self.resolved(worktree.url)
+    let path = Self.resolved(url)
+    guard path.hasPrefix(root + "/") else { return nil }
+    return String(path.dropFirst(root.count + 1))
+  }
+
+  private func droppedFiles(from pasteboard: NSPasteboard) -> [URL]? {
+    guard
+      let urls = pasteboard.readObjects(
+        forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+      !urls.isEmpty
+    else { return nil }
+    return urls
+  }
+
+  /// The alert a name already taken raises: the Finder's three answers, and its Apply to All,
+  /// which is what makes dropping twenty files onto a directory holding some of them survivable.
+  /// Handed to the write as a closure so the write itself has no window in it — which is what
+  /// lets the guarded verb answer with a fixed word, the same seam the menu's writes use.
+  private func askingAboutNames() -> (String) -> DropAnswer {
+    var toAll: DropAnswer?
+    return { name in
+      if let toAll { return toAll }
+      let alert = NSAlert()
+      alert.alertStyle = .warning
+      alert.messageText = "An item named “\(name)” already exists in this location."
+      alert.informativeText =
+        "Keep Both lands it under a name of its own. Replacing cannot be undone."
+      alert.addButton(withTitle: "Keep Both")
+      alert.addButton(withTitle: "Replace").hasDestructiveAction = true
+      alert.addButton(withTitle: "Stop").keyEquivalent = "\u{1b}"
+      alert.showsSuppressionButton = true
+      alert.suppressionButton?.title = "Apply to All"
+      let answer: DropAnswer
+      switch alert.runModal() {
+      case .alertFirstButtonReturn: answer = .keepBoth
+      case .alertSecondButtonReturn: answer = .replace
+      default: answer = .stop
+      }
+      if alert.suppressionButton?.state == .on { toAll = answer }
+      return answer
+    }
+  }
+
+  /// The write behind a drop. Each source lands in `directory` under its own name; a name already
+  /// taken is `answer`'s to settle, and `stop` ends the drop rather than that one file, which is
+  /// what the word means in the Finder's version of this alert.
+  ///
+  /// A move reports itself as a rename, because that is what it is — the same act the name box
+  /// performs when what is typed carries a directory — and that is what makes an open tab follow
+  /// the file, subtree and all. A collision with a directory on either side is refused outright
+  /// rather than offered Replace: replacing a folder is deleting everything in it, and the one
+  /// place this panel destroys a directory is behind Delete's own alert.
+  private func take(
+    _ sources: [URL], into directory: String, moving: Bool, answering answer: (String) -> DropAnswer
+  ) -> (landed: [String], problem: String?) {
+    guard let worktree else { return ([], "no worktree") }
+    let root = directory.isEmpty ? worktree.url : worktree.url.appendingPathComponent(directory)
+    var landed: [String] = []
+    var moved: [(from: String, to: String)] = []
+    /// Every destination whose *contents* are new — a copy, or a file replaced by either act. A
+    /// tab may be showing one of them, so unlike a move these have to be re-read.
+    var written: [String] = []
+    var touched: Set<String> = [directory]
+    var problem: String?
+    func refuse(_ text: String) { problem = problem ?? text }
+
+    drop: for source in sources {
+      var sourceIsDirectory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: source.path, isDirectory: &sourceIsDirectory)
+      else {
+        refuse("“\(source.lastPathComponent)” is no longer there.")
+        continue
+      }
+      let from = relativePath(of: source)
+      guard
+        Self.dropOperation(
+          sources: [source], into: root, allowed: moving ? .move : .copy,
+          fromThisPanel: moving && from != nil) == (moving ? .move : .copy)
+      else {
+        refuse("“\(source.lastPathComponent)” cannot land there.")
+        continue
+      }
+      var name = source.lastPathComponent
+      var destination = root.appendingPathComponent(name)
+      var replacing = false
+      var destinationIsDirectory: ObjCBool = false
+      if FileManager.default.fileExists(
+        atPath: destination.path, isDirectory: &destinationIsDirectory)
+      {
+        guard !sourceIsDirectory.boolValue, !destinationIsDirectory.boolValue else {
+          refuse("“\(name)” already exists.")
+          continue
+        }
+        switch answer(name) {
+        case .stop: break drop
+        case .keepBoth:
+          name = Self.freeName(name, in: root)
+          destination = root.appendingPathComponent(name)
+        case .replace:
+          replacing = true
+        }
+      }
+      do {
+        if replacing { try FileManager.default.removeItem(at: destination) }
+        if moving {
+          try FileManager.default.moveItem(at: source, to: destination)
+        } else {
+          try FileManager.default.copyItem(at: source, to: destination)
+        }
+      } catch {
+        refuse(error.localizedDescription)
+        continue
+      }
+      let arrived = directory.isEmpty ? name : "\(directory)/\(name)"
+      landed.append(arrived)
+      if moving, let from {
+        moved.append((from: from, to: arrived))
+        touched.insert((from as NSString).deletingLastPathComponent)
+        if replacing { written.append(arrived) }
+      } else {
+        written.append(arrived)
+      }
+    }
+
+    // FSEvents drops hukan's own writes, so this is the only notice anything gets — the same
+    // hand-off the menu's writes take. A move names both ends, which on a directory is every
+    // file that went with it.
+    for move in moved { onFileEdit?(.renamed(from: move.from, to: move.to)) }
+    if !written.isEmpty { onFileEdit?(.copiedIn(written)) }
+    for touchedDirectory in touched {
+      worktree.index?.refreshNow(touchedDirectory)
+      if !touchedDirectory.isEmpty { diskTree?.listedNode(at: touchedDirectory)?.markStale() }
+    }
+    if !moved.isEmpty {
+      worktree.index?.update(moved: Set(moved.flatMap { [$0.from, $0.to] })) { [weak self] in
+        self?.pathsMoved($0)
+      }
+    }
+    if isDiskMode, editingPath == nil { redrawDisk() }
+    // The row is the whole of the report: no tab, since a drop is not a file you are about to
+    // write in and there may be twenty of them.
+    if let arrived = landed.last { reveal(path: arrived) }
+    return (landed, problem)
+  }
+
+  /// The Finder's Keep Both: `Model 2.swift`, the number before the extension — the same " 2"
+  /// `untitledName` already spells, said of a name that arrived with the file rather than one
+  /// hukan chose.
+  private static func freeName(_ name: String, in directory: URL) -> String {
+    let base = (name as NSString).deletingPathExtension
+    let extended = (name as NSString).pathExtension
+    var candidate = name
+    var counter = 2
+    while FileManager.default.fileExists(atPath: directory.appendingPathComponent(candidate).path) {
+      candidate = extended.isEmpty ? "\(base) \(counter)" : "\(base) \(counter).\(extended)"
+      counter += 1
+    }
+    return candidate
   }
 
   // MARK: Outline

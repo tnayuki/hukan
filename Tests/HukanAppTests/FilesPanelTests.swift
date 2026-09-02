@@ -302,11 +302,13 @@ final class FilesPanelTests: XCTestCase {
     return found
   }
 
-  /// A file row drags as its own file URL — which is all that "drop a file on the composer to
-  /// add it to the context" needed, since the field already takes a Finder drop. A directory has
-  /// no content to attach, so it does not drag at all.
+  /// Every row drags as its own file URL — which is all that "drop a file on the composer to
+  /// add it to the context" needed, since the field already takes a Finder drop. Directories drag
+  /// too, because a drag back into the tree is a move and a folder that could not be picked up
+  /// would be a move that worked on half the rows; what a folder must not become is an attachment
+  /// chip, which is the composer's refusal to make (see `AttachmentChipTests`).
   @MainActor
-  func testAFileRowDragsAsItsFileURLAndADirectoryDoesNot() throws {
+  func testEveryRowDragsAsItsFileURL() throws {
     let worktree = try makeWorktree(files: ["src/A.swift"])
     let panel = FilesPanelViewController()
     let window = host(panel)
@@ -317,7 +319,6 @@ final class FilesPanelTests: XCTestCase {
     outline.expandItem(outline.item(atRow: 0))
 
     var dragged: [String] = []
-    var refused = 0
     for row in 0..<outline.numberOfRows {
       let item = try XCTUnwrap(outline.item(atRow: row))
       let written = panel.outlineView(outline, pasteboardWriterForItem: item)
@@ -325,13 +326,15 @@ final class FilesPanelTests: XCTestCase {
         let text = entry.string(forType: .fileURL), let url = URL(string: text)
       {
         dragged.append(url.path)
-      } else {
-        refused += 1
       }
     }
 
-    XCTAssertEqual(dragged, [worktree.url.appendingPathComponent("src/A.swift").path])
-    XCTAssertEqual(refused, 1, "the src row is a directory and does not drag")
+    XCTAssertEqual(
+      dragged,
+      [
+        worktree.url.appendingPathComponent("src").path,
+        worktree.url.appendingPathComponent("src/A.swift").path,
+      ], "the directory and the file in it both drag")
 
     // The junction with the composer, which is the only part that could quietly not work: what
     // the row writes has to come back off a pasteboard as a file URL, because that is the exact

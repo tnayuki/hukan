@@ -266,17 +266,40 @@ Workspace (one window)
   word twice, and it charged the file 36pt to say it. The one thing that header carried alone —
   the dot for an unsaved edit — moved onto the tab, beside the ✕ that would discard it, which is
   where the state and the act that destroys it belong together.
-- **A file row drags out as a file URL, and that is the whole of "add this to the context".**
-  The composer already takes a file dropped from the Finder and turns it into an attachment chip
-  — the agent reads it from the path the chip carries — so the panel had only to write the same
-  thing a Finder drag writes, and dragging a row onto the field attaches it. The path is absolute
-  for that reason: it is what goes to the engine, and it must not depend on where the engine is
-  standing. Files only, the rule that already decides which rows have a tab to open. It is the
-  opposite call from the rail's rows, which stand for a checkout and so refuse `.fileURL`
-  outright — a repository row offered to the Finder would be a folder anyone could take, where
-  these rows *are* files, and being good in the Finder and in any editor is a side effect worth
-  having. Copy only, in and out of the window: an index must never be able to move the file it
-  points at.
+- **A row drags out as a file URL, and a file dropped on the panel is the same read from the
+  other side.** The composer already takes a file dropped from the Finder and turns it into an
+  attachment chip — the agent reads it from the path the chip carries — so the panel had only to
+  write the same thing a Finder drag writes, and dragging a row onto the field attaches it. The
+  path is absolute for that reason: it is what goes to the engine, and it must not depend on where
+  the engine is standing. It is the opposite call from the rail's rows, which stand for a checkout
+  and so refuse `.fileURL` outright — a repository row offered to the Finder would be a folder
+  anyone could take, where these rows *are* files, and being good in the Finder and in any editor
+  is a side effect worth having. **Directories drag too, and the rule that used to keep them from
+  it has moved to the composer**: a folder must not become an attachment chip, a chip standing for
+  a file the agent will read — but saying that at the row was saying it in the one place it could
+  not hold, since a folder dragged out of the Finder always walked straight past it, and a folder
+  that cannot be picked up is a move that works on half the rows.
+  **Out of the window it stays a copy; inside it, a drag is a move.** An index must never be able
+  to move the file it points at somewhere hukan cannot see, which is the half of that rule a
+  destination cannot enforce — but the tree *is* the worktree, so landing a row in another
+  directory is the rename that carries directories, read as a gesture rather than typed, and it
+  reports itself as one so an open tab follows the file, everything under a folder included. ⌥
+  turns it back into a copy with nothing spent on saying so, AppKit having already folded the
+  modifiers into the mask the destination is handed; a drag from another window's panel is another
+  checkout, and copies. A drop *between* two rows is retargeted onto the directory those rows are
+  in rather than refused — the rail's reorder idiom, and here there is not even an order to take a
+  position in, the tree's being the disk's. Never onto a result list, whose rows are hits rather
+  than places.
+  **A name the destination already has gets the Finder's three answers** — Keep Both, Replace,
+  Stop, with its Apply to All, since a drop is the Finder's gesture and this is the one place
+  hukan runs it; Keep Both spells `Model 2.swift`, the " 2" the untitled name already uses, with
+  the number before the extension. What is not offered is Replace for a *directory*, which is
+  deleting everything in it: the one place this panel destroys a directory is behind Delete's own
+  alert, so a folder whose name is taken is refused instead. Nor Merge, the one answer that leaves
+  no row afterwards saying which side won. **A dropped file opens no tab**, unlike one New File
+  makes — that one is a file you are about to write in, where a drop may be twenty at once, so the
+  row the panel selects is the whole of the report. What it does owe is a re-read of the
+  *contents* and not only of the name, since a file it replaced may be the one a tab is showing.
 - **An outside path opens inside the worktree that contains it.** One resolution for every
   hand-off — a Finder drop, the CLI helper, a terminal's `$EDITOR` file, the `edit` verb behind
   both: the deepest open worktree containing the path claims it, its repository is opened first
@@ -744,8 +767,8 @@ Workspace (one window)
   worktree narrows almost nothing, and opening every row of that was most of what a keystroke
   cost. So the opening is a budget spent in tree order, and what does not fit stays folded —
   which is the state a tree row is readable in anyway.
-- **The panel's right-click menu is the one place hukan writes to a worktree, and it writes files,
-  never the repository.** Open in a tab, Reveal in Finder, a terminal in the row's directory, Copy
+- **The panel's right-click menu is where hukan writes to a worktree — with the drop above the
+  other way in — and both write files, never the repository.** Open in a tab, Reveal in Finder, a terminal in the row's directory, Copy
   Path, then New File, New Folder, Rename and Delete. The path copies **two ways, as two items**:
   the relative one is what is wanted nearly every time — it is the unit a buffer is keyed by and
   the form a path is written in to an agent — and the absolute one was briefly its ⌥ alternate,

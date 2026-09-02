@@ -521,6 +521,13 @@ final class FileColumns {
     case .deleted(let path):
       desk.fileDeleted(worktreeID: worktree.id, path: path)
       written = [path]
+    case .copiedIn(let paths):
+      // No tab: a dropped file is not one you are about to write in, and a drop can be twenty at
+      // once — the row the panel selects is the whole of the report. Not `ownWrite` either: these
+      // are the one thing the panel writes whose *contents* a tab may already be showing, so a
+      // file replaced under an open tab has to be re-read the way an agent's write would be.
+      workspace.refreshFiles(worktreeID: worktree.id, moved: Set(paths))
+      return
     }
     workspace.refreshFiles(worktreeID: worktree.id, moved: written, ownWrite: true)
   }

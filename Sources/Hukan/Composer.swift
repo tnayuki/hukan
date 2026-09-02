@@ -105,7 +105,9 @@ final class ComposerTextView: NSTextView, UndoStackOwner {
 
   /// A cheap "would `droppablePaths` return something?" for menu validation — no temp file written.
   private func canDrop(from pasteboard: NSPasteboard) -> Bool {
-    if pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+    if let urls = pasteboard.readObjects(
+      forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+      urls.contains(where: { !Self.isDirectory($0) })
     {
       return true
     }
@@ -120,17 +122,30 @@ final class ComposerTextView: NSTextView, UndoStackOwner {
 
   /// File URLs on the pasteboard become their paths; a bare image becomes one temp-file path.
   /// nil means "nothing to hand off as a path" — let the text view do its normal thing.
-  private func droppablePaths(from pasteboard: NSPasteboard) -> [String]? {
+  ///
+  /// A directory is not one of them: a chip stands for a file the agent will open with its Read
+  /// tool, and a folder behind one would be a document icon in front of something that is not a
+  /// document. The refusal belongs here rather than at the files panel's rows, which is where it
+  /// used to live — the panel is one of several places a drag comes from, and a folder dragged
+  /// out of the Finder walked straight past it.
+  func droppablePaths(from pasteboard: NSPasteboard) -> [String]? {
     if let urls = pasteboard.readObjects(
       forClasses: [NSURL.self],
       options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty
     {
-      return urls.map(\.path)
+      let files = urls.filter { !Self.isDirectory($0) }
+      return files.isEmpty ? nil : files.map(\.path)
     }
     if let image = NSImage(pasteboard: pasteboard), let path = Self.writeTempImage(image) {
       return [path]
     }
     return nil
+  }
+
+  static func isDirectory(_ url: URL) -> Bool {
+    var directory: ObjCBool = false
+    return FileManager.default.fileExists(atPath: url.path, isDirectory: &directory)
+      && directory.boolValue
   }
 
   private static func writeTempImage(_ image: NSImage) -> String? {

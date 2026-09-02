@@ -81,4 +81,30 @@ final class AttachmentChipTests: XCTestCase {
       "the full path is the tooltip")
     XCTAssertLessThanOrEqual(chip.fittingSize.width, 160, "capped, so a handful still fit the row")
   }
+
+  /// A folder is not an attachment: the chip stands for a file the agent will open with its Read
+  /// tool, and a document glyph in front of a directory names nothing it can read. The refusal
+  /// lives here rather than at the files panel's rows — those drag folders now, because a drag
+  /// back into the tree is a move — and it always had to, since a folder dragged out of the
+  /// Finder never went past the panel at all.
+  @MainActor
+  func testAFolderIsNotSomethingTheFieldTakesOn() throws {
+    let textView = ComposerTextView()
+    let file = try write("Model.swift")
+    let folder = directory.appendingPathComponent("Sources")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let pasteboard = NSPasteboard(name: .init("dev.tnayuki.hukan.test-attach"))
+
+    pasteboard.clearContents()
+    pasteboard.writeObjects([folder as NSURL])
+    XCTAssertNil(
+      textView.droppablePaths(from: pasteboard),
+      "nothing to hand off, so the field does its own thing")
+
+    pasteboard.clearContents()
+    pasteboard.writeObjects([folder as NSURL, URL(fileURLWithPath: file) as NSURL])
+    XCTAssertEqual(
+      textView.droppablePaths(from: pasteboard), [file],
+      "a folder among files drops out; the files still land")
+  }
 }
