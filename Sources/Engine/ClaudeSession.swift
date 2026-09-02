@@ -745,14 +745,78 @@ final class ClaudeSession {
 /// A UUID without one cannot be resumed, so there is no point listing it in the overview.
 enum ClaudeSessionStore {
   static func directory(for worktree: URL) -> URL {
-    // /Users/x/src/github.com/y → -Users-x-src-github-com-y
-    // Dots are flattened too, not just slashes (github.com becomes github-com).
-    let encoded = worktree.standardizedFileURL.path
-      .replacingOccurrences(of: "/", with: "-")
-      .replacingOccurrences(of: ".", with: "-")
-    return FileManager.default.homeDirectoryForCurrentUser
+    FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".claude/projects")
-      .appendingPathComponent(encoded)
+      .appendingPathComponent(slug(for: worktree))
+  }
+
+  /// What Claude Code calls this directory — its rule, reproduced, not an approximation of it.
+  ///
+  /// It was read as "slashes and dots become dashes", which is what the paths on this machine
+  /// happen to look like and not what the CLI does: it replaces *every* non-alphanumeric
+  /// character, so an underscore, a space, a `+` or a kanji is a dash too. Nothing here has ever
+  /// held a path like that — until one does, and then the store hukan reads is a directory the
+  /// engine never writes into: no sessions on the rail, no resume, no transcript, no prompt
+  /// history, all at once and all silently, because a missing directory reads exactly like a
+  /// worktree nobody has run an agent in.
+  ///
+  /// The path is canonicalized first for the same reason. The engine's own name for its cwd is
+  /// whatever `getcwd(3)` hands it, which is always resolved — so a worktree opened through a
+  /// symlink is one hukan and the engine spell two ways. `/Volumes/Macintosh HD` is the case
+  /// that says it: it is a symlink to `/` on the volume booted from, and a real mount point with
+  /// a space in it when booted from another, so a path under it disagrees with the engine
+  /// whichever disk started the machine. `realpath` rather than `resolvingSymlinksInPath`, which
+  /// *strips* `/private` and so hands back the one spelling `getcwd` never gives — the lesson
+  /// `Workspace.canonicalPath` learned first, and `worktree(atRoot:)` after it. A path that is
+  /// no longer there has no canonical form, so what was asked for stands.
+  ///
+  /// And then composed, because the engine composes: APFS stores the bytes it was handed and
+  /// gives them back, so a directory written decomposed — which is what a checkout of a tree
+  /// carrying decomposed names produces, and what HFS+ produced for everything — comes out of
+  /// `realpath` as `か` + a combining mark, where the engine's key has the one `が`. Two dashes
+  /// against one, from a difference no filesystem lets you see: the two names open the same
+  /// directory, APFS being insensitive to the distinction it preserves. Measured rather than
+  /// assumed, since the engine's own state record composes `cwd` and hukan cannot tell from that
+  /// alone whether the key is built before or after.
+  static func slug(for worktree: URL) -> String {
+    encodedPath(canonicalPath(worktree).precomposedStringWithCanonicalMapping)
+  }
+
+  /// Past this many characters the name is cut and a hash of the whole path put on the end, so
+  /// that two deep worktrees sharing a long prefix cannot land on one directory.
+  private static let slugLimit = 200
+
+  /// The encoding itself. Walked as UTF-16 because that is what the CLI's `replace` and
+  /// `charCodeAt` walk: a character outside the BMP is two units there, and so two dashes.
+  static func encodedPath(_ path: String) -> String {
+    var scalars = String.UnicodeScalarView()
+    for unit in path.utf16 {
+      let isAlphanumeric =
+        (unit >= 48 && unit <= 57) || (unit >= 65 && unit <= 90) || (unit >= 97 && unit <= 122)
+      scalars.append(isAlphanumeric ? Unicode.Scalar(unit)! : "-")
+    }
+    let encoded = String(scalars)
+    guard encoded.count > slugLimit else { return encoded }
+    return "\(encoded.prefix(slugLimit))-\(pathHash(path))"
+  }
+
+  /// The CLI's hash, which is `hash * 31 + c` over 32 signed bits, base 36. Taken over the
+  /// *unencoded* path — the same string the encoding walked, canonicalized and composed, that
+  /// being the one a collision would be between. The wrapping operators are the point:
+  /// JavaScript's `| 0` truncates where Swift would trap, and `Int32.min` has a magnitude
+  /// `Int32` cannot hold, which is why the absolute value is taken as `UInt32`.
+  private static func pathHash(_ path: String) -> String {
+    var value: Int32 = 0
+    for unit in path.utf16 { value = (value << 5) &- value &+ Int32(unit) }
+    return String(UInt32(value.magnitude), radix: 36)
+  }
+
+  /// What the filesystem calls this directory, or what was asked for if there is nothing there.
+  private static func canonicalPath(_ worktree: URL) -> String {
+    let path = worktree.standardizedFileURL.path
+    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+    guard realpath(path, &buffer) != nil else { return path }
+    return String(cString: buffer)
   }
 
   /// How a session id is spelt on Claude Code's side: lower case, the way the CLI spells the ids
