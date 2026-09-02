@@ -47,7 +47,7 @@ private final class ToolbarInsetViewController: NSViewController {
 }
 
 final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSWindowRestoration,
-  NSToolbarDelegate, NSMenuItemValidation
+  NSToolbarDelegate, NSToolbarItemValidation, NSMenuItemValidation
 {
   static let windowIdentifier = NSUserInterfaceItemIdentifier("dev.tnayuki.hukan.workspace")
   static private(set) var all: [WorkspaceWindowController] = []
@@ -910,9 +910,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // needs no such care: the row leaves as the column starts going.
     let shown = isFilesPanelVisible && !isRevealingFilesPanel
     filesFilterToolbarItem?.isHidden = !shown
+    // Whether these two are *enabled* is deliberately not written here — see
+    // `validateToolbarItem`, which the bar asks and which overwrites anything set from outside.
     if let filesScopeToolbarItem {
       filesScopeToolbarItem.isHidden = !shown
-      filesScopeToolbarItem.isEnabled = files.panel.canScopeToChanged
       filesScopeToolbarItem.toolTip = files.panel.scopeToolTip
       // The image, not the button's state: an image item's view is AppKit's own and is not
       // handed back through `view`, so the scope says it is on by wearing the accent colour.
@@ -920,9 +921,6 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     if let historyToolbarItem {
       historyToolbarItem.isHidden = !shown
-      // Nothing committed in this worktree means nothing to fold — the glyph goes grey rather
-      // than toggling a section that is not drawn, the same way the ± does with nothing changed.
-      historyToolbarItem.isEnabled = files.hasHistory
       historyToolbarItem.toolTip =
         files.hasHistory
         ? (files.isHistoryVisible ? "Hide History" : "Show History")
@@ -931,6 +929,34 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     guard let filesToolbarItem else { return }
     filesToolbarItem.toolTip = shown ? "Hide Files" : "Show Files"
+  }
+
+  /// Whether an item in the bar can be pressed — asked for rather than set, which is the one
+  /// difference between this and the menu's validation below.
+  ///
+  /// A toolbar autovalidates its visible items on every pass of the run loop, and an image item
+  /// with a target answers that by enabling itself whenever the target merely responds to the
+  /// action. So an `isEnabled` written in `updateFilesToolbarItem` was true again before the
+  /// click that followed it: the ± and the History glyph drew plain and stayed pressable with
+  /// nothing to scope to and nothing to fold. The `isHidden` beside them went on working, being a
+  /// property the validation does not touch, which is what made the two look alike. The items
+  /// hosting a view — the two filters, the readouts — never arrive here at all: AppKit leaves a
+  /// custom view's item exactly as it was set.
+  ///
+  /// Nothing changed in this worktree is nothing to scope to, and nothing committed is nothing to
+  /// fold; the glyph goes grey rather than toggling a section that is not drawn. What is grey
+  /// here is never accented — a scope whose changed set has emptied lets go of itself in
+  /// `refresh`, and a section with nothing to show is collapsed — so the two states cannot
+  /// disagree in the one direction the palette-coloured symbol could not draw.
+  func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+    switch item.action {
+    case #selector(toggleFilesScope(_:)):
+      return files.panel.canScopeToChanged
+    case #selector(toggleHistorySection(_:)):
+      return files.hasHistory
+    default:
+      return true
+    }
   }
 
   /// The History glyph, accented while the section is open — the ± convention, next to it.
