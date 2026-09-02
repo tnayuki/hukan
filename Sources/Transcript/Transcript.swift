@@ -52,6 +52,12 @@ public enum Transcript {
   }
 
   /// Apply `style` across every paragraph of `text`, in place.
+  /// Built once. A dynamic colour is a fresh object every time it is made and does not compare
+  /// equal to its twin, and the streaming render is checked against the whole render attribute by
+  /// attribute — so these have to be the same instance, not the same recipe.
+  private static let blockquoteFill = NSColor.quaternarySystemFill.withDynamicAlpha(0.25)
+  private static let blockquoteAccent = NSColor.controlAccentColor.withDynamicAlpha(0.45)
+
   static func applyBlock(_ style: BlockStyle, to text: NSMutableAttributedString) {
     let string = text.string as NSString
     var ranges: [NSRange] = []
@@ -341,8 +347,7 @@ public enum Transcript {
     return slab(
       text,
       BlockStyle(
-        fill: .quaternarySystemFill.withAlphaComponent(0.25),
-        accent: .controlAccentColor.withAlphaComponent(0.45),
+        fill: blockquoteFill, accent: blockquoteAccent,
         indent: 16))
   }
 

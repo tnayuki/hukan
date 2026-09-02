@@ -141,8 +141,8 @@ final class TableLayout {
   // the row seam carried by the shade change, and one hairline weight for the header rule and the
   // outer frame.
   private let headerFill = NSColor.tertiarySystemFill
-  private let rowFill = NSColor.quaternarySystemFill.withAlphaComponent(0.25)
-  private let altRowFill = NSColor.quaternarySystemFill.withAlphaComponent(0.45)
+  private static let rowFill = NSColor.quaternarySystemFill.withDynamicAlpha(0.25)
+  private static let altRowFill = NSColor.quaternarySystemFill.withDynamicAlpha(0.45)
   private let ruleColor = NSColor.separatorColor
 
   init(header: [NSAttributedString], rows: [[NSAttributedString]], available: CGFloat) {
@@ -387,7 +387,8 @@ final class TableLayout {
     frame.addClip()
     var y: CGFloat = 0
     for (index, height) in rowHeights.enumerated() {
-      let fill = index == 0 ? headerFill : ((index - 1).isMultiple(of: 2) ? rowFill : altRowFill)
+      let body = (index - 1).isMultiple(of: 2) ? Self.rowFill : Self.altRowFill
+      let fill = index == 0 ? headerFill : body
       fill.setFill()
       NSBezierPath(rect: CGRect(x: 0, y: y, width: size.width, height: height)).fill()
       y += height
