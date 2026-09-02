@@ -101,40 +101,17 @@ final class HistorySnapshotTests: XCTestCase {
     panel.show(history: Self.history)
 
     let size = NSSize(width: Self.width, height: Self.height)
-    let window = NSWindow(
-      contentRect: NSRect(origin: .zero, size: size), styleMask: .borderless,
-      backing: .buffered, defer: false)
-    window.appearance = appearance
+    let window = SnapshotSurface.window(size: size, appearance: appearance)
     window.contentView = panel.view
     panel.view.layoutSubtreeIfNeeded()
 
-    let scale: CGFloat = 2
-    guard
-      let rep = NSBitmapImageRep(
-        bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale),
-        pixelsHigh: Int(size.height * scale), bitsPerSample: 8, samplesPerPixel: 4,
-        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0,
-        bitsPerPixel: 0),
-      let context = NSGraphicsContext(bitmapImageRep: rep)
-    else { throw XCTSkip("no bitmap for the section") }
-    rep.size = size
-    context.cgContext.scaleBy(x: scale, y: scale)
-
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = context
-    appearance.performAsCurrentDrawingAppearance {
+    return SnapshotSurface.png(size: size, appearance: appearance) { context in
       // What sits behind the panel in the app: the window's background, since the panel's own is
       // the window server's material.
       NSColor.windowBackgroundColor.setFill()
       NSRect(origin: .zero, size: size).fill()
       panel.view.displayIgnoringOpacity(panel.view.bounds, in: context)
     }
-    NSGraphicsContext.restoreGraphicsState()
-
-    guard let png = rep.representation(using: .png, properties: [:]) else {
-      fatalError("could not encode a PNG")
-    }
-    return png
   }
 
   private func pixels(_ png: Data) -> [Data] {

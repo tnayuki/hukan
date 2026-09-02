@@ -41,7 +41,7 @@ final class CardSnapshotTests: XCTestCase {
       input: ["plan": plan])
     let card = ApprovalCard(approval: approval, onDecision: { _ in })
 
-    try compare(imageOfView(card, width: 380), named: "exit-plan-card")
+    try compare(pngOfView(card, width: 380), named: "exit-plan-card")
   }
 
   /// The task card, opened: the count and what is in flight on the folded row, and under it
@@ -70,7 +70,7 @@ final class CardSnapshotTests: XCTestCase {
     ]
     let card = TaskCard(tasks: tasks, expanded: true, onToggle: {})
 
-    try compare(imageOfView(card, width: 320), named: "task-card")
+    try compare(pngOfView(card, width: 320), named: "task-card")
   }
 
   /// The question card at its fullest: a multi-select question, two options ticked, and two
@@ -120,7 +120,7 @@ final class CardSnapshotTests: XCTestCase {
     let card = QuestionCard(
       question: question, onAnswer: { _ in }, onToggleOption: { _ in }, onTogglePreview: { _ in })
 
-    try compare(imageOfView(card, width: 380), named: "question-card")
+    try compare(pngOfView(card, width: 380), named: "question-card")
   }
 
   // MARK: harness
@@ -128,7 +128,7 @@ final class CardSnapshotTests: XCTestCase {
   /// Host `view` in an offscreen window at `width`, on the app's own dark backdrop with `padding`
   /// around it (the card is a translucent orange over that background, so it washes out captured
   /// against nothing), laid out under the dark appearance, and capture it at its fitted height.
-  private func imageOfView(_ view: NSView, width: CGFloat, padding: CGFloat = 16) -> NSImage {
+  private func pngOfView(_ view: NSView, width: CGFloat, padding: CGFloat = 16) -> Data {
     let appearance = NSAppearance(named: .darkAqua)!
     NSApplication.shared.appearance = appearance
 
@@ -142,10 +142,7 @@ final class CardSnapshotTests: XCTestCase {
       view.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
       view.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
     ])
-    let window = NSWindow(
-      contentRect: container.frame, styleMask: .borderless,
-      backing: .buffered, defer: false)
-    window.appearance = appearance
+    let window = SnapshotSurface.window(contentRect: container.frame, appearance: appearance)
     window.contentView = container
     // A ScrollBox sizes itself in layout(), so settle the width, then read the card's height.
     container.layoutSubtreeIfNeeded()
@@ -158,18 +155,13 @@ final class CardSnapshotTests: XCTestCase {
     container.layoutSubtreeIfNeeded()
 
     let bounds = container.bounds
-    guard let rep = container.bitmapImageRepForCachingDisplay(in: bounds) else {
-      fatalError("no bitmap rep for the card")
+    return SnapshotSurface.png(size: bounds.size, appearance: appearance) { context in
+      container.displayIgnoringOpacity(bounds, in: context)
     }
-    container.cacheDisplay(in: bounds, to: rep)
-    let image = NSImage(size: bounds.size)
-    image.addRepresentation(rep)
-    return image
   }
 
-  private func compare(_ image: NSImage, named name: String) throws {
+  private func compare(_ actual: Data, named name: String) throws {
     let reference = Self.snapshotsDir.appendingPathComponent("\(name).png")
-    let actual = pngData(image)
     if ProcessInfo.processInfo.environment["HUKAN_RECORD"] == "1" {
       try FileManager.default.createDirectory(
         at: Self.snapshotsDir, withIntermediateDirectories: true)
@@ -188,16 +180,6 @@ final class CardSnapshotTests: XCTestCase {
       try? actual.write(to: failed)
       XCTFail("\(name): differs from the reference (actual at \(failed.path))")
     }
-  }
-
-  private func pngData(_ image: NSImage) -> Data {
-    guard let tiff = image.tiffRepresentation,
-      let rep = NSBitmapImageRep(data: tiff),
-      let png = rep.representation(using: .png, properties: [:])
-    else {
-      fatalError("could not encode a PNG")
-    }
-    return png
   }
 
   private func pixels(_ png: Data) -> [Data] {

@@ -108,10 +108,8 @@ final class CompletionSnapshotTests: XCTestCase {
     let appearance = NSAppearance(named: .darkAqua)!
     NSApplication.shared.appearance = appearance
 
-    let host = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 200), styleMask: .borderless,
-      backing: .buffered, defer: false)
-    host.appearance = appearance
+    let host = SnapshotSurface.window(
+      size: NSSize(width: Self.width, height: 200), appearance: appearance)
     let anchor = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 64))
     host.contentView = anchor
 
@@ -124,33 +122,28 @@ final class CompletionSnapshotTests: XCTestCase {
     content.layoutSubtreeIfNeeded()
     let size = content.bounds.size
 
-    let scale: CGFloat = 2
-    guard
-      let rep = NSBitmapImageRep(
-        bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale),
-        pixelsHigh: Int(size.height * scale), bitsPerSample: 8, samplesPerPixel: 4,
-        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0,
-        bitsPerPixel: 0),
-      let context = NSGraphicsContext(bitmapImageRep: rep)
-    else { throw XCTSkip("no bitmap for the list") }
-    rep.size = size
-    context.cgContext.scaleBy(x: scale, y: scale)
-
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = context
+    // The panel's root is an `NSVisualEffectView`, and its material *does* render into a bitmap
+    // of our own — as whatever the machine's Reduce Transparency setting makes of it, which is
+    // translucent here and opaque on a runner that has it on. So an opaque view goes in under the
+    // rows and covers it. What is left is the rows, which is what this pins; the material is the
+    // window server's and belongs to the screen.
+    let backdrop = NSView(frame: content.bounds)
+    backdrop.autoresizingMask = [.width, .height]
+    backdrop.wantsLayer = true
     appearance.performAsCurrentDrawingAppearance {
-      // The panel's own background is the window server's material, which does not render into a
-      // bitmap of our own — so stand the menu colour behind it, as the shell does on screen.
-      NSColor.windowBackgroundColor.setFill()
-      NSRect(origin: .zero, size: size).fill()
+      backdrop.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    }
+    content.addSubview(backdrop, positioned: .below, relativeTo: nil)
+
+    // And the rows are laid out against *the panel's* window, not the anchor's, so the panel's
+    // content moves into one whose backing scale is pinned before it is measured.
+    let stage = SnapshotSurface.window(size: size, appearance: appearance)
+    stage.contentView = content
+    content.layoutSubtreeIfNeeded()
+
+    return SnapshotSurface.png(size: size, appearance: appearance) { context in
       content.displayIgnoringOpacity(content.bounds, in: context)
     }
-    NSGraphicsContext.restoreGraphicsState()
-
-    guard let png = rep.representation(using: .png, properties: [:]) else {
-      fatalError("could not encode a PNG")
-    }
-    return png
   }
 
   private func pixels(_ png: Data) -> [Data] {

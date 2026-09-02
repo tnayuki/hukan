@@ -1370,16 +1370,23 @@ and the web tab's chrome by `BrowserSnapshotTests` (`browser.png`, `…PREVIEW=b
 and nothing under it, in the three states it is ever in, since a rendered page is WebKit's work
 and pinning it would be pinning a browser engine rather than hukan.
 
-**CI runs everything but these.** The runner draws on a 1× 1024×768 virtual display where this
-machine is 2×, and its twelve modes are all non-HiDPI — a resolution can be raised, a backing
-scale factor cannot — so a reference recorded here comes back half size. Scale is not the whole
-of it: the suites that already build their own 2× bitmap come back the right size and still
-differ, an eighth of the commit tab's pixels and nearly all of the command list's, because the
-runner's text rendering is not this machine's. A tolerance is the one answer this comparison
-refuses, so the workflow skips the pixel-pinned tests by name — the snapshot suites, the two
-emphasis tests that measure the same drawing, and the two reader tests that maximize a window
-larger than the runner's screen, which is constrained to fit it and so is not the width the
-maximize was measured against. CI is the gate on the logic; the look stays the gate this machine keeps.
+**A snapshot must not be a photograph of the machine that took it**, which is what every one of
+these was. Three things about the display reached the reference, each measured against a runner
+that draws on a 1× 1024×768 virtual screen where this machine is 2×. A window's
+`backingScaleFactor` is the grid AppKit aligns layout to — 0.5pt at 2×, 1.0pt at 1× — so the same
+view puts its text a device pixel off, per element; `NSImage.lockFocus` and
+`bitmapImageRepForCachingDisplay` take their scale from the display, so a reference came back half
+size; and a `.deviceRGB` bitmap is *device* RGB, where greys survive the conversion and saturated
+colours do not. So they all draw through `SnapshotSurface` now: one window class that reports the
+recording scale wherever it runs, and one sRGB bitmap at that scale. The command list adds a
+fourth — its panel's root is an `NSVisualEffectView`, whose material *does* render into a bitmap
+of our own, as whatever the machine's Reduce Transparency setting makes of it — so an opaque view
+goes in under the rows and the snapshot pins the rows, which is what it is for.
+
+**CI still skips two.** The reader tests that maximize a window wider than the runner's screen get
+it constrained to fit, so it is not the width the maximize was measured against. A tolerance is
+the one answer this comparison refuses. CI is the gate on the logic; the look stays the gate this
+machine keeps.
 
 ### Verifying the GUI: AppleScript, not coordinates
 

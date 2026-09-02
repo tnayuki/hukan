@@ -57,6 +57,15 @@ final class EmphasisTests: XCTestCase {
     XCTAssertTrue(emphasis(of: "plain").isEmpty)
   }
 
+  /// How much of the paper a pixel covers, over the white this renders on. `brightnessComponent`
+  /// was the measure and it cannot see this line: HSB brightness is the largest component, and
+  /// "world" carries a red rendering attribute, so its pixels come out with red pinned at 1 and
+  /// only green and blue falling. Every one of them reads as brightness 1.0, thickened or not.
+  private func ink(_ color: NSColor) -> CGFloat {
+    guard let rgb = color.usingColorSpace(.sRGB) else { return 0 }
+    return 1 - (rgb.redComponent + rgb.greenComponent + rgb.blueComponent) / 3
+  }
+
   /// The editor's stack, drawn through its real layout delegate with `emphasis` in the
   /// table the fragments read.
   @MainActor
@@ -64,9 +73,8 @@ final class EmphasisTests: XCTestCase {
     NSBitmapImageRep, CGFloat
   ) {
     let (scrollView, textView) = makeEditorTextView()
-    let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 400, height: 60), styleMask: .borderless,
-      backing: .buffered, defer: false)
+    let window = SnapshotSurface.window(
+      size: NSSize(width: 400, height: 60), appearance: NSAppearance(named: .aqua)!)
     window.contentView = scrollView
     textView.textStorage?.setAttributedString(
       NSAttributedString(
@@ -88,20 +96,21 @@ final class EmphasisTests: XCTestCase {
     layoutManager.ensureLayout(for: layoutManager.documentRange)
 
     var width: CGFloat = 0
-    let image = NSImage(size: NSSize(width: 400, height: 40))
-    image.lockFocus()
-    NSColor.white.setFill()
-    NSRect(x: 0, y: 0, width: 400, height: 40).fill()
-    let context = NSGraphicsContext.current!.cgContext
-    context.translateBy(x: 0, y: 40)
-    context.scaleBy(x: 1, y: -1)
-    layoutManager.enumerateTextLayoutFragments(from: nil, options: [.ensuresLayout]) {
-      width = max(width, $0.layoutFragmentFrame.width)
-      $0.draw(at: .zero, in: context)
-      return true
+    let rep = SnapshotSurface.bitmap(
+      size: NSSize(width: 400, height: 40), appearance: nil
+    ) { graphics in
+      NSColor.white.setFill()
+      NSRect(x: 0, y: 0, width: 400, height: 40).fill()
+      let context = graphics.cgContext
+      context.translateBy(x: 0, y: 40)
+      context.scaleBy(x: 1, y: -1)
+      layoutManager.enumerateTextLayoutFragments(from: nil, options: [.ensuresLayout]) {
+        width = max(width, $0.layoutFragmentFrame.width)
+        $0.draw(at: .zero, in: context)
+        return true
+      }
     }
-    image.unlockFocus()
-    return (NSBitmapImageRep(data: image.tiffRepresentation!)!, width)
+    return (rep, width)
   }
 
   /// Rendered through the editor's real layout delegate: the emphasised word's pixels change,
@@ -136,8 +145,8 @@ final class EmphasisTests: XCTestCase {
         guard let a = plain.0.colorAt(x: x, y: y), let b = bold.0.colorAt(x: x, y: y) else {
           continue
         }
-        if b.brightnessComponent < a.brightnessComponent - 0.05 { darker += 1 }
-        if b.brightnessComponent > a.brightnessComponent + 0.05 { lighter += 1 }
+        if ink(b) > ink(a) + 0.05 { darker += 1 }
+        if ink(b) < ink(a) - 0.05 { lighter += 1 }
       }
     }
     XCTAssertGreaterThan(
@@ -178,8 +187,8 @@ final class EmphasisTests: XCTestCase {
         guard let a = plain.0.colorAt(x: x, y: y), let b = italic.0.colorAt(x: x, y: y) else {
           continue
         }
-        if b.brightnessComponent < a.brightnessComponent - 0.05 { darker += 1 }
-        if b.brightnessComponent > a.brightnessComponent + 0.05 { lighter += 1 }
+        if ink(b) > ink(a) + 0.05 { darker += 1 }
+        if ink(b) < ink(a) - 0.05 { lighter += 1 }
       }
     }
     XCTAssertGreaterThan(darker, 0, "nothing was slanted")

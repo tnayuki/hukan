@@ -130,10 +130,7 @@ final class CommitSnapshotTests: XCTestCase {
     controller.present(Self.detail, sections: sections)
 
     let size = NSSize(width: 620, height: 470)
-    let window = NSWindow(
-      contentRect: NSRect(origin: .zero, size: size), styleMask: .borderless,
-      backing: .buffered, defer: false)
-    window.appearance = appearance
+    let window = SnapshotSurface.window(size: size, appearance: appearance)
     window.contentView = controller.view
     controller.view.frame = NSRect(origin: .zero, size: size)
     controller.view.layoutSubtreeIfNeeded()
@@ -141,31 +138,11 @@ final class CommitSnapshotTests: XCTestCase {
     // cards above them only learn theirs from that.
     controller.view.layoutSubtreeIfNeeded()
 
-    let scale: CGFloat = 2
-    guard
-      let rep = NSBitmapImageRep(
-        bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale),
-        pixelsHigh: Int(size.height * scale), bitsPerSample: 8, samplesPerPixel: 4,
-        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0,
-        bitsPerPixel: 0),
-      let context = NSGraphicsContext(bitmapImageRep: rep)
-    else { throw XCTSkip("no bitmap for the tab") }
-    rep.size = size
-    context.cgContext.scaleBy(x: scale, y: scale)
-
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = context
-    appearance.performAsCurrentDrawingAppearance {
+    return SnapshotSurface.png(size: size, appearance: appearance) { context in
       NSColor.windowBackgroundColor.setFill()
       NSRect(origin: .zero, size: size).fill()
       controller.view.displayIgnoringOpacity(controller.view.bounds, in: context)
     }
-    NSGraphicsContext.restoreGraphicsState()
-
-    guard let png = rep.representation(using: .png, properties: [:]) else {
-      fatalError("could not encode a PNG")
-    }
-    return png
   }
 
   private func pixels(_ png: Data) -> [Data] {

@@ -189,10 +189,7 @@ final class EditorSnapshotTests: XCTestCase {
     gutter.lineChanges = lineChanges
 
     let size = NSSize(width: 520, height: 300)
-    let window = NSWindow(
-      contentRect: NSRect(origin: .zero, size: size), styleMask: .borderless,
-      backing: .buffered, defer: false)
-    window.appearance = appearance
+    let window = SnapshotSurface.window(size: size, appearance: appearance)
     window.contentView = scrollView
     scrollView.layoutSubtreeIfNeeded()
 
@@ -215,9 +212,7 @@ final class EditorSnapshotTests: XCTestCase {
       layoutManager.setRenderingAttributes([.foregroundColor: span.color], for: range)
     }
 
-    let image = NSImage(size: size)
-    image.lockFocus()
-    appearance.performAsCurrentDrawingAppearance {
+    return SnapshotSurface.png(size: size, appearance: appearance) { _ in
       // What sits behind the transparent editor stack in the app: the window's background.
       NSColor.windowBackgroundColor.setFill()
       NSBezierPath.fill(NSRect(origin: .zero, size: size))
@@ -257,13 +252,6 @@ final class EditorSnapshotTests: XCTestCase {
 
       context.restoreGState()
     }
-    image.unlockFocus()
-
-    guard let tiff = image.tiffRepresentation,
-      let rep = NSBitmapImageRep(data: tiff),
-      let png = rep.representation(using: .png, properties: [:])
-    else { fatalError("could not encode a PNG") }
-    return png
   }
 
   /// Decoded size + raw pixels, the way `SnapshotTests` compares — encoder-setting drift

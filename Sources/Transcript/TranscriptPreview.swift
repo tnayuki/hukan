@@ -63,9 +63,24 @@ public enum TranscriptPreview {
     textView.layoutSubtreeIfNeeded()
 
     // Drawn fragment by fragment rather than snapshotted with `cacheDisplay`, which comes
-    // back empty for a view that was never in a window.
-    let image = NSImage(size: NSSize(width: width, height: height))
-    image.lockFocus()
+    // back empty for a view that was never in a window — and into a bitmap of our own rather
+    // than through `lockFocus`, which takes its scale and its colour space from whatever display
+    // is attached. A reference recorded that way is a photograph of one machine: half size on a
+    // 1x screen, and a count or two off on saturated colours under another display profile.
+    let scale: CGFloat = 2
+    let pixels = (Int((width * scale).rounded(.up)), Int((height * scale).rounded(.up)))
+    guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+      let cgContext = CGContext(
+        data: nil, width: pixels.0, height: pixels.1, bitsPerComponent: 8, bytesPerRow: 0,
+        space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else {
+      FileHandle.standardError.write(Data("no sRGB bitmap for the transcript\n".utf8))
+      exit(1)
+    }
+    cgContext.scaleBy(x: scale, y: scale)
+    let graphics = NSGraphicsContext(cgContext: cgContext, flipped: false)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = graphics
     appearance.performAsCurrentDrawingAppearance {
       NSColor(calibratedWhite: 0.13, alpha: 1).setFill()
       NSBezierPath.fill(NSRect(x: 0, y: 0, width: width, height: height))
@@ -84,7 +99,14 @@ public enum TranscriptPreview {
       (textView as? TranscriptTextView)?.drawMessageMarks(in: textView.bounds)
       context.restoreGState()
     }
-    image.unlockFocus()
+    NSGraphicsContext.restoreGraphicsState()
+
+    guard let rendered = cgContext.makeImage() else {
+      FileHandle.standardError.write(Data("no image from the transcript bitmap\n".utf8))
+      exit(1)
+    }
+    let image = NSImage(size: NSSize(width: width, height: height))
+    image.addRepresentation(NSBitmapImageRep(cgImage: rendered))
     return image
   }
 }
