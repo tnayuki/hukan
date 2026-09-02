@@ -302,6 +302,14 @@ final class RunningColumnViewController: NSViewController {
     NotificationCenter.default.addObserver(
       self, selector: #selector(transcriptScrolled),
       name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+    // And the scroll view for when the reader has their hand on it, which the clip view's
+    // notification cannot say by itself (see `isLiveScrolling`).
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(liveScrollStarted),
+      name: NSScrollView.willStartLiveScrollNotification, object: scrollView)
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(liveScrollEnded),
+      name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
     // The view says when it has re-wrapped — from its own layout, not a frame notification, which
     // `NSTextView` stops posting at the first live resize (see `onRewrap`).
     textView.onRewrap = { [weak self] in self?.putReaderBack() }
@@ -542,11 +550,18 @@ final class RunningColumnViewController: NSViewController {
     hasPaintedHighlight = false
     textView.textStorage?.setAttributedString(session?.transcript ?? NSAttributedString())
     // New content follows the reader only when they are already at the bottom. Scrolled up,
-    // the view stays put and the "新着" pill appears instead — the pinned state is read before
-    // the mutation, since appending is what moves the bottom.
+    // the view stays put and the "新着" pill appears instead.
+    //
+    // What is read is `anchorWasPinned` — where the last scroll or placement left them — and not
+    // the clip's position now. Measuring it here re-asked a question the reader had already
+    // answered, and `pinTolerance` swallowed the answer: a nudge shorter than it left the clip
+    // geometrically still at the bottom, so the next frame of the stream took the reader for
+    // pinned and put them back under their own finger. Measured, a scroll of 8, 16 or 24 points
+    // away from the tail was undone within ten flushes and 32 held; a stream runs thirty flushes
+    // a second, which is exactly where the start of a trackpad gesture lands.
     session?.onAppend = { [weak self] fragment in
       guard let self else { return }
-      let wasPinned = self.isTranscriptPinnedToBottom
+      let wasPinned = self.anchorWasPinned
       self.textView.textStorage?.append(fragment)
       if wasPinned { self.scrollTranscriptToBottom() } else { self.jumpButton.isHidden = false }
     }
@@ -554,7 +569,7 @@ final class RunningColumnViewController: NSViewController {
       guard let self, let storage = self.textView.textStorage,
         NSMaxRange(range) <= storage.length
       else { return }
-      let wasPinned = self.isTranscriptPinnedToBottom
+      let wasPinned = self.anchorWasPinned
       storage.replaceCharacters(in: range, with: formatted)
       if wasPinned { self.scrollTranscriptToBottom() } else { self.jumpButton.isHidden = false }
     }
@@ -658,6 +673,9 @@ final class RunningColumnViewController: NSViewController {
     scrollTranscriptToBottom()
   }
 
+  @objc private func liveScrollStarted() { isLiveScrolling = true }
+  @objc private func liveScrollEnded() { isLiveScrolling = false }
+
   /// Where the reader is, as a character offset (see `TranscriptScrollAnchor`). Recorded on every
   /// scroll so it is always the pre-relayout truth by the time a relayout needs it — reading it
   /// afterwards would read a position the relayout has already moved.
@@ -668,6 +686,14 @@ final class RunningColumnViewController: NSViewController {
   /// Set while the anchor is being put back, so the scroll that does it is not mistaken for the
   /// reader's own and recorded over the anchor it is restoring.
   private var isRestoringAnchor = false
+  /// Whether the reader has their hand on the scroll view right now — a trackpad gesture, a drag
+  /// of the knob. `NSScrollView` is the only thing that knows: the clip view's notification says
+  /// that the origin moved and never who moved it, and the two need telling apart in the one
+  /// case where the direction is the answer (see `transcriptScrolled`).
+  private var isLiveScrolling = false
+  /// Where the clip was when the reader was last placed or recorded, so a scroll can be read as
+  /// a direction and not only as a distance from the bottom.
+  private var lastReaderOrigin: CGFloat = 0
   /// The widths the reader was last placed or recorded at — the text's wrap width and the
   /// view's frame width, which under a live resize part company (see `TranscriptTextView`). Only
   /// a width change re-wraps the document, and so only a width change moves the reader's own
@@ -696,7 +722,16 @@ final class RunningColumnViewController: NSViewController {
     // doing (`isReaderScroll`); `putReaderBack` follows it, and the deliberate placements record
     // themselves (`recordReader`).
     guard isReaderScroll else { return }
-    let pinned = isTranscriptPinnedToBottom
+    // Away from the tail under the reader's own hand is leaving it, however short the move.
+    // `pinTolerance` answers the other question — did this land back at the bottom — and has to
+    // stay generous there, because `scrollToEndOfDocument` stops a few points short of the clip's
+    // own limit. Only a live scroll may be read as a direction: outside one, the origin coming up
+    // is the document having shrunk under a clip that was already at the bottom (a fold closing,
+    // a streamed run re-rendering shorter), which is the layout's doing and not a decision to
+    // stop following.
+    let origin = scrollView.documentVisibleRect.minY
+    let leftTheTail = isLiveScrolling && origin < lastReaderOrigin - 0.5
+    let pinned = leftTheTail ? false : isTranscriptPinnedToBottom
     if pinned { jumpButton.isHidden = true }
     recordReader(pinned: pinned)
     // Nearing the top of a tail-loaded transcript is the ask for what comes before it: within
@@ -730,6 +765,7 @@ final class RunningColumnViewController: NSViewController {
   /// says so itself rather than waiting for a notification a re-wrap would have to swallow.
   private func recordReader(pinned: Bool) {
     anchorWasPinned = pinned
+    lastReaderOrigin = scrollView.documentVisibleRect.minY
     scrollAnchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView)
     placedWidth = textView.wrapWidth
     placedFrameWidth = textView.frame.width
