@@ -120,11 +120,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     AppUpdate.shared.check()
   }
 
-  /// Disabled only while a check is in flight, so pressing it twice does not read as though the
-  /// first press had missed.
+  /// Disabled while a check is in flight, so pressing it twice does not read as though the first
+  /// press had missed — and on a build the cask cannot be talking about, which is a Debug one:
+  /// see `AppUpdate.isApplicable`.
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     guard menuItem.action == #selector(checkForUpdates(_:)) else { return true }
-    return !AppUpdate.shared.isChecking
+    return AppUpdate.isApplicable && !AppUpdate.shared.isChecking
   }
 
   func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }

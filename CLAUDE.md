@@ -921,8 +921,10 @@ Workspace (one window)
   that would be the same fact twice, and one reading `up to date` would be a second place to look
   for one answer. It carries no ellipsis for the same reason. The About panel held the reading
   first and that is the wrong room — About is where you go once you already suspect, where a menu
-  is already open in front of you. Disabled only while a check is in flight, so a second press
-  does not read as the first having missed.
+  is already open in front of you. Disabled while a check is in flight, so a second press does not
+  read as the first having missed — and on a Debug build, which is never what Homebrew installed:
+  without that, a Dev window offers to upgrade the Release app beside it, a button whose action is
+  about a different program than the one it is sitting in.
   **Pressing it hands one command line to Terminal.app, the road `/login` already takes** — one
   handoff (`ExternalTerminal`) rather than two, for opposite reasons: the login needs a TTY the
   stream-json engine has not got, and the upgrade needs a process that is not hukan's child, since

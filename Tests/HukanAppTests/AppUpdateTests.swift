@@ -130,23 +130,33 @@ final class AppUpdateMenuItemTests: XCTestCase {
     XCTAssertEqual(menu.items[check].title, "Check for Updates")
   }
 
-  /// Enabled unless a check is already in flight, and never a readout: the row's title does not
-  /// move, because what it would say is what the toolbar is already saying.
+  /// Never a readout: the row's title does not move with the answer, because what it would say is
+  /// what the toolbar is already saying. Enabled exactly while the cask could be talking about
+  /// this build at all — which under XCTest is a Debug one, so the gate is what is being read.
   @MainActor
-  func testTheRowIsEnabledAndSaysTheSameThingEitherWay() throws {
+  func testTheRowSaysTheSameThingWhicheverWayTheAnswerWent() throws {
     let delegate = AppDelegate()
     let menu = try appMenu()
     let item = try XCTUnwrap(
       menu.items.first { $0.action == #selector(AppDelegate.checkForUpdates(_:)) })
 
     AppUpdate.shared.apply(AppUpdate.shared.runningVersion)
-    XCTAssertTrue(delegate.validateMenuItem(item))
+    XCTAssertEqual(delegate.validateMenuItem(item), AppUpdate.isApplicable)
     XCTAssertEqual(item.title, "Check for Updates")
 
     AppUpdate.shared.apply("99.0.0")
-    XCTAssertTrue(delegate.validateMenuItem(item))
+    XCTAssertEqual(delegate.validateMenuItem(item), AppUpdate.isApplicable)
     XCTAssertEqual(item.title, "Check for Updates")
     AppUpdate.shared.apply(AppUpdate.shared.runningVersion)
+  }
+
+  /// A Debug build is never what Homebrew installed — a separate app with its own bundle id, whose
+  /// version is whatever the working tree says — so it neither checks nor offers to, and a Dev
+  /// window cannot offer to upgrade the Release app beside it. The tests always build Debug, so
+  /// this reads the gate directly.
+  func testADebugBuildIsNotWhatTheCaskInstalled() {
+    let forced = ProcessInfo.processInfo.environment["HUKAN_UPDATE_CHECK"] != nil
+    XCTAssertEqual(AppUpdate.isApplicable, forced)
   }
 
   /// Everything else in the menu is left alone: validation is asked about every row.

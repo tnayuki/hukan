@@ -83,9 +83,7 @@ final class AppUpdate {
   /// learned that there is no new version, so a failed read leaves the last answer standing, the
   /// same way a failed usage read does.
   func start() {
-    #if DEBUG
-      guard ProcessInfo.processInfo.environment["HUKAN_UPDATE_CHECK"] != nil else { return }
-    #endif
+    guard Self.isApplicable else { return }
     guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
     check()
     let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in self?.check() }
@@ -147,6 +145,21 @@ final class AppUpdate {
   /// by, and for the same reason: the dictionary's rule puts `0.10.0` below `0.9.0`.
   static func compare(_ lhs: String, _ rhs: String) -> ComparisonResult {
     lhs.compare(rhs, options: .numeric)
+  }
+
+  /// Whether this build is one the cask could be talking about at all. A Debug build is never
+  /// what Homebrew installed — it is a separate app with its own bundle id, and its version is
+  /// whatever the working tree says — so both the hourly check and the menu's command are off
+  /// there, or a Dev window would offer to upgrade the Release app beside it, which is a button
+  /// whose action is about a different program than the one it is sitting in.
+  /// `HUKAN_UPDATE_CHECK=1` turns it on anyway, which is how the arrow is looked at without
+  /// cutting a release to do it.
+  static var isApplicable: Bool {
+    #if DEBUG
+      return ProcessInfo.processInfo.environment["HUKAN_UPDATE_CHECK"] != nil
+    #else
+      return true
+    #endif
   }
 
   /// True while the tap is being asked. The menu's Check for Updates is disabled for as long as
