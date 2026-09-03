@@ -79,6 +79,41 @@ final class TranscriptReaderTests: XCTestCase {
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
   }
 
+  /// Run the loop until the layout has arrived, rather than for a fixed beat.
+  ///
+  /// These waits were `0.8` seconds after a maximize or an animated resize, which is a guess
+  /// about a machine: too short when the host is busy — the parallel suite is enough, and a CI
+  /// runner more so — and the whole of it wasted when it is not. What the tests are actually
+  /// waiting for is the column to reach a width and the reader to reach a place and both to stay
+  /// there, so that is what they ask for.
+  ///
+  /// Stillness is measured on the clock and not in turns of the loop, which is the trap this was
+  /// first written into: `RunLoop.run(until:)` returns as soon as it has processed a source, so
+  /// counting five short slices can be over in no time at all and read a layout that has not
+  /// started moving as one that has finished.
+  @MainActor
+  private func settle(
+    _ scrollView: NSScrollView, _ textView: NSTextView, still: TimeInterval = 0.25,
+    timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line
+  ) {
+    var last: [CGFloat] = []
+    var lastChanged = Date()
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+      let now = [
+        textView.frame.width, textView.frame.height, scrollView.documentVisibleRect.origin.y,
+      ]
+      if now != last {
+        last = now
+        lastChanged = Date()
+      } else if Date().timeIntervalSince(lastChanged) >= still {
+        return
+      }
+    }
+    XCTFail("the column never settled (last \(last))", file: file, line: line)
+  }
+
   /// Opening a session lands at the bottom; maximizing the conversation and putting the columns
   /// back must leave it there — the narrowing on the way back is where it used to end up a
   /// screen and a half short of the end, with the pill hidden because nothing had "arrived".
@@ -90,14 +125,14 @@ final class TranscriptReaderTests: XCTestCase {
 
     controller.focusComposer()
     controller.toggleMaximize(nil)
-    RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+    settle(scrollView, textView)
     XCTAssertEqual(controller.maximizedColumn, .session)
     XCTAssertTrue(
       isAtBottom(scrollView, textView),
       "maximized: \(scrollView.documentVisibleRect) in \(textView.frame.height)")
 
     controller.toggleMaximize(nil)
-    RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+    settle(scrollView, textView)
     XCTAssertNil(controller.maximizedColumn)
     XCTAssertTrue(
       isAtBottom(scrollView, textView),
@@ -116,11 +151,11 @@ final class TranscriptReaderTests: XCTestCase {
 
     controller.focusComposer()
     controller.toggleMaximize(nil)
-    RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+    settle(scrollView, textView)
     XCTAssertEqual(topLine(of: scrollView, textView), line, "maximized")
 
     controller.toggleMaximize(nil)
-    RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+    settle(scrollView, textView)
     XCTAssertEqual(topLine(of: scrollView, textView), line, "restored")
   }
 
@@ -135,13 +170,13 @@ final class TranscriptReaderTests: XCTestCase {
 
     window.setFrame(
       NSRect(x: 0, y: -4000, width: 1100, height: 800), display: true, animate: true)
-    RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+    settle(scrollView, textView)
     XCTAssertNotEqual(textView.frame.width, 428.5, "the column did not change width")
     XCTAssertEqual(topLine(of: scrollView, textView), line, "narrowed")
 
     window.setFrame(
       NSRect(x: 0, y: -4000, width: 1600, height: 800), display: true, animate: true)
-    RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+    settle(scrollView, textView)
     XCTAssertEqual(topLine(of: scrollView, textView), line, "widened again")
   }
 

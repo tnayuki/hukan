@@ -1420,11 +1420,12 @@ early. Each was measured against a runner, and each moved a reference on its own
 the *screen's* backing grid and not to the window's, which no amount of pinning reaches: an
 `NSButton` holding a symbol measures 13.5pt on a 2× display and 14pt on a 1× one, so the browser's
 bar and everything after it sits a device pixel over, and the same rounding catches the commit
-tab, the History section's tag rule and the approval card's icon row. The reader tests used to be skipped for a second thing the screen decides — they
+tab, the History section's tag rule and the approval card's icon row. The reader tests were skipped too, for a second thing the screen decides — they
 open a window wider than it, and AppKit constrains a frame to fit — but that one a resolution
-*can* answer, so the workflow asks the display for the widest mode it advertises and they run.
-Two of them are still out, for the older reason that they fail in a parallel whole-suite run and
-pass alone on any machine. A tolerance is the one answer this comparison refuses, so those stay
+*can* answer, so the workflow asks the display for the widest mode it advertises. They all run
+now: the two that used to fail in a parallel whole-suite run and pass alone were waiting a fixed
+beat for a resize to land, which is a guess about how busy the machine is, and they wait for the
+column to stop moving instead. A tolerance is the one answer this comparison refuses, so those stay
 skipped and the rest — the transcript, the editor, the cards, the command list, the emphasis
 drawing — are a gate CI keeps now. Closing the last of it needs a real 2× display, which only
 `CGVirtualDisplay`'s private hiDPI flag can conjure and which Chromium's own test infrastructure
