@@ -9,27 +9,7 @@ import AppKit
 /// never realizes attachment views, see the charter — but a card is a plain view, so it can).
 /// Grows to fit short content and caps at `maxHeight`, scrolling internally past that, so a long
 /// plan reads in place without shoving the composer off screen.
-/// A card whose layer carries the app's own colours.
-///
-/// A `CALayer` holds a `CGColor`, which is a colour already resolved — so a catalog colour handed
-/// to one in an `init` freezes whatever appearance happened to be current at that moment, and the
-/// card keeps it for good. `updateLayer` is the drawing moment instead: AppKit puts the view's own
-/// appearance in force before calling it, and calls it again whenever that appearance changes. The
-/// same fault as the transcript's `withDynamicAlpha`, one layer down.
-class CardSurface: NSView {
-  /// The colours, and only the colours — a radius and a width are not appearance's business and
-  /// belong where the view is built. Called at every display, with the view's appearance in force.
-  var paintLayer: ((CALayer) -> Void)?
-
-  override var wantsUpdateLayer: Bool { true }
-
-  override func updateLayer() {
-    super.updateLayer()
-    if let layer { paintLayer?(layer) }
-  }
-}
-
-final class ScrollBox: CardSurface {
+final class ScrollBox: LayerSurface {
   private let content: NSAttributedString
   private let maxHeight: CGFloat
   private let inset: NSSize
@@ -83,7 +63,7 @@ final class ScrollBox: CardSurface {
   }
 }
 
-final class ApprovalCard: CardSurface {
+final class ApprovalCard: LayerSurface {
   private let onDecision: (Bool) -> Void
 
   init(approval: PendingApproval, onDecision: @escaping (Bool) -> Void) {
@@ -182,7 +162,7 @@ final class ApprovalCard: CardSurface {
 /// The card is redrawn from the session on every state change, so what is ticked and what is
 /// open live in `PendingQuestion` rather than in this view — a view holding them would lose them
 /// to any refresh that landed mid-answer.
-final class QuestionCard: CardSurface {
+final class QuestionCard: LayerSurface {
   private let onAnswer: ([String]) -> Void
   private let onToggleOption: (Int) -> Void
   private let onTogglePreview: (Int) -> Void
@@ -372,7 +352,7 @@ final class QuestionCard: CardSurface {
 /// Quiet chrome on purpose. The cards below it — an approval, a question, the type-ahead — are
 /// things stopped on you; this one is the agent saying what it is doing, so it borrows the
 /// queued card's bordered grey rather than an orange or an accent that would read as a demand.
-final class TaskCard: CardSurface {
+final class TaskCard: LayerSurface {
   private let onToggle: () -> Void
   private let header = NSStackView()
 

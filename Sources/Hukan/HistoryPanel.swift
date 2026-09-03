@@ -141,9 +141,9 @@ final class HistoryPanelViewController: NSViewController {
 
     // A hairline over the header, so the section reads as its own thing under the tree rather
     // than as more tree.
-    let hairline = NSView()
+    let hairline = LayerSurface()
     hairline.wantsLayer = true
-    hairline.layer?.backgroundColor = NSColor.separatorColor.cgColor
+    hairline.paintLayer = { $0.backgroundColor = NSColor.separatorColor.cgColor }
     hairline.translatesAutoresizingMaskIntoConstraints = false
 
     // What git has underway, pinned above the rows rather than scrolling with them: it is the
@@ -359,9 +359,9 @@ extension HistoryPanelViewController: NSTableViewDataSource, NSTableViewDelegate
   }
 
   private func rule() -> NSView {
-    let line = NSView()
+    let line = LayerSurface()
     line.wantsLayer = true
-    line.layer?.backgroundColor = NSColor.separatorColor.cgColor
+    line.paintLayer = { $0.backgroundColor = NSColor.separatorColor.cgColor }
     line.translatesAutoresizingMaskIntoConstraints = false
     line.heightAnchor.constraint(equalToConstant: 1).isActive = true
     line.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)

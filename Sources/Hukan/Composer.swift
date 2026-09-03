@@ -162,9 +162,9 @@ final class ComposerTextView: NSTextView, UndoStackOwner {
 }
 
 /// A view that shows the arrow cursor instead of inheriting the I-beam from the text it floats
-/// over — a pill floating over the transcript. A `CardSurface` because it is one: its layer
+/// over — a pill floating over the transcript. A `LayerSurface` because it is one: its layer
 /// carries catalog colours, which have to be re-resolved where they are drawn.
-final class ArrowCursorView: CardSurface {
+final class ArrowCursorView: LayerSurface {
   override func resetCursorRects() {
     addCursorRect(bounds, cursor: .arrow)
   }
@@ -172,7 +172,7 @@ final class ArrowCursorView: CardSurface {
 
 /// A one- to few-line compose box. Reads as the old rounded field but grows with the text up to a
 /// ceiling, then scrolls, so a long paragraph never swallows the transcript above it.
-final class ComposerInput: NSView {
+final class ComposerInput: LayerSurface {
   var onSend: ((String, [Attachment]) -> Void)?
   /// Return on an empty field, nothing attached. There is no message to send, so the press
   /// means the one thing left for it to mean — a second Return after the one that queued a line
@@ -265,8 +265,10 @@ final class ComposerInput: NSView {
     wantsLayer = true
     layer?.cornerRadius = 6
     layer?.borderWidth = 1
-    layer?.borderColor = NSColor.separatorColor.cgColor
-    layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+    paintLayer = {
+      $0.borderColor = NSColor.separatorColor.cgColor
+      $0.backgroundColor = NSColor.textBackgroundColor.cgColor
+    }
 
     textView.font = .systemFont(ofSize: 14)
     textView.isRichText = false
@@ -539,12 +541,14 @@ final class ComposerInput: NSView {
   /// extension survives — it is half of what tells two of these apart — and the full path stays
   /// the tooltip.
   private func makeChip(path: String, image: NSImage?) -> NSView {
-    let chip = NSView()
+    let chip = LayerSurface()
     chip.wantsLayer = true
     chip.layer?.cornerRadius = 5
-    chip.layer?.backgroundColor = NSColor.quaternarySystemFill.cgColor
     chip.layer?.borderWidth = 1
-    chip.layer?.borderColor = NSColor.separatorColor.cgColor
+    chip.paintLayer = {
+      $0.backgroundColor = NSColor.quaternarySystemFill.cgColor
+      $0.borderColor = NSColor.separatorColor.cgColor
+    }
     chip.translatesAutoresizingMaskIntoConstraints = false
     chip.toolTip = path
 

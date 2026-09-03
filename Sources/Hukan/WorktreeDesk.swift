@@ -36,13 +36,13 @@ final class TabStrip: NSStackView {
   var onMove: ((_ from: Int, _ to: Int) -> Void)?
 
   /// The mark in the gap a drop would land in: a bar the accent colour, the height of a tab.
-  private let indicator = NSView()
+  private let indicator = LayerSurface()
 
   init() {
     super.init(frame: .zero)
     registerForDraggedTypes([Self.tabType])
     indicator.wantsLayer = true
-    indicator.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+    indicator.paintLayer = { $0.backgroundColor = NSColor.controlAccentColor.cgColor }
     indicator.layer?.cornerRadius = 1
     // Over the tabs, which are re-added above it on every rebuild.
     indicator.layer?.zPosition = 1
@@ -305,7 +305,7 @@ final class WorktreeDeskViewController: NSViewController {
   /// glance — which is what the strip was before: past a handful of tabs every label was
   /// truncated to nothing at once, and the whole row said the same thing about none of them.
   private let tabScroll = TabStripScrollView()
-  private let hairline = NSView()
+  private let hairline = LayerSurface()
   private let plusButton = NSButton()
   private let container = NSView()
   private let placeholder = NSView()
@@ -721,7 +721,7 @@ final class WorktreeDeskViewController: NSViewController {
     plusButton.translatesAutoresizingMaskIntoConstraints = false
     // A hairline under the strip, so the tab row reads as a header the way the other columns' do.
     hairline.wantsLayer = true
-    hairline.layer?.backgroundColor = NSColor.separatorColor.cgColor
+    hairline.paintLayer = { $0.backgroundColor = NSColor.separatorColor.cgColor }
     hairline.translatesAutoresizingMaskIntoConstraints = false
     container.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(tabScroll)
@@ -1369,10 +1369,12 @@ final class WorktreeDeskViewController: NSViewController {
     row.spacing = 3
     row.translatesAutoresizingMaskIntoConstraints = false
 
-    let tab = NSView()
+    let tab = LayerSurface()
     tab.wantsLayer = true
     if selected {
-      tab.layer?.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.cgColor
+      tab.paintLayer = {
+        $0.backgroundColor = NSColor.unemphasizedSelectedContentBackgroundColor.cgColor
+      }
       tab.layer?.cornerRadius = 5
     }
     tab.addSubview(row)
@@ -1420,9 +1422,9 @@ final class WorktreeDeskViewController: NSViewController {
   }
 
   private func tabSeparator() -> NSView {
-    let line = NSView()
+    let line = LayerSurface()
     line.wantsLayer = true
-    line.layer?.backgroundColor = NSColor.separatorColor.cgColor
+    line.paintLayer = { $0.backgroundColor = NSColor.separatorColor.cgColor }
     line.translatesAutoresizingMaskIntoConstraints = false
     line.widthAnchor.constraint(equalToConstant: 1).isActive = true
     line.heightAnchor.constraint(equalToConstant: 14).isActive = true

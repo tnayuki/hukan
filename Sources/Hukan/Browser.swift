@@ -159,7 +159,7 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
   private let back = NSButton()
   private let forward = NSButton()
   private let reload = NSButton()
-  private let progress = NSView()
+  private let progress = LayerSurface()
   private lazy var progressWidth = progress.widthAnchor.constraint(equalToConstant: 0)
   private let findField = NSSearchField()
   private let findLabel = NSTextField(labelWithString: "")
@@ -283,7 +283,7 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
     // A load's progress is a line along the bar's foot, the way Safari draws it in the field —
     // the one signal that a slow page is coming rather than nothing happening.
     progress.wantsLayer = true
-    progress.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+    progress.paintLayer = { $0.backgroundColor = NSColor.controlAccentColor.cgColor }
     progress.translatesAutoresizingMaskIntoConstraints = false
     progress.isHidden = true
 

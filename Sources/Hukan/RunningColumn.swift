@@ -40,7 +40,7 @@ final class RunningColumnViewController: NSViewController {
   /// Shown when new transcript content arrived while you were scrolled up reading — so the view
   /// never yanks you to the bottom mid-read, but you can still see something came in and jump
   /// down. Hidden whenever you are already at (or scroll back to) the bottom.
-  private let jumpButton = NSView()
+  private let jumpButton = LayerSurface()
   /// The jump pill's two homes: at the foot of the transcript normally, or riding just above
   /// the thinking pill when that is showing — both are bottom-centre, so they would collide.
   private var jumpAtBottom: NSLayoutConstraint!
@@ -65,7 +65,7 @@ final class RunningColumnViewController: NSViewController {
   /// Type-ahead lines waiting for the turn to end, shown so a queued message is never invisible.
   private let queuedStack = NSStackView()
   /// The bordered card the whole queue rides inside. Hidden, with the stack, when nothing waits.
-  private let queuedCard = NSView()
+  private let queuedCard = LayerSurface()
   /// The card's top and bottom padding around the stack. Collapsed to zero while the queue is
   /// empty so the hidden card reserves no height above the field (a plain view's `isHidden`
   /// stops it drawing but not laying out); restored to `queuedCardPadding` once a line waits.
@@ -195,8 +195,10 @@ final class RunningColumnViewController: NSViewController {
     queuedCard.wantsLayer = true
     queuedCard.layer?.cornerRadius = 6
     queuedCard.layer?.borderWidth = 1
-    queuedCard.layer?.borderColor = NSColor.separatorColor.cgColor
-    queuedCard.layer?.backgroundColor = NSColor.quaternarySystemFill.cgColor
+    queuedCard.paintLayer = {
+      $0.borderColor = NSColor.separatorColor.cgColor
+      $0.backgroundColor = NSColor.quaternarySystemFill.cgColor
+    }
     queuedCard.isHidden = true
     queuedCard.translatesAutoresizingMaskIntoConstraints = false
     queuedCard.addSubview(queuedStack)
@@ -266,7 +268,7 @@ final class RunningColumnViewController: NSViewController {
     // scrollTranscriptToBottom). Built as a padded view rather than a button so the label and
     // arrow keep clear of the rounded ends.
     jumpButton.wantsLayer = true
-    jumpButton.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+    jumpButton.paintLayer = { $0.backgroundColor = NSColor.controlAccentColor.cgColor }
     jumpButton.layer?.cornerRadius = 11
     let jumpLabel = NSTextField(labelWithString: "新着")
     jumpLabel.font = .systemFont(ofSize: 11, weight: .semibold)
