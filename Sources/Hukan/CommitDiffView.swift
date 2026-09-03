@@ -40,13 +40,21 @@ enum CommitTheme {
     }
   }
 
+  /// A status pill's colour, decided under the appearance that draws it and in sRGB — and built
+  /// once each, so two pills of a kind carry the same colour object.
+  private static let added = NSColor.systemGreen.dynamic
+  private static let deleted = NSColor.systemRed.dynamic
+  private static let moved = NSColor.systemTeal.dynamic
+  private static let retyped = NSColor.systemOrange.dynamic
+  private static let touched = NSColor.secondaryLabelColor.dynamic
+
   static func color(for status: Git.CommitFile.Status) -> NSColor {
     switch status {
-    case .added: return .systemGreen
-    case .deleted: return .systemRed
-    case .renamed, .copied: return .systemTeal
-    case .typeChanged: return .systemOrange
-    case .modified: return .secondaryLabelColor
+    case .added: return added
+    case .deleted: return deleted
+    case .renamed, .copied: return moved
+    case .typeChanged: return retyped
+    case .modified: return touched
     }
   }
 }
