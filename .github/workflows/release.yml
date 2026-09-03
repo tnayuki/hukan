@@ -31,16 +31,23 @@ jobs:
         run: xcrun swift-format lint --strict -p -r Sources Tests
 
       - name: Runner display settings
-        # Three things the image ships that are the display's opinion rather than hukan's, each
+        # Four things the image ships that are the display's opinion rather than hukan's, each
         # measured to move a reference: Reduce Transparency is on, which is what an
         # `NSVisualEffectView` and every semantic system fill read; no preferred language is
         # Japanese, so CoreText's CJK fallback lands on PingFang SC and a kanji comes out in
         # Chinese glyph forms at Chinese advances; and scroll bars are always shown, which
-        # narrows every scroll view's content until a summary truncates a word early.
+        # narrows every scroll view's content until a summary truncates a word early. And the
+        # display opens at 1024x768, which is narrower than the window the reader tests open —
+        # AppKit constrains a frame to the screen, so they measured a column they were not
+        # written against. It advertises modes up to 1920x1080, so `ci-display.swift` asks for
+        # the widest. That is the whole of what raising a resolution can buy: the *scale* stays
+        # 1, and no advertised mode carries another.
         run: |
           defaults write com.apple.universalaccess reduceTransparency -bool false
           defaults write -g AppleLanguages -array ja en
           defaults write -g AppleShowScrollBars -string WhenScrolling
+          xcrun swiftc -O .github/ci-display.swift -o "$RUNNER_TEMP/display"
+          "$RUNNER_TEMP/display"
 
       - name: Test
         # Most of the pixel-pinned tests run here now: they render through `SnapshotSurface`,
@@ -63,8 +70,7 @@ jobs:
             -skip-testing:HukanAppTests/BrowserSnapshotTests \
             -skip-testing:HukanAppTests/CardSnapshotTests/testExitPlanApprovalCard \
             -skip-testing:HukanAppTests/TranscriptReaderTests/testTheBottomStaysTheBottomAcrossAMaximize \
-            -skip-testing:HukanAppTests/TranscriptReaderTests/testTheReadersLineHoldsWhenEarlierConversationLands \
-            -skip-testing:HukanAppTests/TranscriptReaderTests/testTheReadersLineHoldsAcrossAMaximize \
+            -skip-testing:HukanAppTests/TranscriptReaderTests/testTheReadersLineHoldsAcrossAWindowResize \
             > xcodebuild-test.log 2>&1
           status=$?
           R=$(ls -td .build/DerivedData/Logs/Test/*.xcresult 2>/dev/null | head -1)
