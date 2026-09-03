@@ -137,7 +137,12 @@ public enum RenderCase {
   /// One screen of every block the renderer knows.
   private static func transcript() -> NSAttributedString {
     let text = NSMutableAttributedString()
-    text.append(Transcript.timeSeparator(Date(timeIntervalSince1970: 1_766_000_000)))
+    // Named rather than left to the machine: a case is compared byte for byte, and the clock's
+    // language and zone are the two things about it that are not the drawing.
+    text.append(
+      Transcript.timeSeparator(
+        Date(timeIntervalSince1970: 1_766_000_000), locale: Locale(identifier: "ja_JP"),
+        zone: TimeZone(identifier: "Asia/Tokyo") ?? .gmt))
     text.append(cjkEmphasis())
     text.append(toolStates())
     text.append(exitPlan())

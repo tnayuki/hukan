@@ -970,13 +970,21 @@ public enum Transcript {
   /// Unterm shows these as "12 minutes ago" and repaints once a minute to keep them true.
   /// This transcript is a memoized attributed string that is never re-rendered, so a
   /// relative label would silently go stale. An absolute clock time cannot.
-  public static func timeSeparator(_ date: Date) -> NSAttributedString {
+  ///
+  /// The locale and zone are arguments rather than assumptions, and default to the user's, which
+  /// is the app's behaviour: they exist because a render compared byte for byte cannot read the
+  /// clock's language off the machine it runs on. The same instant is `12月18日 4:33` here and
+  /// `Dec 17 at 7:33 PM` under US English in UTC — nine hours and another language, recorded as
+  /// if it were a fact about the drawing.
+  public static func timeSeparator(
+    _ date: Date, locale: Locale = .autoupdatingCurrent, zone: TimeZone = .autoupdatingCurrent
+  ) -> NSAttributedString {
     let paragraph = NSMutableParagraphStyle()
     paragraph.alignment = .center
     paragraph.paragraphSpacingBefore = 16
     paragraph.paragraphSpacing = 4
     return NSAttributedString(
-      string: stampLabel(date) + "\n",
+      string: stampLabel(date, locale: locale, zone: zone) + "\n",
       attributes: [
         .font: NSFont.systemFont(ofSize: 10, weight: .medium),
         .foregroundColor: NSColor.tertiaryLabelColor,
@@ -984,23 +992,38 @@ public enum Transcript {
       ])
   }
 
-  private static func stampLabel(_ date: Date) -> String {
-    Calendar.current.isDateInToday(date)
-      ? timeOnly.string(from: date)
-      : dateAndTime.string(from: date)
+  private static func stampLabel(_ date: Date, locale: Locale, zone: TimeZone) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.locale = locale
+    calendar.timeZone = zone
+    let built = formatters(locale: locale, zone: zone)
+    return calendar.isDateInToday(date)
+      ? built.timeOnly.string(from: date)
+      : built.dateAndTime.string(from: date)
   }
 
-  private static let timeOnly: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.setLocalizedDateFormatFromTemplate("jmm")
-    return formatter
-  }()
+  /// Kept per locale and zone rather than built per call: a transcript has one of these between
+  /// every pair of turns, and a `DateFormatter` is not cheap to make.
+  private static var formatterCache:
+    [String: (timeOnly: DateFormatter, dateAndTime: DateFormatter)] =
+      [:]
 
-  private static let dateAndTime: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.setLocalizedDateFormatFromTemplate("MMMdjmm")
-    return formatter
-  }()
+  private static func formatters(
+    locale: Locale, zone: TimeZone
+  ) -> (timeOnly: DateFormatter, dateAndTime: DateFormatter) {
+    let key = "\(locale.identifier)|\(zone.identifier)"
+    if let kept = formatterCache[key] { return kept }
+    func make(_ template: String) -> DateFormatter {
+      let formatter = DateFormatter()
+      formatter.locale = locale
+      formatter.timeZone = zone
+      formatter.setLocalizedDateFormatFromTemplate(template)
+      return formatter
+    }
+    let built = (timeOnly: make("jmm"), dateAndTime: make("MMMdjmm"))
+    formatterCache[key] = built
+    return built
+  }
 
   public static func note(_ string: String) -> NSAttributedString {
     NSAttributedString(
