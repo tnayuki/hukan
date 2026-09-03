@@ -146,7 +146,7 @@ included. A name the destination already has gets the Finder's answer — Keep B
 with Apply to All when several collide — except for a folder, which is refused rather than
 replaced.
 
-Tabs are files (always editable source), commits (read-only), web tabs (one shared cookie store,
+Tabs are files (editable source, or a note where the file is not text), commits (read-only), web tabs (one shared cookie store,
 passing as this machine's Safari) and terminals (named as Terminal.app names one). The plain
 new-tab key opens a browser rather than a terminal — the shell work here is the agent's — and
 the strip walks, numbers, closes and reorders the way a browser's does: a new tab opens at the

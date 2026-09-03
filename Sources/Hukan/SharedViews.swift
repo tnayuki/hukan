@@ -272,6 +272,19 @@ final class EmptyStateView: NSView {
 
 let monospace = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
+/// A file's size, in the units the Finder writes it in. `ByteCountFormatter`'s file style, the
+/// same idiom the toolbar's footprint reading takes for memory — one formatter, because a size
+/// spelt two ways in one window is two facts as far as anyone reading it is concerned.
+private let fileByteFormatter: ByteCountFormatter = {
+  let formatter = ByteCountFormatter()
+  formatter.countStyle = .file
+  return formatter
+}()
+
+func fileSizeText(_ bytes: Int) -> String {
+  fileByteFormatter.string(fromByteCount: Int64(bytes))
+}
+
 /// Match the diff view's colors. Monochrome digits are far harder to read at a glance.
 func diffstatText(added: Int, removed: Int, size: CGFloat = 10) -> NSAttributedString {
   let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular)

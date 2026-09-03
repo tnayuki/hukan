@@ -132,6 +132,67 @@ final class FileSaveTests: XCTestCase {
     XCTAssertEqual(worktree.changedFiles.map(\.path), [], "the worktree is clean again")
   }
 
+  /// A file hukan cannot read as text is not an empty one. The read used to fall back to `""`,
+  /// which lands as a buffer the reader can type into — and ⌘S writes that buffer back, so a
+  /// mis-clicked archive plus one keystroke was the archive gone. What is pinned here is the
+  /// bytes surviving, which is the half that cannot be undone.
+  @MainActor
+  func testAFileThatIsNotTextCannotBeTypedOver() throws {
+    try makeRepository()
+    // A PNG's first byte is 0x89, which no UTF-8 sequence starts with.
+    let bytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0x00])
+    let url = root.appendingPathComponent("blob.bin")
+    try bytes.write(to: url)
+
+    let workspace = Workspace()
+    let worktree = workspace.addWorktree(root)
+    let files = FileColumns()
+    files.workspace = workspace
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+      styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = files.desk.view
+    files.desk.reload(worktreeID: worktree.id)
+    files.desk.openFile(worktree: worktree, path: "blob.bin", preview: false)
+    let content = try XCTUnwrap(files.desk.activeFileContent)
+    let text = try XCTUnwrap(textView(in: content.view))
+    spin(until: { !text.string.isEmpty }, "the pane said what it found")
+
+    // What it says is the type's own name, not "not text" — that one is true of every binary
+    // alike and says nothing about any of them. The name is the system's, so only the half
+    // hukan wrote is pinned.
+    XCTAssertTrue(text.string.hasSuffix("— 10 bytes"), text.string)
+    XCTAssertFalse(text.isEditable, "and refuses the keyboard over it")
+    XCTAssertFalse(files.hasUnsavedEdit, "a note standing in for a file is not an unsaved edit")
+
+    // The whole point: even asked to save outright, nothing is written.
+    files.saveCurrent()
+    XCTAssertEqual(try Data(contentsOf: url), bytes, "the file is untouched")
+  }
+
+  /// And an extension nothing has a name for keeps the flat answer, which is the one case it was
+  /// ever right for.
+  @MainActor
+  func testAnUnknownKindOfFileStillSaysItIsNotText() throws {
+    try makeRepository()
+    try Data([0xFF, 0xFE, 0x00]).write(to: root.appendingPathComponent("blob.zzz"))
+
+    let workspace = Workspace()
+    let worktree = workspace.addWorktree(root)
+    let files = FileColumns()
+    files.workspace = workspace
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+      styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = files.desk.view
+    files.desk.reload(worktreeID: worktree.id)
+    files.desk.openFile(worktree: worktree, path: "blob.zzz", preview: false)
+    let content = try XCTUnwrap(files.desk.activeFileContent)
+    let text = try XCTUnwrap(textView(in: content.view))
+    spin(until: { !text.string.isEmpty }, "the pane said what it found")
+    XCTAssertEqual(text.string, "Not a text file — 3 bytes")
+  }
+
   /// Closing the window, and quitting, ask about every unsaved edit the way ⌘W asks about one.
   /// Only the unobstructed half is checkable here — the other half is an `NSAlert` standing in
   /// front of the test — so what this pins is that a desk with nothing to save is not stopped by

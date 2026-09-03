@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// The editor's text view. Deliberately not `makeTranscriptTextView`'s, though the wiring below
 /// is nearly the same boilerplate: that factory also installs the transcript's own machinery —
@@ -276,6 +277,7 @@ final class FileContentViewController: NSViewController {
     loadViewIfNeeded()
     guard let worktree, let path else {
       textView.isEditable = false
+      scrollView.rulersVisible = true
       savedText = ""
       textView.textStorage?.setAttributedString(
         NSAttributedString(
@@ -287,9 +289,11 @@ final class FileContentViewController: NSViewController {
     let url = Self.fileURL(worktree: worktree, path: path)
     let restoreOrigin = preservingScroll ? scrollView.contentView.bounds.origin : nil
     DispatchQueue.global(qos: .userInitiated).async {
-      let rendered = Self.renderSource((try? String(contentsOf: url, encoding: .utf8)) ?? "")
+      let read = Self.read(at: url)
       DispatchQueue.main.async { [weak self] in
         guard let self, self.path == path else { return }
+        let isText = read.isText
+        let rendered = read.rendered
         // What the buffer has to differ from to be worth saving — the text just read, which is
         // what the file holds until this pane writes it. Set before the text lands, since landing
         // it is itself an edit of the storage and the answer has to be ready for it.
@@ -299,12 +303,22 @@ final class FileContentViewController: NSViewController {
         // the emphasis table and the rendering attributes are the only trace of the previous
         // file left in the view, and nothing else would take them off a file no grammar covers.
         SyntaxHighlighting.clear(in: self.textView)
-        // Always the source, so always editable. Typed text inherits its monospace.
-        self.textView.isEditable = true
+        // Editable only where the buffer *is* the file. What stands in for one that is not text
+        // is a note about it, and a note typed into and saved is the file overwritten by its own
+        // description — see `SourceRead`.
+        self.textView.isEditable = isText
         self.textView.typingAttributes = [.font: monospace, .foregroundColor: NSColor.labelColor]
+        // A gutter row is a file line, and a note has none to number, so the ruler goes with the
+        // text it measures.
+        self.scrollView.rulersVisible = isText
         self.isDirty = false
         self.isLoaded = true
-        self.loadFileBase()
+        if isText {
+          self.loadFileBase()
+        } else {
+          self.fileBase = Git.FileBase()
+          self.gutter?.lineChanges = Git.LineChanges()
+        }
         // A refresh keeps the reader where they were, sideways included; an open starts at
         // the leading edge — which is not x = 0 once a ruler is in the way, see the helper.
         if let restoreOrigin {
@@ -431,9 +445,61 @@ final class FileContentViewController: NSViewController {
     path.hasPrefix("/") ? URL(fileURLWithPath: path) : worktree.url.appendingPathComponent(path)
   }
 
-  private static func renderSource(_ raw: String) -> NSAttributedString {
-    NSAttributedString(
-      string: raw, attributes: [.font: monospace, .foregroundColor: NSColor.labelColor])
+  /// What a read of the file came back with. A file hukan cannot read as text is not an empty
+  /// file, and telling the two apart is the whole of this: the read used to fall back to `""`,
+  /// which lands in the pane as a buffer the reader can type into — and ⌘S writes that buffer
+  /// over the file, so a `.zip` opened by a mis-click and one keystroke was the archive gone.
+  /// It is a state instead, said in the pane and left uneditable, the same call the browser's
+  /// error page makes for a load that failed: what did not work says so, rather than showing
+  /// nothing and reading as "the file is empty".
+  private enum SourceRead {
+    case text(String)
+    case notText(String)
+
+    var isText: Bool {
+      if case .text = self { return true }
+      return false
+    }
+
+    /// The note is drawn in the same monospace as a file, secondary — it stands where the text
+    /// would be, and it is not the text.
+    var rendered: NSAttributedString {
+      switch self {
+      case .text(let raw):
+        return NSAttributedString(
+          string: raw, attributes: [.font: monospace, .foregroundColor: NSColor.labelColor])
+      case .notText(let note):
+        return NSAttributedString(
+          string: note,
+          attributes: [.font: monospace, .foregroundColor: NSColor.secondaryLabelColor])
+      }
+    }
+  }
+
+  /// Read the file, mapped rather than copied — the decision being made here is whether the
+  /// bytes are UTF-8 at all, and a file large enough for that to matter is one this should not
+  /// be holding twice.
+  private static func read(at url: URL) -> SourceRead {
+    guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else {
+      return .notText("This file could not be read")
+    }
+    guard let text = String(data: data, encoding: .utf8) else {
+      return .notText("\(Self.describe(path)) — \(fileSizeText(data.count))")
+    }
+    return .text(text)
+  }
+
+  /// What the file is, in the words the system already has for it. "Not a text file" is true of a
+  /// `.zip` and of an `.icns` alike and says nothing about either, and over a file that plainly
+  /// is one thing it reads as a misclassification. `UTType` names it — "Zip archive", "Mach-O
+  /// dynamic library", "TrueType® OpenType® font" — and falls back to the flat answer for an
+  /// extension it has never heard of, which is where the flat answer was always right.
+  private static func describe(_ path: String) -> String {
+    let suffix = (path as NSString).pathExtension
+    guard !suffix.isEmpty,
+      let described = UTType(filenameExtension: suffix)?.localizedDescription
+    else { return "Not a text file" }
+    return described
   }
 }
 

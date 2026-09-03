@@ -292,6 +292,17 @@ Workspace (one window)
   word twice, and it charged the file 36pt to say it. The one thing that header carried alone —
   the dot for an unsaved edit — moved onto the tab, beside the ✕ that would discard it, which is
   where the state and the act that destroys it belong together.
+  **A file it cannot read as text says what it is, and refuses the keyboard.** The read fell back
+  to an empty string, which is not the same answer as an empty file: it lands as a buffer that can
+  be typed into, and ⌘S writes that buffer back — so a `.zip` opened by a mis-click and one
+  keystroke was the archive gone, silently, with the tab still claiming to show it. The note
+  stands where the text would be and the pane is left uneditable, the same call the browser's
+  error page makes for a load that failed. The ruler goes with it: a gutter row is a file line,
+  and a note has none to number. **What the note says is the type's own name** — `UTType`'s, so
+  "Zip archive" and "Mach-O dynamic library" rather than "not a text file", which is equally true
+  of every binary and says nothing about any of them; over a file that plainly is one thing it
+  read as a misclassification. The flat answer survives as the fallback, for an extension nothing
+  has a name for, which is the one case it was ever right for.
 - **A row drags out as a file URL, and a file dropped on the panel is the same read from the
   other side.** The composer already takes a file dropped from the Finder and turns it into an
   attachment chip — the agent reads it from the path the chip carries — so the panel had only to
