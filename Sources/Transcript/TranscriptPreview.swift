@@ -93,10 +93,11 @@ public enum TranscriptPreview {
         fragment.draw(at: fragment.layoutFragmentFrame.origin, in: context)
         return true
       }
-      // What the view draws over its fragments — a message's `…` — in the view's coordinates,
-      // which sit one inset out from the container's the fragments were drawn in.
+      // What the view draws over its fragments — a message's `…`, a code slab's copy mark — in
+      // the view's coordinates, which sit one inset out from the container's the fragments were
+      // drawn in.
       context.translateBy(x: -inset.width, y: -inset.height)
-      (textView as? TranscriptTextView)?.drawMessageMarks(in: textView.bounds)
+      (textView as? TranscriptTextView)?.drawMarks(in: textView.bounds)
       context.restoreGState()
     }
     NSGraphicsContext.restoreGraphicsState()

@@ -230,6 +230,9 @@ Code's own transcripts.
 **Markdown.** Rendered on both sides of the conversation, with what you typed tinted and indented.
 A table's cells are selectable — by character inside a cell, by whole cells once the drag leaves
 one — and copy as tab-separated text, which is what a spreadsheet and Slack read as a table.
+A code block carries a copy mark at its top-right corner — a fenced block the agent wrote and an
+opened tool call's command alike — which takes the block whole, with no trailing newline, and
+shows a tick for a beat to say it did.
 
 **Search.** Two questions, two places. *Which conversation* is the rail's field, with the same two
 gestures as the panel's: typing filters the sessions by title, `⏎` searches the transcripts

@@ -286,10 +286,46 @@ public final class TranscriptTextView: WordSelectingTextView {
 
   public var messageActions: [MessageAction] = []
 
+  /// The pointer over a copy mark is an arrow, because the mark is a control — the I-beam the rest
+  /// of the column shows is the one thing that would say it is text to be selected.
+  ///
+  /// Said on both of the calls the text view decides its own cursor on, which is not a choice:
+  /// `cursorUpdate` arrives when the pointer enters the view and not again, since the view's one
+  /// tracking area covers the whole of it — so a pointer that walks from the code onto the mark
+  /// is `mouseMoved`'s to answer, and it answers after `super`, which is where the I-beam and a
+  /// link's hand are set. A cursor rect would have been the other way, and there is none to add
+  /// to: NSTextView keeps no cursor rects at all (measured), and a rect is in document
+  /// coordinates besides, so covering the marks would mean asking every code slab in the
+  /// transcript for a corner only known once it is laid out — the walk a lazily laid out
+  /// conversation exists to avoid.
+  public override func cursorUpdate(with event: NSEvent) {
+    guard applyCopyMarkCursor(for: event) else {
+      super.cursorUpdate(with: event)
+      return
+    }
+  }
+
+  public override func mouseMoved(with event: NSEvent) {
+    super.mouseMoved(with: event)
+    _ = applyCopyMarkCursor(for: event)
+  }
+
+  /// The arrow, if the event is over a mark. Cheap enough for every step of the pointer: it is
+  /// one attribute lookup and one fragment already laid out, the same question the click asks.
+  private func applyCopyMarkCursor(for event: NSEvent) -> Bool {
+    guard copyMark(at: convert(event.locationInWindow, from: nil)) != nil else { return false }
+    NSCursor.arrow.set()
+    return true
+  }
+
   public override func mouseDown(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
     if let found = messageMark(at: point) {
       showMessageMenu(anchor: found.anchor, extent: found.range, at: point)
+      return
+    }
+    if let found = copyMark(at: point) {
+      copyCode(found.code, of: found.range)
       return
     }
     if event.clickCount >= 2, retoggleFold(for: event) { return }
@@ -300,7 +336,7 @@ public final class TranscriptTextView: WordSelectingTextView {
 
   /// The fork point of the message whose `…` is under `point`, or nil when the click is anywhere
   /// else. The mark is not text, so this is geometry: the message under the pointer, then the
-  /// same rectangle `drawMessageMarks` put its mark in — so what is hit is exactly what was drawn.
+  /// same rectangle `drawMarks` put its mark in — so what is hit is exactly what was drawn.
   public func messageMark(at point: NSPoint) -> (anchor: String, range: NSRange)? {
     guard let storage = textStorage, storage.length > 0 else { return nil }
     let index = characterIndexForInsertion(at: point)
@@ -512,26 +548,40 @@ public final class TranscriptTextView: WordSelectingTextView {
     super.cancelOperation(sender)
   }
 
-  // MARK: The message mark
+  // MARK: The block marks
 
-  /// A marked message's `…`, drawn at the vertical centre of the block's trailing edge — over the
-  /// text, not in it, which is what lets it sit at the block's centre at all: a fragment can only
-  /// draw its own line, and the message's height is known to nothing but the layout. Every marked
-  /// block that reaches the viewport gets one, found through the same attribute the click reads.
+  /// A marked message's `…` and a code slab's copy mark, drawn over the text rather than set in
+  /// it — which is what lets either sit where it does: a fragment can only draw its own line, and
+  /// a block's height and corner are known to nothing but the layout. Drawn rather than typed
+  /// also keeps both out of what a selection through the transcript copies.
   public override func draw(_ dirtyRect: NSRect) {
     drawTableSelection()
     super.draw(dirtyRect)
-    drawMessageMarks(in: dirtyRect)
+    drawMarks(in: dirtyRect)
   }
 
-  /// The blocks worth asking about are the ones the dirty rect touches, found by the fragments
-  /// under its top and bottom edges — not the viewport controller's range, which an offscreen
-  /// render (the snapshot tests) never has.
+  /// Everything the view draws over its fragments.
   ///
   /// Internal rather than private for the offscreen renderer, which draws the transcript fragment
   /// by fragment (a view never in a window snapshots empty) and so has to ask for this pass
   /// itself, in the same coordinates the view would use.
-  func drawMessageMarks(in dirtyRect: NSRect) {
+  func drawMarks(in dirtyRect: NSRect) {
+    enumerateMarkedBlocks(Transcript.forkAnchorKey, in: dirtyRect) { range in
+      guard let frame = blockFrame(of: range) else { return }
+      Self.drawMark(in: messageMarkRect(in: frame))
+    }
+    enumerateMarkedBlocks(Transcript.copyableCodeKey, in: dirtyRect) { range in
+      guard let line = blockFirstLineFrame(of: range) else { return }
+      Self.drawCopyMark(in: copyMarkRect(in: line), copied: copiedBlock == range.location)
+    }
+  }
+
+  /// Every block carrying `key` that `dirtyRect` touches, whole — the blocks worth asking about
+  /// are found by the fragments under the rect's top and bottom edges, not by the viewport
+  /// controller's range, which an offscreen render (the snapshot tests) never has.
+  private func enumerateMarkedBlocks(
+    _ key: NSAttributedString.Key, in dirtyRect: NSRect, _ body: (NSRange) -> Void
+  ) {
     guard let storage = textStorage, storage.length > 0, let layout = textLayoutManager,
       let content = layout.textContentManager
     else { return }
@@ -548,17 +598,15 @@ public final class TranscriptTextView: WordSelectingTextView {
     let end = offset(atY: dirtyRect.maxY).map { min($0 + 1, storage.length) } ?? storage.length
     guard end > start else { return }
     let whole = NSRange(location: 0, length: storage.length)
-    var drawn = Set<Int>()
-    storage.enumerateAttribute(
-      Transcript.forkAnchorKey, in: NSRange(location: start, length: end - start)
-    ) { value, partial, _ in
+    var seen = Set<Int>()
+    storage.enumerateAttribute(key, in: NSRange(location: start, length: end - start)) {
+      value, partial, _ in
       guard value != nil else { return }
       // The viewport may cut a block in two; the frame wants all of it.
       var range = NSRange(location: 0, length: 0)
-      _ = storage.attribute(
-        Transcript.forkAnchorKey, at: partial.location, longestEffectiveRange: &range, in: whole)
-      guard drawn.insert(range.location).inserted, let frame = blockFrame(of: range) else { return }
-      Self.drawMark(in: messageMarkRect(in: frame))
+      _ = storage.attribute(key, at: partial.location, longestEffectiveRange: &range, in: whole)
+      guard seen.insert(range.location).inserted else { return }
+      body(range)
     }
   }
 
@@ -584,6 +632,27 @@ public final class TranscriptTextView: WordSelectingTextView {
       y: origin.y + top.layoutFragmentFrame.minY,
       width: width - BlockBackgroundFragment.inset * 2,
       height: bottom.layoutFragmentFrame.maxY - top.layoutFragmentFrame.minY)
+  }
+
+  /// The first line of text in a slab, in the same coordinates `blockFrame` reports. A slab opens
+  /// with two blank paragraphs — its outer margin and its top pad — so the line the copy mark
+  /// belongs beside starts two characters in.
+  ///
+  /// A layout fragment is a *paragraph*, not a line, and a code slab's first paragraph is one
+  /// command that may wrap three times — so the fragment's own middle is the middle of the block,
+  /// which is where the mark went until this asked for the line fragment inside it.
+  private func blockFirstLineFrame(of range: NSRange) -> CGRect? {
+    guard let layout = textLayoutManager, let content = layout.textContentManager,
+      let frame = blockFrame(of: range), range.length > 4,
+      let first = content.location(content.documentRange.location, offsetBy: range.location + 2),
+      let paragraph = layout.textLayoutFragment(for: first)
+    else { return nil }
+    let box = paragraph.layoutFragmentFrame
+    // Fragment-local, so the line's own offset within the paragraph is added to the paragraph's.
+    let line = paragraph.textLineFragments.first?.typographicBounds
+    return CGRect(
+      x: frame.minX, y: textContainerOrigin.y + box.minY + (line?.minY ?? 0),
+      width: frame.width, height: line?.height ?? box.height)
   }
 
   /// Where a block's mark goes: the reserved room at its trailing edge (`messageMarkWidth`),
@@ -612,6 +681,88 @@ public final class TranscriptTextView: WordSelectingTextView {
           x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2)
       ).fill()
     }
+  }
+
+  // MARK: The copy mark
+
+  /// Where a code slab's copy mark goes: the room reserved at the trailing edge of its first
+  /// line (`copyMarkWidth`), the whole of which takes the click. The corner rather than the
+  /// block's centre, because a slab can be twenty lines tall and the mark has to be findable
+  /// without reading down it first — and because only the first line pays for the room.
+  private func copyMarkRect(in line: CGRect) -> CGRect {
+    CGRect(
+      x: line.maxX - Transcript.copyMarkWidth, y: line.minY,
+      width: Transcript.copyMarkWidth, height: line.height)
+  }
+
+  /// Two sheets, or a tick once the code has been taken — drawn rather than set from a symbol
+  /// image for a reason of the same kind as the dots': this pass runs both in the view, whose
+  /// context is flipped, and in the offscreen renderer, whose context carries a flipped
+  /// transform without the flag. An image reads the flag and would come out upside down in one
+  /// of the two; a path lands where its points are put in both.
+  private static func drawCopyMark(in rect: CGRect, copied: Bool) {
+    // Right-aligned to the text indent, so the glyph ends where a full line of code would.
+    let box = CGRect(x: rect.maxX - 12 - 11, y: rect.midY - 6, width: 11, height: 12)
+    let stroke = copied ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor
+    stroke.setStroke()
+    if copied {
+      let tick = NSBezierPath()
+      tick.lineWidth = 1.5
+      tick.lineCapStyle = .round
+      tick.lineJoinStyle = .round
+      tick.move(to: CGPoint(x: box.minX + 1, y: box.minY + 6))
+      tick.line(to: CGPoint(x: box.minX + 4, y: box.minY + 9))
+      tick.line(to: CGPoint(x: box.minX + 10, y: box.minY + 2.5))
+      tick.stroke()
+      return
+    }
+    let front = CGRect(x: box.minX, y: box.minY + 2.5, width: 8, height: 9.5)
+    let back = front.offsetBy(dx: 2.5, dy: -2.5)
+    // The back sheet is the part of it the front does not cover, so the two read as one behind
+    // the other rather than as a lattice.
+    NSGraphicsContext.saveGraphicsState()
+    let clip = NSBezierPath(rect: box.insetBy(dx: -2, dy: -2))
+    clip.append(NSBezierPath(roundedRect: front.insetBy(dx: -1, dy: -1), xRadius: 2, yRadius: 2))
+    clip.windingRule = .evenOdd
+    clip.addClip()
+    let backPath = NSBezierPath(roundedRect: back, xRadius: 1.5, yRadius: 1.5)
+    backPath.lineWidth = 1
+    backPath.stroke()
+    NSGraphicsContext.restoreGraphicsState()
+    let frontPath = NSBezierPath(roundedRect: front, xRadius: 1.5, yRadius: 1.5)
+    frontPath.lineWidth = 1
+    frontPath.stroke()
+  }
+
+  /// The code slab whose mark is showing a tick, by where it starts. A copy has no other way to
+  /// say it took: nothing moves on screen and the pasteboard is somewhere else.
+  private var copiedBlock: Int?
+  private var copiedReset: Timer?
+
+  /// The code of the slab whose copy mark is under `point`, or nil anywhere else. The mark is not
+  /// text, so this is geometry: the block under the pointer, then the same rectangle
+  /// `drawMarks` put its mark in — so what is hit is exactly what was drawn.
+  public func copyMark(at point: NSPoint) -> (code: String, range: NSRange)? {
+    guard let storage = textStorage, storage.length > 0 else { return nil }
+    let index = characterIndexForInsertion(at: point)
+    guard let found = Transcript.copyableCode(in: storage, at: min(index, storage.length - 1)),
+      let line = blockFirstLineFrame(of: found.range), copyMarkRect(in: line).contains(point)
+    else { return nil }
+    return found
+  }
+
+  /// Take the block's code, and say so for a beat.
+  public func copyCode(_ code: String, of range: NSRange, to pasteboard: NSPasteboard = .general) {
+    pasteboard.clearContents()
+    pasteboard.declareTypes([.string], owner: nil)
+    pasteboard.setString(code, forType: .string)
+    copiedBlock = range.location
+    copiedReset?.invalidate()
+    copiedReset = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: false) { [weak self] _ in
+      self?.copiedBlock = nil
+      self?.needsDisplay = true
+    }
+    needsDisplay = true
   }
 
   /// Open the message's menu under the `…` that was clicked. Nothing to offer is not an empty

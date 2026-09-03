@@ -43,9 +43,15 @@ public enum Transcript {
     var fill: NSColor?
     var accent: NSColor?
     var indent: CGFloat = 10
-    /// Extra room kept clear at the trailing edge of every line, beyond the indent — for
-    /// something drawn over the block there (a message's `…`) that no line may run under.
+    /// Extra room kept clear at the trailing edge, beyond the indent — for something drawn over
+    /// the block there (a message's `…`, a code slab's copy mark) that no line may run under.
     var trailingRoom: CGFloat = 0
+    /// Which lines that room is kept on. A mark at the block's vertical centre could end up
+    /// beside any of them, so it costs every line; one at the top-right corner can only ever sit
+    /// beside the first, and taking the width off a whole code block for it would wrap the rest
+    /// of the lines early for nothing.
+    var trailingRoomLines: TrailingRoomLines = .every
+    enum TrailingRoomLines { case every, first }
     var spacingBefore: CGFloat = 8
     var spacingAfter: CGFloat = 8
     var lineHeight: CGFloat = 1.15
@@ -68,14 +74,24 @@ public enum Transcript {
       location = NSMaxRange(range)
     }
 
+    // Which line `.first` means: the first with anything on it. A slab opens with a blank pad
+    // paragraph, and room reserved there would be kept clear of nothing.
+    let roomLine =
+      style.trailingRoom > 0 && style.trailingRoomLines == .first
+      ? ranges.firstIndex(where: {
+        !string.substring(with: $0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      })
+      : nil
+
     for (index, range) in ranges.enumerated() {
       let isFirst = index == 0
       let isLast = index == ranges.count - 1
+      let room = style.trailingRoomLines == .every || index == roomLine ? style.trailingRoom : 0
 
       let paragraph = NSMutableParagraphStyle()
       paragraph.firstLineHeadIndent = style.indent
       paragraph.headIndent = style.indent
-      paragraph.tailIndent = -(style.indent + style.trailingRoom)
+      paragraph.tailIndent = -(style.indent + room)
       paragraph.lineHeightMultiple = style.lineHeight
       paragraph.paragraphSpacingBefore = isFirst ? style.spacingBefore : 0
       paragraph.paragraphSpacing = isLast ? style.spacingAfter : 0
@@ -322,6 +338,9 @@ public enum Transcript {
 
   // MARK: - Block builders
 
+  /// A code slab, and the one block a copy mark is drawn on — see `copyableCodeKey`. Both the
+  /// fences an agent writes and an opened tool call's command come through here, which is why
+  /// marking this one function is the whole of it.
   private static func codeBlock(_ body: [String]) -> NSAttributedString {
     let text = NSMutableAttributedString()
     for line in body {
@@ -332,7 +351,45 @@ public enum Transcript {
             .font: mono, .foregroundColor: NSColor.labelColor,
           ]))
     }
-    return slab(text, BlockStyle(fill: .quaternarySystemFill, indent: 12, lineHeight: 1.1))
+    let block = NSMutableAttributedString(
+      attributedString: slab(
+        text,
+        BlockStyle(
+          fill: .quaternarySystemFill, indent: 12, trailingRoom: copyMarkWidth,
+          trailingRoomLines: .first, lineHeight: 1.1)))
+    // What the mark copies, carried rather than recovered from the storage: the pads and margins
+    // a slab is built out of are blank lines like any other, so the block's own characters cannot
+    // say where its text starts and stops.
+    block.addAttribute(
+      copyableCodeKey, value: body.joined(separator: "\n"),
+      range: NSRange(location: 0, length: block.length))
+    return block
+  }
+
+  /// The room a code slab's copy mark takes at the trailing edge of its first line: the glyph, a
+  /// gap so no code touches it, and the block's own indent on its far side. Drawn, never typed —
+  /// the same reason a message's `…` is (see `messageMarkWidth`), and here it also has to stay
+  /// out of what the mark itself copies.
+  public static let copyMarkWidth: CGFloat = 30
+
+  /// The text a code slab's copy mark puts on the pasteboard, carried across the whole of the
+  /// slab. No trailing newline: what is copied here is most often a shell command, and a
+  /// newline pasted into a terminal is the command run rather than offered.
+  public static let copyableCodeKey = NSAttributedString.Key("hukan.copyableCode")
+
+  /// The code under a character offset, and how far the slab it marks runs. Nil anywhere else —
+  /// including inside a user message, whose own slab flattens the code block it contains.
+  public static func copyableCode(in storage: NSAttributedString, at index: Int) -> (
+    code: String, range: NSRange
+  )? {
+    guard index >= 0, index < storage.length else { return nil }
+    var range = NSRange(location: 0, length: 0)
+    guard
+      let code = storage.attribute(
+        copyableCodeKey, at: index, longestEffectiveRange: &range,
+        in: NSRange(location: 0, length: storage.length)) as? String
+    else { return nil }
+    return (code, range)
   }
 
   private static func quote(_ body: [String], base: NSFont) -> NSAttributedString {
@@ -899,6 +956,10 @@ public enum Transcript {
           fill: .controlAccentColor.withAlphaComponent(0.14),
           accent: .controlAccentColor.withAlphaComponent(0.7),
           indent: 14, trailingRoom: forkAnchor == nil ? 0 : messageMarkWidth), margin: 10))
+    // A fence you typed is not a code slab: the message's own `applyBlock` has just written its
+    // indent and its tint over every paragraph inside, so there is no block for a mark to sit at
+    // the corner of, and the room it would want is the room the `…` is already using.
+    block.removeAttribute(copyableCodeKey, range: NSRange(location: 0, length: block.length))
     if let forkAnchor {
       block.addAttribute(
         forkAnchorKey, value: forkAnchor, range: NSRange(location: 0, length: block.length))
@@ -912,7 +973,7 @@ public enum Transcript {
   /// The mark is the message's own menu and it is drawn, never typed — as text it would either sit
   /// inline, wrapping wherever the line happened to end, or take a line of its own to reach the
   /// edge, and it would be copied out with the message, which is furniture no one said. See
-  /// `TranscriptTextView.drawMessageMarks`.
+  /// `TranscriptTextView.drawMarks`.
   public static let messageMarkWidth: CGFloat = 30
 
   /// The uuid a fork started from this block would truncate at. Present across the whole of a

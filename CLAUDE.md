@@ -172,6 +172,32 @@ Workspace (one window)
   what a selection *through* the transcript yields, where the table is one attachment inside prose
   and pipes are what reads there. A block of cells carries the header whether the drag touched it
   or not, since that is what says what the rows are.
+- **A code block is taken from its corner, and the mark is drawn rather than typed.** The command
+  an agent hands you is what is lifted out of a transcript most, and by hand that is a triple-click
+  — a selection gesture that has to be aimed, and that stops being one act the moment the block is
+  more than one line. Every fenced block and every opened tool call's body are one builder, so one
+  mark serves both; the folded line is not one of them, having no block and a clipped summary. It
+  sits at the **top-right** rather than at the vertical centre a message's `…` takes, because a
+  slab can be twenty lines tall and the mark has to be findable without reading down it first —
+  which is also what makes it cheap, since only the first line has to keep its trailing edge clear
+  where the centred mark costs every line one. **Drawn, never text**, the same call the `…` makes
+  and for the same reason: a transcript is selected and copied from constantly, and furniture
+  nobody said must not come out with the selection — which is also why it is not a right-click
+  item, that menu being spoken for. **What it copies carries no trailing newline**, since what is
+  copied here is usually a shell command and a newline pasted into a terminal is the command run
+  rather than offered. The glyph turns to a tick for a beat, which is the whole of the report
+  available: nothing else moves, and the pasteboard is somewhere else. **The pointer over it is an
+  arrow**, since the I-beam the rest of the column shows is the one thing that would say the mark
+  is text to be selected. It is said on both of the calls the text view sets its own cursor on,
+  which is not a choice: the view's one tracking area covers the whole column, so a pointer
+  entering it is answered once and the step from the code onto the mark is never an entry at all
+  — that one belongs to the move, after the call that decides the I-beam and a link's hand. The
+  other way round would have been a cursor rect, and there is none to add to: NSTextView keeps no
+  cursor rects at all, measured — and a rect is in document coordinates besides, so covering the
+  marks would mean asking every code slab in the transcript for a corner known only once it is
+  laid out, which is the walk a lazily laid out conversation exists to avoid. **A fence inside a message
+  you typed is not one of these** — a message's own block styling writes over the code block within
+  it, so there is no slab there to have a corner, and that corner is where its `…` already is.
 - **A double-click selects the whole token, and a token is what an agent hands you.** A commit
   hash, a session id, a branch name, a path, a URL, an option, a file and its line: the things
   this window is read for, each one unit. macOS breaks all of them, and only on a Japanese line —
