@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 
 /// The panel's outline, subclassed for the two keys a row answers to. ⏎ names the row — the
 /// Finder's key, and Xcode's navigator's — and ⌘↓ opens it as a lasting tab, which is where that
@@ -8,6 +9,7 @@ import AppKit
 private final class FilesOutlineView: NSOutlineView {
   var onActivate: (() -> Void)?
   var onRename: (() -> Void)?
+  var onQuickLook: (() -> Void)?
 
   override func keyDown(with event: NSEvent) {
     let command = event.modifierFlags.contains(.command)
@@ -19,6 +21,12 @@ private final class FilesOutlineView: NSOutlineView {
     // ⌘↓, the Finder's open.
     if event.keyCode == 125, command {
       onActivate?()
+      return
+    }
+    // Space, the Finder's Quick Look. It takes the key off type-select, which a tree read by
+    // eye and narrowed by a field of its own has no use for.
+    if event.keyCode == 49, !command {
+      onQuickLook?()
       return
     }
     super.keyDown(with: event)
@@ -86,7 +94,8 @@ private final class ResultLine: NSObject {
 /// files — the review set, the thing an agent just wrote. It carries no number: the size of the
 /// change is the toolbar's, and repeating it here would say the same thing twice.
 final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
-  NSOutlineViewDelegate, NSSearchFieldDelegate, NSMenuDelegate
+  NSOutlineViewDelegate, NSSearchFieldDelegate, NSMenuDelegate, QLPreviewPanelDataSource,
+  QLPreviewPanelDelegate
 {
   /// A single click / arrow-key move: preview the file (at `line` for a content hit).
   var onSelect: ((String, Int?) -> Void)?
@@ -282,6 +291,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     outline.doubleAction = #selector(activateSelected)
     outline.onActivate = { [weak self] in self?.activateSelected() }
     outline.onRename = { [weak self] in self?.renameSelected() }
+    outline.onQuickLook = { [weak self] in self?.toggleQuickLook() }
     contextMenu.delegate = self
     outline.menu = contextMenu
     // Out of the window it is a copy and only a copy: an index must never be able to *move* the
@@ -980,15 +990,16 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     loadViewIfNeeded()
     let waiting = shownWait.map(\.note) ?? "—"
     let scope = isChangedOnly ? "changed" : "all"
+    let preview = isQuickLookShowing ? (selectedRowPath() ?? "—") : "—"
     if isShowingResults {
       let lines = results.reduce(0) { $0 + $1.lines.count }
       return "results files:\(results.count) lines:\(lines)\(truncated ? "+" : "") "
-        + "query:\(filterField.stringValue) scope:\(scope) waiting:\(waiting)"
+        + "query:\(filterField.stringValue) scope:\(scope) waiting:\(waiting) preview:\(preview)"
     }
     let index = worktree?.index.map { $0.isBuilt ? "built" : "walking" } ?? "—"
     return "tree rows:\(outline.numberOfRows) query:\(filterField.stringValue) "
       + "scope:\(scope) waiting:\(waiting) naming:\(editingPath ?? "—") field:\(hasFieldEditor) "
-      + "index:\(index)"
+      + "index:\(index) preview:\(preview)"
   }
 
   /// Whether the row being named really has the field editor — which is the half `editingPath`
@@ -1006,6 +1017,35 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     endNaming(commit: true, handingBackFocus: true)
     filterField.stringValue = query
     refresh()
+  }
+
+  /// Space on this row, without a click at coordinates to put the selection there first: the row
+  /// is selected and the panel toggled, which is what the key does. Keyed to the row rather than
+  /// a plain toggle, so previewing one file and then another reads as it does on screen — the
+  /// same path twice closes the panel, a different one moves the preview onto it. What it did is
+  /// read back through `report`'s `preview:`, the panel being the system's own and having nothing
+  /// else to say for itself.
+  func previewForScripting(path: String) -> String {
+    loadViewIfNeeded()
+    guard let url = url(for: path), FileManager.default.fileExists(atPath: url.path) else {
+      return "no such path"
+    }
+    if isQuickLookShowing, selectedRowPath() == path {
+      QLPreviewPanel.shared().orderOut(nil)
+      // The panel zooms out rather than vanishing, so an answer taken straight away would name a
+      // preview already on its way off the screen. Bounded, since what is waited for is an
+      // animation and a wait that never ends is worse than a line one beat stale.
+      let deadline = Date().addingTimeInterval(1)
+      while isQuickLookShowing, Date() < deadline {
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+      }
+      return report
+    }
+    select(path: path)
+    guard selectedRowPath() == path else { return "no row" }
+    showQuickLook()
+    refreshQuickLook()
+    return report
   }
 
   /// What the right-click menu offers on `path` (empty for the panel's own background), a line
@@ -1182,10 +1222,106 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   }
 
   func outlineViewSelectionDidChange(_ notification: Notification) {
+    refreshQuickLook()
     guard !isSelectingQuietly, let pick = picked(outline.item(atRow: outline.selectedRow)) else {
       return
     }
     onSelect?(pick.path, pick.line)
+  }
+
+  // MARK: Quick Look
+
+  /// Space previews the selected row in the Finder's own panel (`QLPreviewPanel`), which is the
+  /// whole of why this is affordable: the previews are the system's, so a `.pdf`, a `.mov`, a
+  /// font and an archive are all answered without hukan learning anything about them — where the
+  /// file pane, which is the editor, reads text and draws the handful of bitmap formats it has a
+  /// table for and says so about everything else. It is a look and never a way in: the panel
+  /// closes on the same key, and opening a file to work on it stays the double-click's and ⌘↓'s.
+  /// So it is offered on a directory too, which has no tab to open at all.
+  ///
+  /// It follows the selection while it is up, so ↑/↓ walks the tree with the preview keeping up —
+  /// which is what the panel is actually for, a run of files being read one after another rather
+  /// than a row guessed right the first time. The arrows have to be handed back to the outline
+  /// (`previewPanel(_:handle:)`) because the panel is key while it is showing.
+  @objc private func toggleQuickLook() {
+    guard QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible else {
+      showQuickLook()
+      return
+    }
+    QLPreviewPanel.shared().orderOut(nil)
+  }
+
+  /// The panel finds who feeds it by walking the key window's responder chain, so the tree has to
+  /// hold the focus before it opens — which the key press already implies and the menu item does
+  /// not, that one being reachable with the focus still in the composer. Without it the preview
+  /// comes up fed by nobody and empty.
+  private func showQuickLook() {
+    guard quickLookURL != nil else { return }
+    outline.window?.makeFirstResponder(outline)
+    QLPreviewPanel.shared().makeKeyAndOrderFront(nil)
+  }
+
+  /// True while the panel is up and it is this panel feeding it — a window next door may be the
+  /// one holding it.
+  private var isQuickLookShowing: Bool {
+    guard QLPreviewPanel.sharedPreviewPanelExists() else { return false }
+    let panel = QLPreviewPanel.shared()
+    return panel?.isVisible == true && panel?.dataSource === self
+  }
+
+  /// What the panel previews: the selected row, whatever kind of row it is — a tree node, a
+  /// result's file, one of its lines — since all three name one path in the worktree. A row
+  /// naming a file that is no longer there previews nothing rather than an empty panel.
+  private var quickLookURL: URL? {
+    guard let path = selectedRowPath(), !path.isEmpty, let url = url(for: path) else { return nil }
+    return FileManager.default.fileExists(atPath: url.path) ? url : nil
+  }
+
+  /// The selection moved under an open panel. Cheap enough to run on every selection change:
+  /// it asks whether the panel exists at all before anything else, and it exists only once
+  /// something has pressed Space.
+  private func refreshQuickLook() {
+    guard isQuickLookShowing else { return }
+    QLPreviewPanel.shared().reloadData()
+  }
+
+  override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+  override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+    panel.dataSource = self
+    panel.delegate = self
+  }
+
+  override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+    panel.dataSource = nil
+    panel.delegate = nil
+  }
+
+  func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { quickLookURL == nil ? 0 : 1 }
+
+  func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
+    quickLookURL as NSURL?
+  }
+
+  /// The zoom the panel opens and closes with, aimed at the row it came from: without it the
+  /// preview grows out of the middle of the screen, which says nothing about which row is being
+  /// looked at — and while the panel follows the arrows, that is the one thing worth saying.
+  func previewPanel(_ panel: QLPreviewPanel!, sourceFrameOnScreenFor item: (any QLPreviewItem)!)
+    -> NSRect
+  {
+    let row = outline.selectedRow
+    guard row >= 0, let window = outline.window else { return .zero }
+    return window.convertToScreen(outline.convert(outline.rect(ofRow: row), to: nil))
+  }
+
+  /// The panel takes the keyboard while it is up, so the two keys that move the selection under
+  /// it are handed back to the tree. Nothing else is: the panel's own keys — Space to close,
+  /// ⌘Return for full screen — are the system's, and a key nobody claims must go on meaning what
+  /// the panel says it means.
+  func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
+    guard event.type == .keyDown, event.keyCode == 125 || event.keyCode == 126 else { return false }
+    outline.keyDown(with: event)
+    return true
   }
 
   // MARK: Context menu
@@ -1253,6 +1389,10 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     if !target.isRoot, !target.isDirectory {
       add("Open in New Tab", #selector(openTargetInNewTab))
     }
+    // Space's other end. Every key this panel has is in this menu — ⏎ as Rename, ⌘↓ as Open in
+    // New Tab — because the menu is where a key is found by someone who does not already know it
+    // is there. Not on the background, which is not a row and has no file to preview.
+    if !target.isRoot { add("Quick Look", #selector(quickLookTarget)) }
     add("Reveal in Finder", #selector(revealTargetInFinder))
     add("Open in Terminal", #selector(openTerminalAtTarget))
 
@@ -1281,6 +1421,15 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   @objc private func openTargetInNewTab() {
     guard let target = menuTarget, !target.isDirectory else { return }
     onActivate?(target.path, target.line)
+  }
+
+  /// The menu opens the preview rather than toggling it: a menu item is a thing chosen, where
+  /// Space is a key pressed twice.
+  @objc private func quickLookTarget() {
+    guard let target = menuTarget else { return }
+    select(path: target.path)
+    showQuickLook()
+    refreshQuickLook()
   }
 
   @objc private func revealTargetInFinder() {

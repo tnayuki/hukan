@@ -202,7 +202,9 @@ final class FoldCommand: NSScriptCommand {
 /// cannot assert. `menu` reads back the right-click menu a row would carry, for the same reason;
 /// `creating`/`folder`/`renaming`/`deleting` run what that menu does, and are guarded, since each
 /// of them stands in for a human's answer — a name typed on the row, or the alert before a
-/// delete. `dropping … into …` is the drop, guarded for both halves of the same reason: the
+/// delete. `previewing` is Space on a row — Quick Look, whose panel is the system's and has
+/// nothing to read back, so what it did is reported through `files`'s own `preview:`.
+/// `dropping … into …` is the drop, guarded for both halves of the same reason: the
 /// collision alert is a human's answer, and which of the two acts a drag is — `moving` — is
 /// otherwise only reachable by holding a modifier over a drag at coordinates.
 @objc(FilesPanelCommand)
@@ -220,6 +222,9 @@ final class FilesPanelCommand: NSScriptCommand {
     }
     if let path = argument("menu", as: String.self) {
       return panel.menuForScripting(path: path)
+    }
+    if let path = argument("previewing", as: String.self) {
+      return panel.previewForScripting(path: path)
     }
     // The writes the menu makes. Guarded, like `approve`: each stands in for a human's answer, so
     // a scripted one is hukan acting on a worktree with nobody having said yes.

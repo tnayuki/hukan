@@ -265,6 +265,9 @@
             <parameter name="menu" code="Rmnu" type="text" optional="yes" description="report the right-click menu this path's row would carry, a line each; empty text for the panel's background">
                 <cocoa key="menu"/>
             </parameter>
+            <parameter name="previewing" code="Qlok" type="text" optional="yes" description="Quick Look this path, as Space on its row does — the same path again closes the panel; the reported preview: says what it is showing">
+                <cocoa key="previewing"/>
+            </parameter>
             <parameter name="creating" code="Mkfl" type="text" optional="yes" description="New File in this directory (empty text for the worktree root), as the menu does — the row it makes goes into naming (guarded)">
                 <cocoa key="creating"/>
             </parameter>

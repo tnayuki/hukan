@@ -60,13 +60,17 @@ final class FilesPanelMenuTests: XCTestCase {
     XCTAssertTrue(file.contains("Copy Path"), "\(file)")
     XCTAssertTrue(file.contains("Copy Absolute Path"), "both paths are their own item")
     XCTAssertTrue(file.contains("Rename…") && file.contains("Delete…"), "\(file)")
+    XCTAssertTrue(file.contains("Quick Look"), "Space's other end is in the menu: \(file)")
 
     let directory = panel.menuForScripting(path: "src").components(separatedBy: "\n")
     XCTAssertFalse(directory.contains("Open in New Tab"), "a directory has no tab: \(directory)")
     XCTAssertTrue(directory.contains("Rename…"), "\(directory)")
+    XCTAssertTrue(
+      directory.contains("Quick Look"), "a directory has no tab but it has a preview: \(directory)")
 
     let background = panel.menuForScripting(path: "").components(separatedBy: "\n")
     XCTAssertTrue(background.contains("New File…"), "\(background)")
+    XCTAssertFalse(background.contains("Quick Look"), "the background is not a row: \(background)")
     XCTAssertFalse(background.contains("Copy Path"), "the root has no relative path")
     XCTAssertFalse(background.contains("Delete…"), "\(background)")
   }
@@ -75,6 +79,17 @@ final class FilesPanelMenuTests: XCTestCase {
   func testAPathThatIsNotThereHasNoMenu() throws {
     let panel = panel(on: try makeWorktree(files: ["a.swift"]))
     XCTAssertEqual(panel.menuForScripting(path: "b.swift"), "no such path")
+  }
+
+  /// The panel previews a file that is there and nothing else — the row is what it is aimed by,
+  /// so a path with no row is refused rather than previewing whatever happened to be selected.
+  /// The panel itself is the system's and is not opened here; what is checked is the refusal and
+  /// that a panel showing nothing says so.
+  @MainActor
+  func testQuickLookIsAimedAtARowThatExists() throws {
+    let panel = panel(on: try makeWorktree(files: ["a.swift"]))
+    XCTAssertEqual(panel.previewForScripting(path: "b.swift"), "no such path")
+    XCTAssertTrue(panel.report.contains("preview:—"), panel.report)
   }
 
   // MARK: New File

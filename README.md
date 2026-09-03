@@ -121,9 +121,14 @@ thousand files nobody wants either done to. An ignored file in an ordinary direc
 over it drops the one still reading rather than queueing behind it. The ± scopes both to the
 changed files, and every row carries its own diffstat.
 
+Space previews the selected row — the Finder's key and the Finder's own Quick Look panel, so a
+PDF, a video, a font or an archive is looked at without leaving the window and without becoming a
+tab. It closes on the same key, it follows the arrows while it is up, and a directory row gets one
+too.
+
 A right-click on a row is where hukan writes to a worktree itself. It opens the row in a lasting
-tab, reveals it in the Finder, opens a terminal in its directory, and copies its path — twice
-over, relative to the worktree and absolute. Below that it makes a new file, renames the row and
+tab, previews it in Quick Look, reveals it in the Finder, opens a terminal in its directory, and
+copies its path — twice over, relative to the worktree and absolute. Below that it makes a new file, renames the row and
 deletes it. A name is typed on the row itself: renaming edits it in place, and a new file is made
 under an untitled name and handed straight to the same edit. ⏎ on a row starts it, the way the
 Finder does, and ⌘↓ is what opens a row from the keyboard. The name is read against the directory

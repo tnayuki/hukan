@@ -360,6 +360,25 @@ Workspace (one window)
   gutter, no base and no dirty state, so nothing here can be saved or asked about on the way out.
   **And there is no image diff**: the file pane has no diff at all by the decision above, so a
   changed image is the one on disk and what it replaced is the PR's to show.
+- **Space previews the row, and the previewer is the system's.** The Finder's key and the
+  Finder's panel, which is the whole of what makes it affordable: a `.pdf`, a `.mov`, a font, an
+  archive are all answered without hukan learning a thing about any of them — and those are
+  exactly the files the pane next door refuses, that one being the editor, reading text and
+  drawing the handful of bitmap formats it has a table for. So this is not a second file viewer
+  growing beside the first; it is the one look at a file that hukan does not have to write.
+  **It is a look and never a way in**: it closes on the same key, and opening a file to work on it
+  stays the double-click's and ⌘↓'s. Which is why a *directory* gets one too — the row with no tab
+  to open at all is the row a preview has the most to add to. **It follows the selection while it
+  is up**, so ↑/↓ walks the tree with the preview keeping up, a run of files being read one after
+  another rather than a row guessed right the first time; the panel holds the keyboard while it
+  shows, so those two keys are handed back to the tree and nothing else is — the panel's own keys
+  are the system's, and a key nobody claims must go on meaning what the panel says it means.
+  What it takes the key from is type-select, which a tree narrowed by a field of its own has no
+  use for. **It is in the right-click menu as well**, because every key this panel has is: ⏎ is
+  Rename, ⌘↓ is Open in New Tab, and a menu is where a key is found by someone who does not
+  already know it is there. Not on the panel's background, which is not a row and names no file;
+  and from the menu it opens rather than toggles, a menu item being a thing chosen where Space is
+  a key pressed twice.
 - **A row drags out as a file URL, and a file dropped on the panel is the same read from the
   other side.** The composer already takes a file dropped from the Finder and turns it into an
   attachment chip — the agent reads it from the path the chip carries — so the panel had only to
@@ -1512,7 +1531,7 @@ this — extend it rather than reaching for coordinates. The dictionary is an ob
 
 ```sh
 osascript -e 'tell application "Hukan Dev" to get name of every worktree of every repository of window 1'
-osascript -e 'tell application "Hukan Dev" to files'   # then: files filtering "…" / files searching "…" / files menu "…"
+osascript -e 'tell application "Hukan Dev" to files'   # then: files filtering "…" / files searching "…" / files menu "…" / files previewing "…"
 osascript -e 'tell application "Hukan Dev" to send "..." to (selected session of window 1)'
 osascript -e 'tell application "Hukan Dev" to get transcript of (selected session of window 1)'
 osascript -e 'tell application "Hukan Dev" to get history of worktree "main" of repository 1 of window 1'
@@ -1537,7 +1556,9 @@ only under `HUKAN_SCRIPTING_GUARDED=1`, since a session's own agent can reach `o
 otherwise approve its own calls. The files panel has a hidden verb for the same reason the tabs
 do — it is rows and not text, so `files` reports what the panel is showing and which of the two
 gestures put it there, and `filtering`/`searching` run them. `files menu "<path>"` reads back the
-right-click menu that row would carry, a line each; the writes that menu makes
+right-click menu that row would carry, a line each, and `files previewing "<path>"` is Space on
+that row — the Quick Look panel is the system's own and has nothing to read back, so what it is
+showing is reported through `files` itself; the writes that menu makes
 (`creating`/`folder`/`renaming … to …`/`deleting`) are guarded, because each of them stands in for
 a human's answer — a name typed on the row, or the alert before a delete. `tabs` is the same
 answer for the strip as a whole, which is what a relaunch has to be checked against: which tabs
