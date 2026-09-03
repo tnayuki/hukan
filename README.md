@@ -146,8 +146,13 @@ included. A name the destination already has gets the Finder's answer — Keep B
 with Apply to All when several collide — except for a folder, which is refused rather than
 replaced.
 
-Tabs are files (editable source, or a note where the file is not text), commits (read-only), web tabs (one shared cookie store,
-passing as this machine's Safari) and terminals (named as Terminal.app names one). The plain
+Tabs are files (editable source; an image is drawn instead, and anything else names its own kind
+rather than opening blank), commits (read-only), web tabs (one shared cookie store, passing as
+this machine's Safari) and terminals (named as Terminal.app names one). An image opens at actual
+pixels — one image pixel to one device pixel, so a screenshot is as sharp and as large as it was
+taken — over a checkerboard where it is transparent, with its pixel count and size under it; a
+file holding several bitmaps, an icon set, shows the largest and says so. What does not fit
+scrolls, and a pinch, a two-finger double tap or the zoom keys get closer. The plain
 new-tab key opens a browser rather than a terminal — the shell work here is the agent's — and
 the strip walks, numbers, closes and reorders the way a browser's does: a new tab opens at the
 end, a drag puts one wherever it is dropped, and closing the active one lands on its right-hand

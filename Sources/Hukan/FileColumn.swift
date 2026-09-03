@@ -68,6 +68,20 @@ final class EditorTextView: WordSelectingTextView, UndoStackOwner {
 final class FileContentViewController: NSViewController {
   private let scrollView: NSScrollView
   private let textView: NSTextView
+  /// The other half of the pane, for a file whose content is pixels. Held rather than built on
+  /// demand because a tab is a file and a file does not change kind — except by a rename, which
+  /// re-reads and may cross between the two.
+  private let imagePane = ImagePane()
+  /// Which half is in front. The pane is one tab either way: a buffer is `(Worktree, relative
+  /// path)` whatever the bytes are, so an image is not a second kind of tab, it is this pane
+  /// answering differently.
+  private var showsImage = false {
+    didSet {
+      guard showsImage != oldValue, isViewLoaded else { return }
+      scrollView.isHidden = showsImage
+      imagePane.isHidden = !showsImage
+    }
+  }
   private var gutter: EditorGutter?
   /// The open file's syntax highlighter, held for exactly as long as the file is showing —
   /// nil when no vendored grammar covers it, and the text renders plain.
@@ -152,13 +166,21 @@ final class FileContentViewController: NSViewController {
     scrollView.rulersVisible = true
     self.gutter = gutter
 
+    imagePane.translatesAutoresizingMaskIntoConstraints = false
+    imagePane.isHidden = true
+
     let container = NSView()
     container.addSubview(scrollView)
+    container.addSubview(imagePane)
     NSLayoutConstraint.activate([
       scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
       scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
       scrollView.topAnchor.constraint(equalTo: container.topAnchor),
       scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+      imagePane.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      imagePane.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      imagePane.topAnchor.constraint(equalTo: container.topAnchor),
+      imagePane.bottomAnchor.constraint(equalTo: container.bottomAnchor),
     ])
     view = container
     render()
@@ -276,6 +298,7 @@ final class FileContentViewController: NSViewController {
   func render(preservingScroll: Bool = false) {
     loadViewIfNeeded()
     guard let worktree, let path else {
+      showsImage = false
       textView.isEditable = false
       scrollView.rulersVisible = true
       savedText = ""
@@ -289,11 +312,16 @@ final class FileContentViewController: NSViewController {
     let url = Self.fileURL(worktree: worktree, path: path)
     let restoreOrigin = preservingScroll ? scrollView.contentView.bounds.origin : nil
     DispatchQueue.global(qos: .userInitiated).async {
-      let read = Self.read(at: url)
+      let read = Self.read(at: url, path: path)
       DispatchQueue.main.async { [weak self] in
         guard let self, self.path == path else { return }
+        if case .image(let image) = read {
+          self.showImage(image, keepingPlace: preservingScroll)
+          return
+        }
         let isText = read.isText
         let rendered = read.rendered
+        self.showsImage = false
         // What the buffer has to differ from to be worth saving — the text just read, which is
         // what the file holds until this pane writes it. Set before the text lands, since landing
         // it is itself an edit of the storage and the answer has to be ready for it.
@@ -342,6 +370,38 @@ final class FileContentViewController: NSViewController {
     }
   }
 
+  /// Land an image in the pane. Nothing the text half keeps means anything here — there is no
+  /// buffer to be dirty, no base to diff against, no grammar and no lines to number — so all of
+  /// it is cleared rather than left standing from whatever the tab showed before.
+  private func showImage(_ image: ImageFile.Loaded, keepingPlace: Bool) {
+    savedText = ""
+    textView.isEditable = false
+    textView.textStorage?.setAttributedString(NSAttributedString(string: ""))
+    SyntaxHighlighting.clear(in: textView)
+    scrollView.rulersVisible = false
+    fileBase = Git.FileBase()
+    gutter?.lineChanges = Git.LineChanges()
+    isDirty = false
+    isLoaded = true
+    pendingReveal = nil
+    imagePane.show(image, keepingPlace: keepingPlace)
+    showsImage = true
+  }
+
+  /// Whether the tab is showing an image rather than source. What the zoom keys are aimed by,
+  /// and what ⌘F is kept away from — there is nothing in a picture for a find bar to reach.
+  var isShowingImage: Bool { isViewLoaded && showsImage }
+
+  /// The image half's own readings, for the checks that have nowhere else to come from: the size
+  /// it is drawn at in points (pixels over the display's scale — actual pixels), and how far a
+  /// pinch or a key has taken it from there.
+  var imageDrawnSize: NSSize? { isShowingImage ? imagePane.drawnSize : nil }
+  var imageMagnification: CGFloat? { isShowingImage ? imagePane.magnification : nil }
+  var imageMaxMagnification: CGFloat? { isShowingImage ? imagePane.maxMagnification : nil }
+
+  func zoomImage(by delta: Int) { imagePane.zoom(by: delta) }
+  func resetImageZoom() { imagePane.resetZoom() }
+
   /// Scroll to `line` (1-based) and select `term` on it — or the whole line when the term is
   /// absent, as it is once the line was edited. The files panel's hand-off for a content hit.
   /// Deferred until the file's text has landed.
@@ -377,11 +437,13 @@ final class FileContentViewController: NSViewController {
   /// and the async load only turns editing on under the caret already placed here.
   func focus() {
     loadViewIfNeeded()
-    view.window?.makeFirstResponder(textView)
+    view.window?.makeFirstResponder(showsImage ? imagePane : textView)
   }
 
-  /// ⌘F: the text view's find bar.
+  /// ⌘F: the text view's find bar. The menu item is already disabled over an image (see the
+  /// desk's `canFind`); this is the other side of the same rule, for every other way in.
   func performFind(_ sender: Any?) {
+    guard !showsImage else { return }
     view.window?.makeFirstResponder(textView)
     textView.performFindPanelAction(sender)
   }
@@ -455,6 +517,7 @@ final class FileContentViewController: NSViewController {
   private enum SourceRead {
     case text(String)
     case notText(String)
+    case image(ImageFile.Loaded)
 
     var isText: Bool {
       if case .text = self { return true }
@@ -472,14 +535,29 @@ final class FileContentViewController: NSViewController {
         return NSAttributedString(
           string: note,
           attributes: [.font: monospace, .foregroundColor: NSColor.secondaryLabelColor])
+      // Never asked for: an image is shown by `showImage`, which never reaches the text view.
+      case .image:
+        return NSAttributedString()
       }
     }
   }
 
-  /// Read the file, mapped rather than copied — the decision being made here is whether the
-  /// bytes are UTF-8 at all, and a file large enough for that to matter is one this should not
-  /// be holding twice.
-  private static func read(at url: URL) -> SourceRead {
+  /// Read the file. An image is read as one — the extension decides, see `ImageFile` — and
+  /// anything else mapped rather than copied, since the decision being made here is whether the
+  /// bytes are UTF-8 at all and a file large enough for that to matter is one this should not be
+  /// holding twice.
+  private static func read(at url: URL, path: String) -> SourceRead {
+    if ImageFile.covers(path: path) {
+      switch ImageFile.read(at: url) {
+      case .image(let image):
+        return .image(image)
+      // An image hukan will not draw falls back to the note a file that is not text gets. It is
+      // the same answer said in the same place, which is what keeps a `.png` that is too large
+      // from reading as a `.png` that is broken.
+      case .failed(let note):
+        return .notText(note)
+      }
+    }
     guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else {
       return .notText("This file could not be read")
     }
@@ -750,8 +828,10 @@ final class FileColumns {
   func browserGoForward() { desk.browserGoForward() }
   func browserReload() { desk.browserReload() }
   func browserFocusAddress() { desk.browserFocusAddress() }
-  func browserZoom(by delta: Int) { desk.browserZoom(by: delta) }
-  func browserResetZoom() { desk.browserResetZoom() }
+  /// Whether the showing tab has a size to change — a web tab or an image. See the desk.
+  var canZoom: Bool { desk.isViewLoaded && desk.canZoom }
+  func zoom(by delta: Int) { desk.zoom(by: delta) }
+  func resetZoom() { desk.resetZoom() }
 
   /// A terminal renamed itself (OSC title); repaint the strip's labels.
   func refreshTerminalTabs() {

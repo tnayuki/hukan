@@ -2147,18 +2147,21 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   }
 
   /// View ▸ Zoom In / Zoom Out / Actual Size (⌘+ / ⌘− / ⌘0), the keys this menu has been holding
-  /// for them since the desk's plain ⌘T became a browser tab. The page's zoom, not the window's:
-  /// the editor has a size of its own and no key here reaches it.
-  @objc func browserZoomIn(_ sender: Any?) {
-    files.browserZoom(by: 1)
+  /// since the desk's plain ⌘T became a browser tab. Never the window's zoom, and never the
+  /// editor's: source is the size it is set at. Which surface they mean is where the focus is,
+  /// the way ⌘F and ⌃⌘M are already answered — a web tab's page, or an image's magnification,
+  /// for which Actual Size is not a figure of speech but the rung where one image pixel covers
+  /// one device pixel.
+  @objc func zoomIn(_ sender: Any?) {
+    files.zoom(by: 1)
   }
 
-  @objc func browserZoomOut(_ sender: Any?) {
-    files.browserZoom(by: -1)
+  @objc func zoomOut(_ sender: Any?) {
+    files.zoom(by: -1)
   }
 
-  @objc func browserActualSize(_ sender: Any?) {
-    files.browserResetZoom()
+  @objc func actualSize(_ sender: Any?) {
+    files.resetZoom()
   }
 
   /// Edit ▸ Go to File… (⌘P). The files panel, shown if hidden, its filter focused.
@@ -2476,9 +2479,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       return files.canBrowserGoBack
     case #selector(browserGoForward(_:)):
       return files.canBrowserGoForward
-    case #selector(browserReload(_:)), #selector(browserFocusAddress(_:)),
-      #selector(browserZoomIn(_:)), #selector(browserZoomOut(_:)), #selector(browserActualSize(_:)):
+    case #selector(browserReload(_:)), #selector(browserFocusAddress(_:)):
       return files.isShowingWebTab
+    case #selector(zoomIn(_:)), #selector(zoomOut(_:)), #selector(actualSize(_:)):
+      return files.canZoom
     case #selector(goToFile(_:)):
       return workspace.selectedWorktreeID != nil
     case #selector(goToSession(_:)):

@@ -370,8 +370,12 @@ final class WorktreeDeskViewController: NSViewController {
     return terminals.first { $0.id == id }
   }
 
-  /// Whether ⌘F has a surface to search in — anything but an empty desk.
-  var canFind: Bool { surface != .none }
+  /// Whether ⌘F has a surface to search in — anything but an empty desk, and anything but an
+  /// image, which is the one surface here with no text in it for a find bar to reach.
+  var canFind: Bool {
+    guard surface != .none else { return false }
+    return activeFileContent?.isShowingImage != true
+  }
 
   /// The web tab showing right now, for the browser's own menu items (back / forward). Nil when
   /// the active surface is anything else, which is what disables them.
@@ -391,8 +395,35 @@ final class WorktreeDeskViewController: NSViewController {
   var isShowingWebTab: Bool { activeBrowserPane != nil }
   func browserReload() { activeBrowserPane?.reloadPage() }
   func browserFocusAddress() { activeBrowserPane?.focusAddress() }
-  func browserZoom(by delta: Int) { activeBrowserPane?.zoomPage(by: delta) }
-  func browserResetZoom() { activeBrowserPane?.resetZoom() }
+
+  /// The image showing right now, if the active tab is a file and that file is one.
+  private var activeImageContent: FileContentViewController? {
+    guard let content = activeFileContent, content.isShowingImage else { return nil }
+    return content
+  }
+
+  /// Zoom is aimed by the focus, the way the find is. A web tab's page zoom and an image's
+  /// magnification are one key meaning one thing about two surfaces — closer — so the menu
+  /// carries one item each and the desk says which surface is under them. Nothing else on the
+  /// desk has a size to change: source is the size it is set at, and a terminal's is the
+  /// terminal's.
+  var canZoom: Bool { isShowingWebTab || activeImageContent != nil }
+
+  func zoom(by delta: Int) {
+    if let image = activeImageContent {
+      image.zoomImage(by: delta)
+    } else {
+      activeBrowserPane?.zoomPage(by: delta)
+    }
+  }
+
+  func resetZoom() {
+    if let image = activeImageContent {
+      image.resetImageZoom()
+    } else {
+      activeBrowserPane?.resetZoom()
+    }
+  }
 
   /// ⌘F: find within the active surface. A terminal's bar is SwiftTerm's, a file's the text
   /// view's; both read their action tag off the menu item passed through as `sender`.
@@ -933,7 +964,12 @@ final class WorktreeDeskViewController: NSViewController {
     switch item {
     case .file(let id):
       guard let tab = fileTabs.first(where: { $0.id == id }) else { return "file" }
-      return "file      \(tab.path)\(tab.isPending ? "  (unread)" : "")"
+      // An image pane has no text to read back at all, so whether the file is one — and whether
+      // it decoded — is said here or nowhere. Every built tab answers, not only the one showing:
+      // a tab that has not been read yet says `(unread)` instead, which is the honest answer for
+      // it, and a restored strip is exactly what this is read to check.
+      let kind = tab.content.isShowingImage ? "  (image)" : ""
+      return "file      \(tab.path)\(tab.isPending ? "  (unread)" : "")\(kind)"
     case .commit(let id):
       guard let tab = commitTabs.first(where: { $0.id == id }) else { return "commit" }
       return "commit    \(tab.oid.prefix(7))\(tab.isPending ? "  (unread)" : "")"

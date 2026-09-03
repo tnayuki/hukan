@@ -16,6 +16,9 @@ final class EditorSnapshotTests: XCTestCase {
   private static let patchReference = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .appendingPathComponent("Snapshots/patch.png")
+  private static let imageReference = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .appendingPathComponent("Snapshots/image.png")
 
   private static let source = """
     import AppKit
@@ -159,6 +162,92 @@ final class EditorSnapshotTests: XCTestCase {
         "patch: rendered output differs from patch.png (actual written to \(failed.path);"
           + " if the change is intended, re-record with TEST_RUNNER_HUKAN_RECORD=1 xcodebuild test)"
       )
+    }
+  }
+
+  /// The same pane a third time, showing a file whose content is pixels. What has to be visible:
+  /// the image at actual pixels rather than fitted to the column — it is 200 across on a 2×
+  /// surface, so it measures 100pt and takes a fifth of the width — centred and landed on the
+  /// backing grid, the checkerboard saying which of it is transparent, and the caption naming the
+  /// pixel count the drawing itself no longer states.
+  @MainActor
+  func testImageMatchesSnapshot() throws {
+    if ProcessInfo.processInfo.environment["HUKAN_PREVIEW"] == "image" {
+      let out = URL(fileURLWithPath: "/tmp/hukan-preview-image.png")
+      try renderImage().write(to: out)
+      print("preview: \(out.path)")
+      return
+    }
+    let actual = try renderImage()
+    if ProcessInfo.processInfo.environment["HUKAN_RECORD"] == "1" {
+      try actual.write(to: Self.imageReference)
+      XCTFail("recorded image snapshot — run again without HUKAN_RECORD to verify")
+      return
+    }
+    guard let expected = try? Data(contentsOf: Self.imageReference) else {
+      XCTFail(
+        "no reference at \(Self.imageReference.path) — record with TEST_RUNNER_HUKAN_RECORD=1 xcodebuild test"
+      )
+      return
+    }
+    if pixels(expected) != pixels(actual) {
+      let failed = FileManager.default.temporaryDirectory
+        .appendingPathComponent("hukan-snapshots/image-actual.png")
+      try? FileManager.default.createDirectory(
+        at: failed.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try? actual.write(to: failed)
+      XCTFail(
+        "image: rendered output differs from image.png (actual written to \(failed.path);"
+          + " if the change is intended, re-record with TEST_RUNNER_HUKAN_RECORD=1 xcodebuild test)"
+      )
+    }
+  }
+
+  /// A picture with a transparent band, so the checkerboard has something to say. Built here
+  /// rather than committed beside the reference: every other fixture in this suite is a string in
+  /// the source, and a binary one would be the only thing in it nobody can read. Greys only —
+  /// this rep is device RGB and the snapshot bitmap is sRGB, and a grey is what survives that
+  /// conversion under any display profile (see `SnapshotSurface`).
+  @MainActor
+  private static func sample() throws -> ImageFile.Loaded {
+    let width = 200
+    let height = 120
+    let rep = try XCTUnwrap(
+      NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
+        samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+        bytesPerRow: 0, bitsPerPixel: 0))
+    rep.size = NSSize(width: width, height: height)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    NSColor.clear.setFill()
+    NSRect(x: 0, y: 0, width: width, height: height).fill()
+    NSColor(white: 0.35, alpha: 1).setFill()
+    NSRect(x: 0, y: 0, width: width, height: 80).fill()
+    NSColor(white: 0.85, alpha: 1).setFill()
+    NSRect(x: 24, y: 24, width: 64, height: 32).fill()
+    NSGraphicsContext.restoreGraphicsState()
+    return ImageFile.Loaded(
+      image: try XCTUnwrap(rep.cgImage), pixelWidth: width, pixelHeight: height, count: 1,
+      bytes: 12_345)
+  }
+
+  @MainActor
+  private func renderImage() throws -> Data {
+    let appearance = NSAppearance(named: .darkAqua)!
+    NSApplication.shared.appearance = appearance
+    let size = NSSize(width: 520, height: 300)
+    let window = SnapshotSurface.window(size: size, appearance: appearance)
+    let pane = ImagePane()
+    window.contentView = pane
+    pane.show(try Self.sample(), keepingPlace: false)
+    pane.layoutSubtreeIfNeeded()
+    return SnapshotSurface.png(size: size, appearance: appearance) { context in
+      // What sits behind the pane in the app: the window's background. The scroll view inside
+      // it does not draw one, which is what lets an image sit on it rather than on a slab.
+      NSColor.windowBackgroundColor.setFill()
+      NSBezierPath.fill(NSRect(origin: .zero, size: size))
+      pane.displayIgnoringOpacity(pane.bounds, in: context)
     }
   }
 

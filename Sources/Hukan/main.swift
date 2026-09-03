@@ -395,19 +395,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // else again — so Zoom In is offered twice, the second hidden and kept live for its key
     // alone. Actual Size is not a walk back along the ladder: it is the rung marked 1.
     viewMenu.addItem(
-      withTitle: "Zoom In", action: #selector(WorkspaceWindowController.browserZoomIn(_:)),
+      withTitle: "Zoom In", action: #selector(WorkspaceWindowController.zoomIn(_:)),
       keyEquivalent: "+")
     let zoomInEquals = viewMenu.addItem(
-      withTitle: "Zoom In", action: #selector(WorkspaceWindowController.browserZoomIn(_:)),
+      withTitle: "Zoom In", action: #selector(WorkspaceWindowController.zoomIn(_:)),
       keyEquivalent: "=")
     zoomInEquals.isHidden = true
     zoomInEquals.allowsKeyEquivalentWhenHidden = true
     viewMenu.addItem(
-      withTitle: "Zoom Out", action: #selector(WorkspaceWindowController.browserZoomOut(_:)),
+      withTitle: "Zoom Out", action: #selector(WorkspaceWindowController.zoomOut(_:)),
       keyEquivalent: "-")
     viewMenu.addItem(
       withTitle: "Actual Size",
-      action: #selector(WorkspaceWindowController.browserActualSize(_:)), keyEquivalent: "0")
+      action: #selector(WorkspaceWindowController.actualSize(_:)), keyEquivalent: "0")
     viewItem.submenu = viewMenu
     main.addItem(viewItem)
 

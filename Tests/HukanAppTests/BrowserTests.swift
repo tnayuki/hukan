@@ -386,13 +386,13 @@ final class BrowserDeskTests: XCTestCase {
     // All of them reach the showing pane, and none may trap on a tab with nothing loaded in it.
     desk.browserReload()
     desk.browserFocusAddress()
-    desk.browserZoom(by: 1)
-    desk.browserResetZoom()
+    desk.zoom(by: 1)
+    desk.resetZoom()
     let pane = try! XCTUnwrap(desk.selectedBrowserPane)
     pane.webViewDidClose(pane.webView)
     XCTAssertFalse(desk.isShowingWebTab, "the surface is not a browser: the items disable")
     desk.browserReload()
-    desk.browserZoom(by: -1)
+    desk.zoom(by: -1)
   }
 
   /// `window.close()` — how an SSO popup ends — takes the tab with it rather than leaving an empty

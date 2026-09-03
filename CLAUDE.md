@@ -122,7 +122,9 @@ Workspace (one window)
   left free for the same reason: beside a browser tab it means reopen the closed one, and a
   terminal on it would take that key from the desk for good. So the terminal sits on the control
   key, beside the window's own `⌃⌘S` and `⌃⌘M`. Zoom keeps `⌘0`/`⌘+`/`⌘-`, so nothing else may
-  take them.
+  take them — and which surface they mean is where the focus is, the rule ⌘F and ⌃⌘M already
+  read: a web tab's page, or an image's magnification. They are the only two things on the desk
+  with a size to change; source is the size it is set at, and a terminal's is the terminal's.
 - **The web tab's one field is an address bar and a search box, and the text decides which** — a
   scheme, a slash or a dot makes it an address; anything else is a search. The files panel's field
   splits its two jobs by *gesture* because one of them costs far more than the other and a person
@@ -292,17 +294,72 @@ Workspace (one window)
   word twice, and it charged the file 36pt to say it. The one thing that header carried alone —
   the dot for an unsaved edit — moved onto the tab, beside the ✕ that would discard it, which is
   where the state and the act that destroys it belong together.
-  **A file it cannot read as text says what it is, and refuses the keyboard.** The read fell back
-  to an empty string, which is not the same answer as an empty file: it lands as a buffer that can
-  be typed into, and ⌘S writes that buffer back — so a `.zip` opened by a mis-click and one
-  keystroke was the archive gone, silently, with the tab still claiming to show it. The note
-  stands where the text would be and the pane is left uneditable, the same call the browser's
-  error page makes for a load that failed. The ruler goes with it: a gutter row is a file line,
-  and a note has none to number. **What the note says is the type's own name** — `UTType`'s, so
-  "Zip archive" and "Mach-O dynamic library" rather than "not a text file", which is equally true
-  of every binary and says nothing about any of them; over a file that plainly is one thing it
-  read as a misclassification. The flat answer survives as the fallback, for an extension nothing
-  has a name for, which is the one case it was ever right for.
+  **A file it cannot read as text says so, and refuses the keyboard.** The read fell back to an
+  empty string, which is not the same answer as an empty file: it lands as a buffer that can be
+  typed into, and ⌘S writes that buffer back — so a `.zip` opened by a mis-click and one keystroke
+  was the archive gone, silently, with the tab still claiming to show it. The note stands where
+  the text would be and the pane is left uneditable, the same call the browser's error page makes
+  for a load that failed. The ruler goes with it: a gutter row is a file line, and a note has none
+  to number.
+- **A file whose content is pixels is drawn, and it is drawn at actual pixels.** It is not a
+  second kind of tab: a buffer is `(Worktree, relative path)` whatever the bytes are, so an image
+  is this pane answering differently — the strip, the order, the restoration and the scripting all
+  carry on not knowing. What decides is **a table of extensions**, because both tests that look
+  like the right one are wrong in the same place: `NSImage(contentsOfFile:)` and `UTType`'s
+  `.image` conformance each say yes to `.svg` (measured), which is source an agent edits and has
+  to stay in the editor. `.pdf` is the one image-ish thing left out on purpose: a page is drawn
+  from instructions rather than held as pixels, so the promise below has nothing to attach to.
+  Anything else falls through to the note above, which is also where an image too large or too
+  broken to draw says so: the same answer in the same place, so a `.png` that is refused never
+  reads as a `.png` that is empty.
+  **Which bitmap is on screen is hukan's own decision, because a file may hold several.** An
+  `.icns` here holds ten, 1024 down to 16, and `NSImage.size` answers 512 — neither the largest
+  nor the size of any single one of them — so leaving the choice to AppKit means the pixel count
+  under the picture is a guess about a file it is not the whole of. Every bitmap is measured
+  before any is decoded (ImageIO answers a dimension without decoding a pixel) and **the largest
+  is drawn**, named by index rather than by asking for "the image": largest because an icon
+  container is opened to be looked at, and by index because the order is the file's — this `.icns`
+  happens to put 1024 first and nothing in the format says it must. The caption says so when
+  there is more than one, or it is a true number about the wrong thing. That rule is what brought
+  `.icns` into the table and what `.ico` needed all along, being the same kind of file: excluding
+  one and admitting the other was one decision made twice.
+  **Actual pixels means one image pixel to one *device* pixel, which is a fact about the display
+  and not about the file.** The alternative reading — one pixel to one point — is a 2× upscale on
+  this machine, and the file being looked at most is a screenshot of text, so it would be read
+  blurred. `NSImage`'s own `size` cannot answer it: it is the pixel count divided by whatever DPI
+  the file claims, and the DPI in real files is noise — hukan's own 2× snapshot references say 72,
+  and a `@2x` asset in the wild said 96, which is neither its pixels nor its intended size. So the
+  pixels are read from the header (ImageIO answers that without decoding, the same shape as
+  `git_patch_size` answering in bytes without building the patch) and the scale from the window.
+  A side effect worth having: a `@2x` asset then draws at the size it was cut for, with nobody
+  parsing `@2x` out of a filename. It is re-measured when the window changes display, since the
+  statement is about the display; **and the centring is landed on the backing grid**, because
+  centring is exactly the arithmetic that produces the fractional origin that would resample a
+  1:1 blit back into softness.
+  **What does not fit scrolls**, which is the rule the editor beside it already follows for a long
+  line — this pane never shrinks its content to the column. Getting closer is the trackpad's: one
+  property (`allowsMagnification`) brings the pinch and the two-finger double tap, and the zoom
+  keys are the way back, where `⌘0` is not a figure of speech but the rung at which the pixels line
+  up again. The ceiling is per image, because far enough is a size on screen and not a factor —
+  4× of a 16px icon is still 32pt of nothing — and the magnification survives an agent rewriting
+  the file under the reader (a refresh should change the picture, not the place they were looking
+  at it from) but not a relaunch, for the reason a web tab's zoom does not: what a restored tab
+  carries is what identifies it.
+  **The checkerboard is under the image and nowhere else.** Drawn rather than an asset, out of two
+  semantic fills so it follows the appearance, and clipped to the image's own rect — one running
+  out over the pane would say the whole column is transparent. There is no border around the image:
+  drawn inside it covers the outermost row of the file's pixels, and drawn outside it grows with
+  the magnification into a frame nobody asked for. The caption under it — the pixel count and the
+  size — is drawn rather than set in a label, because a label is a control and AppKit rounds a
+  control's intrinsic size to the *screen's* backing grid, the one thing a pinned snapshot cannot
+  pin. It is the only place the pixel count is stated at all, now that the drawing is half as wide
+  as it on a 2× display.
+  **What the pane gives up saying so**: an animated GIF stands at its first frame, animating one
+  meaning an `NSImageView` laid over the checkerboard rather than drawn into it; ⌘F is aimed away,
+  an image being the one surface on the desk with no text for a find bar to reach; and there is no
+  gutter, no base and no dirty state, so nothing here can be saved or asked about on the way out.
+  **And there is no image diff**: the file pane has no diff at all by the decision above, so a
+  changed image is the one on disk and what it replaced is the PR's to show.
 - **A row drags out as a file URL, and a file dropped on the panel is the same read from the
   other side.** The composer already takes a file dropped from the Finder and turns it into an
   attachment chip — the agent reads it from the path the chip carries — so the panel had only to
@@ -1392,9 +1449,14 @@ new PNGs before committing. The approval, question and task cards — real AppKi
 transcript's harness cannot reach — are pinned the same way by `CardSnapshotTests`, and the
 editor pane — highlighted source, gutter, every change-bar state — by `EditorSnapshotTests`
 (`editor.png`; eyeball it with `TEST_RUNNER_HUKAN_PREVIEW=editor`, which writes
-/tmp/hukan-preview-editor.png instead). That suite has a second reference, `patch.png`
-(`…PREVIEW=patch`), because a patch is the same pane answering the same question differently —
-rows banded, the payload coloured by the language being patched — and one image cannot hold both. The files panel's History section is pinned by
+/tmp/hukan-preview-editor.png instead). That suite has two more references, because they are the
+same pane answering the same question differently and one image cannot hold three: `patch.png`
+(`…PREVIEW=patch`), rows banded and the payload coloured by the language being patched, and
+`image.png` (`…PREVIEW=image`), a file whose content is pixels — drawn at actual pixels rather
+than fitted, centred on the backing grid, over the checkerboard, with the drawn caption under it.
+Its picture is built in the test out of greys, not committed beside the reference: every other
+fixture in that suite is a string in the source, and a grey is what survives the device-RGB to
+sRGB conversion under any display profile. The files panel's History section is pinned by
 `HistorySnapshotTests` (`history.png`, `…PREVIEW=history`), drawn at the panel's minimum width
 because that is where a summary truncates, and the commit tab by `CommitSnapshotTests`
 (`commit.png`, `…PREVIEW=commit`), drawn through `present(_:sections:)` so the cards can be posed
