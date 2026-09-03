@@ -114,7 +114,7 @@ final class SyntaxLanguagesTests: XCTestCase {
     XCTAssertTrue(
       spans.contains {
         text.substring(with: $0.range).contains("and closed here */")
-          && $0.color == .secondaryLabelColor
+          && $0.color == SyntaxHighlighting.Palette.secondaryLabelColor
       }, "the second line of the comment was not read as part of it")
     XCTAssertTrue(
       spans.contains { text.substring(with: $0.range) == "let" },

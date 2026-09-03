@@ -12,9 +12,25 @@ extension NSColor {
   /// This keeps the colour dynamic instead. The alpha is applied when the colour is *read* —
   /// inside the draw, under the appearance that is drawing it.
   func withDynamicAlpha(_ alpha: CGFloat) -> NSColor {
+    dynamicSRGB { $0.withAlphaComponent(alpha) }
+  }
+
+  /// The colour as it is, decided under the appearance that draws it.
+  ///
+  /// Which is not nothing even without an alpha to apply: a catalog colour resolves into *device*
+  /// RGB, and device RGB means the attached display's profile — so the same `systemTeal` lands a
+  /// couple of counts apart on two machines with different screens. sRGB is colour-managed the
+  /// same way on the way out, so nothing looks different; it is only no longer ambiguous about
+  /// which teal it meant.
+  var dynamic: NSColor { dynamicSRGB { $0 } }
+
+  private func dynamicSRGB(_ transform: @escaping (NSColor) -> NSColor) -> NSColor {
     NSColor(name: nil) { appearance in
       var resolved = self
-      appearance.performAsCurrentDrawingAppearance { resolved = self.withAlphaComponent(alpha) }
+      appearance.performAsCurrentDrawingAppearance {
+        let flat = transform(self)
+        resolved = flat.usingColorSpace(.sRGB) ?? flat
+      }
       return resolved
     }
   }

@@ -74,9 +74,9 @@ final class CommitTabTests: XCTestCase {
     let diff = CommitDiffLoader.render(Self.fileDiff, file: Self.detail.files[0])
     let text = diff.text
 
-    XCTAssertEqual(colour(of: "struct", in: text, text.string), .systemPink)
-    XCTAssertEqual(colour(of: "\"commit\"", in: text, text.string), .systemRed)
-    XCTAssertEqual(colour(of: "\"old\"", in: text, text.string), .systemRed)
+    XCTAssertEqual(colour(of: "struct", in: text, text.string), SyntaxHighlighting.Palette.pink)
+    XCTAssertEqual(colour(of: "\"commit\"", in: text, text.string), SyntaxHighlighting.Palette.red)
+    XCTAssertEqual(colour(of: "\"old\"", in: text, text.string), SyntaxHighlighting.Palette.red)
   }
 
   /// The tab's find crosses cards, which is why it is the tab's and not a text view's: every open

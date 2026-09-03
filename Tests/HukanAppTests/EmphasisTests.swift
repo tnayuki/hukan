@@ -40,7 +40,8 @@ final class EmphasisTests: XCTestCase {
     for span in spans where NSIntersectionRange(span.range, content).length > 0 {
       colour = span.color
     }
-    XCTAssertNotEqual(colour, NSColor.systemRed, "the fence kept text.literal's red inside it")
+    XCTAssertNotEqual(
+      colour, SyntaxHighlighting.Palette.red, "the fence kept text.literal's red inside it")
   }
 
   func testMarkdownEmphasisIsAskedFor() {

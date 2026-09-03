@@ -522,18 +522,33 @@ enum SyntaxHighlighting {
   /// attribute and the emphasis is drawn over the glyphs by `EmphasisFragment`, so every token
   /// keeps the same monospace advance. nil leaves the token plain (variables, operators,
   /// punctuation).
+  /// The theme's colours, built once each.
+  ///
+  /// `dynamic` mints a fresh colour object every time it is called, and a fresh dynamic colour
+  /// does not compare equal to its twin — while a kept parse is checked against a fresh one span
+  /// by span, and a commit's highlighting against the editor's. Same instance, not same recipe.
+  enum Palette {
+    static let secondaryLabelColor = NSColor.secondaryLabelColor.dynamic
+    static let blue = NSColor.systemBlue.dynamic
+    static let orange = NSColor.systemOrange.dynamic
+    static let pink = NSColor.systemPink.dynamic
+    static let purple = NSColor.systemPurple.dynamic
+    static let red = NSColor.systemRed.dynamic
+    static let teal = NSColor.systemTeal.dynamic
+  }
+
   private static func style(for captureName: String) -> Style? {
     // The whole name first, for the handful where the tail is what carries the meaning.
     switch captureName {
-    case "text.title": return .marked(color: .systemBlue, adds: .bold)
+    case "text.title": return .marked(color: Palette.blue, adds: .bold)
     case "text.strong": return .marked(color: nil, adds: .bold)
     case "text.emphasis": return .marked(color: nil, adds: .italic)
-    case "text.uri", "text.reference": return .marked(color: .systemTeal, adds: [])
-    case "text.literal": return .marked(color: .systemRed, adds: [])
+    case "text.uri", "text.reference": return .marked(color: Palette.teal, adds: [])
+    case "text.literal": return .marked(color: Palette.red, adds: [])
     // A key rather than a value, the same as YAML's `property` — which is what it is, and
     // reading one language's keys as keys and another's as strings was an accident of which
     // grammar names them how.
-    case "string.special.key": return .marked(color: .systemTeal, adds: [])
+    case "string.special.key": return .marked(color: Palette.teal, adds: [])
     // A patch's frame: which side of the change a row is on, painted behind it in the commit
     // tab's own colours so the two readings of a diff in this window are one reading. The `!`
     // row of a context diff is neither added nor removed but rewritten, which is the blue the
@@ -546,14 +561,16 @@ enum SyntaxHighlighting {
     default: break
     }
     switch captureName.split(separator: ".").first.map(String.init) ?? captureName {
-    case "keyword": return .marked(color: .systemPink, adds: [])
-    case "string", "character", "escape": return .marked(color: .systemRed, adds: [])
-    case "comment": return .marked(color: .secondaryLabelColor, adds: [])
-    case "number", "boolean", "constant": return .marked(color: .systemPurple, adds: [])
-    case "type", "constructor", "module": return .marked(color: .systemTeal, adds: [])
-    case "function": return .marked(color: .systemBlue, adds: [])
-    case "attribute", "label": return .marked(color: .systemOrange, adds: [])
-    case "property": return .marked(color: .systemTeal, adds: [])
+    case "keyword": return .marked(color: Palette.pink, adds: [])
+    case "string", "character", "escape": return .marked(color: Palette.red, adds: [])
+    case "comment": return .marked(color: Palette.secondaryLabelColor, adds: [])
+    case "number", "boolean", "constant":
+      return .marked(color: Palette.purple, adds: [])
+    case "type", "constructor", "module":
+      return .marked(color: Palette.teal, adds: [])
+    case "function": return .marked(color: Palette.blue, adds: [])
+    case "attribute", "label": return .marked(color: Palette.orange, adds: [])
+    case "property": return .marked(color: Palette.teal, adds: [])
     // Plain on purpose, and plain *explicitly*, which is the whole point of the distinction.
     // Punctuation and operators are the shape of the code rather than anything in it, and a
     // variable is most of a file — colouring either is noise. Saying so here is also what lets
