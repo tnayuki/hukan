@@ -377,7 +377,12 @@ final class TableLayout {
 
   func draw() {
     let full = CGRect(origin: .zero, size: size)
-    let hairline = 1 / (NSScreen.main?.backingScaleFactor ?? 2)
+    // One device pixel, read off the context being drawn into and not off the main screen. This
+    // runs inside an `NSImage` drawing handler, which AppKit invokes at whatever scale the
+    // destination has — the screen's on a screen, the bitmap's in a snapshot — and asking the
+    // screen gave a 1pt rule in a 2x image wherever the screen happened to be 1x.
+    let scale = NSGraphicsContext.current?.cgContext.userSpaceToDeviceSpaceTransform.a ?? 2
+    let hairline = 1 / max(abs(scale), 1)
     let frame = NSBezierPath(
       roundedRect: full.insetBy(dx: hairline / 2, dy: hairline / 2), xRadius: radius,
       yRadius: radius
