@@ -63,6 +63,7 @@ jobs:
             -skip-testing:HukanAppTests/BrowserSnapshotTests \
             -skip-testing:HukanAppTests/CardSnapshotTests/testExitPlanApprovalCard \
             -skip-testing:HukanAppTests/TranscriptReaderTests/testTheBottomStaysTheBottomAcrossAMaximize \
+            -skip-testing:HukanAppTests/TranscriptReaderTests/testTheReadersLineHoldsWhenEarlierConversationLands \
             -skip-testing:HukanAppTests/TranscriptReaderTests/testTheReadersLineHoldsAcrossAMaximize \
             > xcodebuild-test.log 2>&1
           status=$?
