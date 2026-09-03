@@ -30,12 +30,27 @@ jobs:
         # swift-format is Xcode's own, so nothing is installed.
         run: xcrun swift-format lint --strict -p -r Sources Tests
 
+      - name: Runner display settings
+        # Three things the image ships that are the display's opinion rather than hukan's, each
+        # measured to move a reference: Reduce Transparency is on, which is what an
+        # `NSVisualEffectView` and every semantic system fill read; no preferred language is
+        # Japanese, so CoreText's CJK fallback lands on PingFang SC and a kanji comes out in
+        # Chinese glyph forms at Chinese advances; and scroll bars are always shown, which
+        # narrows every scroll view's content until a summary truncates a word early.
+        run: |
+          defaults write com.apple.universalaccess reduceTransparency -bool false
+          defaults write -g AppleLanguages -array ja en
+          defaults write -g AppleShowScrollBars -string WhenScrolling
+
       - name: Test
-        # Everything but the tests that pin pixels: the runner draws on a 1x virtual display
-        # where this machine is 2x, and its modes are all non-HiDPI, so the references come back
-        # half size — and the suites that pin their own 2x bitmap come back the right size and
-        # still differ, because the runner's text rendering is not this machine's. See the
-        # snapshot note in CLAUDE.md; a tolerance is the one answer that comparison refuses.
+        # Most of the pixel-pinned tests run here now: they render through `SnapshotSurface`,
+        # which pins the backing scale, the colour space and the completion panel's material, so
+        # a reference no longer describes the display that recorded it. What is still skipped is
+        # what the runner's *screen* decides rather than the drawing — AppKit rounds a control's
+        # intrinsic size to the screen's backing grid and not to the window's, so a browser
+        # button is 13.5pt wide here and 14pt there and everything after it sits a device pixel
+        # over. See the snapshot note in CLAUDE.md; a tolerance is the one answer that comparison
+        # refuses.
         #
         # The suite runs parallel (see CLAUDE.md), so a failure's file, line and message are in
         # the .xcresult and not on stdout; the summary below is what reads them back.
@@ -43,15 +58,10 @@ jobs:
           set +e
           xcodebuild test -project hukan.xcodeproj -scheme Hukan \
             -derivedDataPath .build/DerivedData -skipPackagePluginValidation \
-            -skip-testing:HukanAppTests/SnapshotTests \
-            -skip-testing:HukanAppTests/CardSnapshotTests \
-            -skip-testing:HukanAppTests/EditorSnapshotTests \
             -skip-testing:HukanAppTests/CommitSnapshotTests \
             -skip-testing:HukanAppTests/HistorySnapshotTests \
-            -skip-testing:HukanAppTests/CompletionSnapshotTests \
             -skip-testing:HukanAppTests/BrowserSnapshotTests \
-            -skip-testing:HukanAppTests/EmphasisTests/testEmphasisIsDrawnOnTheWordAndOnlyTheWord \
-            -skip-testing:HukanAppTests/EmphasisTests/testItalicSlantsTheWordWithoutMovingIt \
+            -skip-testing:HukanAppTests/CardSnapshotTests/testExitPlanApprovalCard \
             -skip-testing:HukanAppTests/TranscriptReaderTests/testTheBottomStaysTheBottomAcrossAMaximize \
             -skip-testing:HukanAppTests/TranscriptReaderTests/testTheReadersLineHoldsAcrossAMaximize \
             > xcodebuild-test.log 2>&1

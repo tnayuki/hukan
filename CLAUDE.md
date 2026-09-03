@@ -1383,10 +1383,24 @@ fourth — its panel's root is an `NSVisualEffectView`, whose material *does* re
 of our own, as whatever the machine's Reduce Transparency setting makes of it — so an opaque view
 goes in under the rows and the snapshot pins the rows, which is what it is for.
 
-**CI still skips two.** The reader tests that maximize a window wider than the runner's screen get
-it constrained to fit, so it is not the width the maximize was measured against. A tolerance is
-the one answer this comparison refuses. CI is the gate on the logic; the look stays the gate this
-machine keeps.
+**Three of those are the machine's settings rather than its display**, and the workflow writes
+them before it runs: Reduce Transparency, which is what an `NSVisualEffectView` and every semantic
+system fill read; a preferred language, since CoreText picks the CJK fallback from it and with
+none of them Japanese a kanji arrives from PingFang SC in Chinese glyph forms at Chinese advances;
+and scroll bars, which when always shown narrow every scroll view until a summary truncates a word
+early. Each was measured against a runner, and each moved a reference on its own.
+
+**What CI still skips is what the screen decides.** AppKit rounds a control's intrinsic size to
+the *screen's* backing grid and not to the window's, which no amount of pinning reaches: an
+`NSButton` holding a symbol measures 13.5pt on a 2× display and 14pt on a 1× one, so the browser's
+bar and everything after it sits a device pixel over, and the same rounding catches the commit
+tab, the History section's tag rule and the approval card's icon row. The two reader tests that
+maximize a window wider than the runner's screen get it constrained to fit, which is a second
+thing the screen decides. A tolerance is the one answer this comparison refuses, so those stay
+skipped and the rest — the transcript, the editor, the cards, the command list, the emphasis
+drawing — are a gate CI keeps now. Closing the last of it needs a real 2× display, which only
+`CGVirtualDisplay`'s private hiDPI flag can conjure and which Chromium's own test infrastructure
+declines to use on a headless bot; `displayplacer` cannot, its twelve modes all being `scaling:off`.
 
 ### Verifying the GUI: AppleScript, not coordinates
 
