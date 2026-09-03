@@ -14,6 +14,19 @@ final class SessionLifecycleTests: XCTestCase {
     XCTAssertTrue(started, "restart with no engine brings it up via onNeedsStart")
   }
 
+  /// Stopping with work to follow runs that work only once the process is gone — and with no
+  /// process there is nothing to wait for, so it runs at once. The waiting half is what keeps a
+  /// delete from unlinking a transcript the quitting engine is about to write back.
+  func testStopWithoutAnEngineRunsTheFollowUpAtOnce() {
+    let session = AgentSession(worktreeID: UUID())
+    var ran = 0
+    session.stop { ran += 1 }
+    XCTAssertEqual(ran, 1)
+    // And nothing is left pending to run a second time when the quit teardown sweeps.
+    session.completePendingStop()
+    XCTAssertEqual(ran, 1)
+  }
+
   /// A send reports itself as your instruction, and does so before the engine is brought up — the
   /// archive flag hangs off it (`Workspace.noteInstruction`), so a row must leave the fold whether
   /// or not the process that answers the line ever starts.

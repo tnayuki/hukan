@@ -553,13 +553,17 @@ final class Workspace {
   /// is Claude Code's data, not ours: the caller asks first (see the rail's Delete Session).
   /// Refuses a session held by another process — that engine is still writing the transcript we
   /// would be deleting, and we do not act on what we do not own.
+  ///
+  /// **The row goes now and the file goes once the engine has actually exited**, which is not the
+  /// same moment: stopping an engine only asks it to go, and the clean exit it then takes is
+  /// where it writes its transcript back to disk. Unlinking at the ask was therefore undone a
+  /// moment later by the engine recreating the file, and the deleted session came back on the
+  /// next launch (see `AgentSession.stop(then:)`). Returns whether the delete was accepted —
+  /// the unlink itself is out of reach by then, and a failure at that point is logged.
   @discardableResult
   func deleteSession(_ session: AgentSession) -> Bool {
     guard session.heldByPID == nil else { return false }
     guard let worktree = worktree(id: session.worktreeID) else { return false }
-    session.stop()
-    let removed = ClaudeSessionStore.delete(id: session.id, worktree: worktree.url)
-    guard removed else { return false }
     sessions.removeAll { $0 === session }
     // The archive flag goes with it. Nothing would read a flag for an id that no longer resolves,
     // but leaving it would keep the id in the stored set for as long as the window lives.
@@ -567,9 +571,21 @@ final class Workspace {
     // Leave the worktree selected — only the session goes. The rail lands on the worktree
     // heading, which is where a deleted session's row was hanging.
     if selectedSessionID == session.id { selectedSessionID = nil }
+    // Held off `sessions` but held: the wait below is the app-quit teardown's business too.
+    closingSessions.append(session)
+    session.stop { [weak self] in
+      ClaudeSessionStore.delete(id: session.id, worktree: worktree.url)
+      self?.closingSessions.removeAll { $0 === session }
+    }
     onSessionsChanged?()
     return true
   }
+
+  /// Sessions that have been deleted and whose engines are still on their way out. Off
+  /// `sessions`, so the act takes the row at once — but reachable, because the app-quit teardown
+  /// has to close their stdin like any other (an engine nobody closes is orphaned to launchd)
+  /// and has to let the unlink they are waiting for land before the app goes.
+  private(set) var closingSessions: [AgentSession] = []
 
   // MARK: - Prompt history
 

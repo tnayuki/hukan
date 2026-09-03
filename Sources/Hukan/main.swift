@@ -91,7 +91,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// waiter would die with the process before ever escalating. The trailing wait after SIGKILL
   /// lets the kernel actually reap the children before we exit, so none reparents.
   func applicationWillTerminate(_ notification: Notification) {
-    let sessions = WorkspaceWindowController.all.flatMap { $0.workspace.sessions }
+    // The sessions being deleted are in it too: their engines are mid-exit, and one nobody
+    // closes is orphaned exactly like any other — while the unlink each is waiting for has to
+    // land before we go, or the conversation is back on the rail next launch.
+    let sessions = WorkspaceWindowController.all.flatMap {
+      $0.workspace.sessions + $0.workspace.closingSessions
+    }
     func waitWhileRunning(upTo seconds: TimeInterval) {
       let deadline = Date().addingTimeInterval(seconds)
       while Date() < deadline, sessions.contains(where: { $0.isRunning }) {
@@ -105,6 +110,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // SIGKILL — never orphan.
     for session in sessions where session.isRunning { session.killStop() }
     waitWhileRunning(upTo: 1)
+    // The engines are gone, so what was waiting on their exit is due — `onExit` cannot deliver
+    // it, its main-queue hop having no runloop to land on inside this synchronous deadline.
+    for session in sessions { session.completePendingStop() }
   }
 
   /// Opt into secure coding for restorable state. Not returning true warns, and it also

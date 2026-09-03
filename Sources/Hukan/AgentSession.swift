@@ -281,6 +281,10 @@ final class AgentSession {
   /// stays quiet instead of reporting the SIGTERM/SIGKILL status (143/137) as if the engine had
   /// crashed. The rail's state already shows the session went idle.
   private var deliberateStop = false
+  /// Set between `stop(then:)`'s terminate and its `onExit`: what to do once the process is
+  /// actually gone, rather than once it has been asked to go. Deleting the transcript is the one
+  /// such act — see `stop(then:)`.
+  private var pendingStop: (() -> Void)?
 
   /// Full history, replayed into the view when you switch away and come back.
   let transcript = NSMutableAttributedString()
@@ -729,6 +733,10 @@ final class AgentSession {
       // Read before the runner goes: the tail lives on it.
       let stderr = self.runner?.lastError
       self.runner = nil
+      // The process is gone, which is the whole of what a deferred stop was waiting for. Run it
+      // before the branches below, because each of those is an exit too and the work is owed
+      // whichever way this one was reached.
+      self.completePendingStop()
       self.pendingApproval = nil
       self.pendingQuestion = nil
       // The turn is over and nothing can deliver what was queued, so drop it rather than
@@ -1303,7 +1311,40 @@ final class AgentSession {
 
   func stop() {
     deliberateStop = true
+    // A stop is the last word on a cycle asked for a moment earlier: without this the engine
+    // being stopped comes straight back through `onExit`, which on a session being deleted is
+    // the deleted conversation starting itself up again.
+    pendingRestart = false
     runner?.terminate()
+  }
+
+  /// Stop, and act only once the engine's process is actually gone.
+  ///
+  /// `terminate()` returns as soon as stdin is closed — the exit itself is up to three seconds
+  /// of EOF, SIGTERM and SIGKILL away — and the engine's clean exit is exactly where it writes
+  /// its transcript tail back to disk, reopening the file to do it. So anything that touches
+  /// that file has to wait for the exit rather than for the ask: unlinking at the ask left the
+  /// quitting engine to recreate the `.jsonl` a moment later, and the deleted session came back
+  /// on the next launch under its own name, the two records written on the way out
+  /// (`last-prompt`, `ai-title`) being all that was left of the conversation.
+  ///
+  /// With no live engine there is nothing to wait for, so the work runs now.
+  func stop(then finish: @escaping () -> Void) {
+    guard runner != nil else {
+      finish()
+      return
+    }
+    pendingStop = finish
+    stop()
+  }
+
+  /// Run the deferred work now, whether or not `onExit` has arrived. The app-quit teardown drives
+  /// its deadline synchronously on the main thread, so no `onExit` can land inside it — a delete
+  /// left waiting on one would go with the process, and the session would be back next launch.
+  func completePendingStop() {
+    guard let finish = pendingStop else { return }
+    pendingStop = nil
+    finish()
   }
 
   /// Cycle the engine: stop it and bring it straight back, resuming the conversation. The "turn it
