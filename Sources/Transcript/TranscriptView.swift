@@ -299,7 +299,7 @@ public final class TranscriptTextView: WordSelectingTextView {
   /// transcript for a corner only known once it is laid out — the walk a lazily laid out
   /// conversation exists to avoid.
   public override func cursorUpdate(with event: NSEvent) {
-    guard applyCopyMarkCursor(for: event) else {
+    guard applyPointerCursor(for: event) else {
       super.cursorUpdate(with: event)
       return
     }
@@ -307,15 +307,25 @@ public final class TranscriptTextView: WordSelectingTextView {
 
   public override func mouseMoved(with event: NSEvent) {
     super.mouseMoved(with: event)
-    _ = applyCopyMarkCursor(for: event)
+    _ = applyPointerCursor(for: event)
   }
 
-  /// The arrow, if the event is over a mark. Cheap enough for every step of the pointer: it is
-  /// one attribute lookup and one fragment already laid out, the same question the click asks.
-  private func applyCopyMarkCursor(for event: NSEvent) -> Bool {
-    guard copyMark(at: convert(event.locationInWindow, from: nil)) != nil else { return false }
-    NSCursor.arrow.set()
-    return true
+  /// The two cursors this view sets for itself: the arrow over a copy mark, the hand over a link
+  /// inside a table. Both stand on something the text view cannot see — the mark is drawn
+  /// furniture and the table is one attachment — so the I-beam its one tracking area sets is the
+  /// wrong answer over each of them. Cheap enough for every step of the pointer: it is one
+  /// attribute lookup and one fragment already laid out, the same question the click asks.
+  private func applyPointerCursor(for event: NSEvent) -> Bool {
+    let point = convert(event.locationInWindow, from: nil)
+    if copyMark(at: point) != nil {
+      NSCursor.arrow.set()
+      return true
+    }
+    if tableLink(at: point) != nil {
+      NSCursor.pointingHand.set()
+      return true
+    }
+    return false
   }
 
   public override func mouseDown(with event: NSEvent) {
@@ -466,7 +476,35 @@ public final class TranscriptTextView: WordSelectingTextView {
       if next.type == .leftMouseUp { break }
       extend(to: convert(next.locationInWindow, from: nil))
     }
+    followTableLink(at: local(point), in: table, offset: hit.offset, event: event)
     return true
+  }
+
+  /// A click on a link inside a cell follows it, the way the same click in the prose does. Asked
+  /// after the tracking loop rather than before it, so a drag that starts on a link still selects:
+  /// what says it was a click is that the selection never left the character it was pressed on.
+  /// The URL goes to the delegate that handles every other link, so where it opens — a web tab,
+  /// or Safari under ⌘ — is decided in one place. Not private for the reason `retoggleFold` is
+  /// not: the offscreen test exercises the decision without the tracking loop above it, which
+  /// needs a real window and real events.
+  func followTableLink(
+    at point: CGPoint, in table: TableAttachment, offset: Int, event: NSEvent
+  ) {
+    guard event.clickCount == 1, !event.modifierFlags.contains(.shift),
+      case .text(let span)? = table.selection, span.isEmpty,
+      let url = table.layout?.link(at: point),
+      let delegate = delegate as? TranscriptClickDelegate,
+      delegate.textView(self, clickedOnLink: url, at: offset)
+    else { return }
+    clearTableSelection()
+  }
+
+  /// The link under a point that lies on a table, if there is one — the cursor's half of the
+  /// question `followTableLink` asks on a click.
+  private func tableLink(at point: CGPoint) -> URL? {
+    guard let hit = table(at: point) else { return nil }
+    return hit.table.layout?.link(
+      at: CGPoint(x: point.x - hit.frame.minX, y: point.y - hit.frame.minY))
   }
 
   /// Drops the table selection, and reports whether there was one — so a key that is only meant

@@ -239,7 +239,9 @@ Code's own transcripts.
 
 **Markdown.** Rendered on both sides of the conversation, with what you typed tinted and indented.
 A table's cells are selectable — by character inside a cell, by whole cells once the drag leaves
-one — and copy as tab-separated text, which is what a spreadsheet and Slack read as a table.
+one — and copy as tab-separated text, which is what a spreadsheet and Slack read as a table. A link
+in a cell is a link: a click on it opens where every other link in the transcript opens, and a drag
+that starts on one still selects.
 A code block carries a copy mark at its top-right corner — a fenced block the agent wrote and an
 opened tool call's command alike — which takes the block whole, with no trailing newline, and
 shows a tick for a beat to say it did.

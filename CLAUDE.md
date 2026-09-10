@@ -160,6 +160,14 @@ Workspace (one window)
   unlike a file or a commit — the pages an agent hands you are context you want side by side — so
   what keeps them from piling up is that an address already open is switched to rather than opened
   twice.
+  **A table's cell is not an exception, and it was one for as long as the table has been drawn.**
+  A cell is built by the same pass the prose is, so a URL in one has always been coloured as a
+  link — but a table is a single drawn attachment, and a click on it belongs to the drag that
+  selects its cells, so the colour was the whole of what arrived: it read as a link and did
+  nothing. The link is decided after that drag rather than in front of it, which is what keeps a
+  drag that starts on one a selection; a click is the drag that never left the character it began
+  on. The pointer turns to a hand over it for the same reason the code mark's turns to an arrow —
+  the column's I-beam is the one thing that would say this text is there only to be selected.
 - **A table in the transcript is selected in, and what it copies is tab-separated.** It is drawn
   rather than laid out — the cells are fitted to the pane, and the pane's width is known to
   nothing but the layout — so no range in the storage can name a cell, and the selection is the

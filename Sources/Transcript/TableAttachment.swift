@@ -349,6 +349,17 @@ final class TableLayout {
       character: text.characterIndex(at: CGPoint(x: point.x - origin.x, y: point.y - origin.y)))
   }
 
+  /// The link a table-local point lands on, if it lands on one. The cells carry `.link` like any
+  /// other run — they are built by the same `Transcript.styled` the prose is — but the table is
+  /// one drawn attachment, so nothing in the storage can be clicked to reach them.
+  func link(at point: CGPoint) -> URL? {
+    guard let row = row(at: point.y) else { return nil }
+    let column = self.column(at: point.x)
+    guard let text = text(row: row, column: column) else { return nil }
+    let origin = cellOrigin(row: row, column: column)
+    return text.link(at: CGPoint(x: point.x - origin.x, y: point.y - origin.y))
+  }
+
   /// The highlight for a block of cells, in table-local coordinates. Half the gap on each side,
   /// so two selected columns read as one band rather than as two stripes with a channel between.
   func blockRect(_ block: TableCellBlock) -> CGRect {
@@ -499,6 +510,23 @@ final class TableCellText {
     var index = layoutManager.characterIndexForGlyph(at: glyph)
     if fraction > 0.5 { index += 1 }
     return min(max(0, index), storage.length)
+  }
+
+  /// The link under a cell-local point, and only when the point is on the glyphs carrying it.
+  /// `characterIndex(at:)` is the wrong question here: it answers with an insertion point, which
+  /// rounds to the nearer edge, so a click on the trailing half of a link's last character lands
+  /// one past the run — and it never misses, so a click in the empty half of a wide cell would
+  /// answer for the text beside it.
+  func link(at point: CGPoint) -> URL? {
+    guard storage.length > 0 else { return nil }
+    var fraction: CGFloat = 0
+    let glyph = layoutManager.glyphIndex(
+      for: point, in: container, fractionOfDistanceThroughGlyph: &fraction)
+    let rect = layoutManager.boundingRect(
+      forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+    guard rect.contains(point) else { return nil }
+    let index = layoutManager.characterIndexForGlyph(at: glyph)
+    return storage.attribute(.link, at: index, effectiveRange: nil) as? URL
   }
 
   func rects(for range: NSRange) -> [CGRect] {
