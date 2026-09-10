@@ -57,6 +57,14 @@ final class RunningColumnViewController: NSViewController {
   private let modelPicker = HeaderPicker(symbol: "sparkles")
   private let modePicker = HeaderPicker(symbol: "shield.lefthalf.filled")
   private let effortPicker = HeaderPicker(symbol: "gauge.medium")
+  /// Remote Control, the fourth of these and the only one that reaches outside the machine. It
+  /// earns the same header because it is the same kind of fact — one conversation's, not the
+  /// window's, so it would be a lie anywhere the selection can change under it (the rule the
+  /// context dial beside it already follows). It is hidden outright, not disabled, when the
+  /// engine says the bridge is unavailable: a control for something this deployment will never
+  /// offer is furniture.
+  private let remoteToggle = HeaderToggle(
+    symbol: "antenna.radiowaves.left.and.right", label: "Remote")
   /// Reasoning effort choices. `default` passes no `--effort` (the model's own default).
   private let efforts: [(title: String, id: String)] = [
     ("Default", "default"), ("Low", "low"), ("Medium", "medium"),
@@ -72,6 +80,12 @@ final class RunningColumnViewController: NSViewController {
   private var queuedCardTopInset: NSLayoutConstraint!
   private var queuedCardBottomInset: NSLayoutConstraint!
   private let queuedCardPadding: CGFloat = 6
+
+  /// The QR panel the antenna opens on hover, and the address it is currently for. Nil whenever
+  /// there is nothing to show, which is also what closes a panel standing over a bridge that has
+  /// since gone down.
+  private var remoteQRPopover: NSPopover?
+  private var remoteQRURL: URL?
   /// Popup titles paired with the model id sent to the engine.
   /// Fallback model list, used only until the engine advertises its own roster. Kept to
   /// known-good aliases; the real list (Fable, 1M variants, the recommended default) arrives
@@ -173,6 +187,14 @@ final class RunningColumnViewController: NSViewController {
     modelPicker.onSelect = { [weak self] index in self?.selectModel(index) }
     modePicker.onSelect = { [weak self] index in self?.selectMode(index) }
     effortPicker.onSelect = { [weak self] index in self?.selectEffort(index) }
+    remoteToggle.onToggle = { [weak self] on in self?.attached?.setRemoteControl(on) }
+    // Hover opens the code; the click stays the switch. The two never compete because the hover
+    // has something to show only while the bridge is up, which is exactly when the click means
+    // "turn it off" rather than "turn it on".
+    remoteToggle.onHover = { [weak self] inside in
+      guard let self else { return }
+      if inside { self.openRemoteQR() } else { self.closeRemoteQR() }
+    }
     // Mode and effort lists are fixed; the model list is filled from the session roster (or the
     // fallback) in refreshComposerAccessories, which also selects the value the session is on.
     // Auto is a fresh session's mode (AgentSession.defaultPermissionMode), so it is the quiet,
@@ -207,6 +229,8 @@ final class RunningColumnViewController: NSViewController {
     queuedCardTopInset = insets[2]
     queuedCardBottomInset = insets[3]
 
+    // The pill carries the antenna and the address it leads to, on the accent tint that says it
+    // acts rather than reads — the one thing in this stack that leaves the window.
     for child in [queuedCard, input] { bottomArea.addSubview(child) }
     // The composer stacks top-down: the queued type-ahead card, then the field. The
     // model/mode/effort controls now ride in the header (next to the cost), not here. The top
@@ -343,7 +367,7 @@ final class RunningColumnViewController: NSViewController {
     // to the model picker, which is what you reach for when the window is filling up.
     let header = HeaderBar(
       views: [titleLabel],
-      trailing: [contextLabel, costLabel, modelPicker, modePicker, effortPicker])
+      trailing: [contextLabel, costLabel, remoteToggle, modelPicker, modePicker, effortPicker])
     // The header is to this column what the tab strip is to the desk: it names what is showing,
     // it survives the fold, and so it is where the maximize gesture goes. A conversation has no
     // preview state to leave, so the first double-click is already the maximize.
@@ -1124,6 +1148,7 @@ final class RunningColumnViewController: NSViewController {
         effortPicker.select(index)
       }
     }
+    refreshRemoteControl(session)
 
     for view in queuedStack.arrangedSubviews { view.removeFromSuperview() }
     let queued = session?.queuedMessages ?? []
@@ -1139,6 +1164,47 @@ final class RunningColumnViewController: NSViewController {
     queuedCardBottomInset.constant = queued.isEmpty ? 0 : -queuedCardPadding
 
     settleAfterTurnIfNeeded(session)
+  }
+
+  /// Mirror the session's bridge into the header's antenna.
+  private func refreshRemoteControl(_ session: AgentSession?) {
+    let display = RemoteControlDisplay(session: session)
+    remoteToggle.isHidden = !display.isShown
+    remoteToggle.isEnabled = display.isEnabled
+    remoteToggle.setOn(display.isOn)
+    remoteToggle.toolTip = display.toolTip
+
+    // The pill is the way *out* — the header's antenna says whether the bridge is up, this says
+    // where it goes — so it shows only while there is somewhere to go, and it is a link rather
+    // than a second switch. Nothing while off, which is what keeps the composer's stack for what
+    // is actually waiting on you.
+    // The address is not spelled anywhere on the header — a URL has no business in a strip of
+    // one-word controls — so it lives behind the hover, as a code a phone can read. The panel is
+    // dropped whenever there is nothing to show, which also closes it on a bridge going down
+    // under the pointer.
+    remoteQRURL = display.url
+    if display.url == nil { closeRemoteQR() }
+  }
+
+  /// Show the address as a code beside the antenna.
+  ///
+  /// `.applicationDefined`, so the hover is the only thing that opens or closes it. Scanning it
+  /// means picking up a phone while the pointer sits where it was left — which keeps the panel up
+  /// on its own — and any other behaviour would let a stray click take the code away mid-scan.
+  private func openRemoteQR() {
+    guard let url = remoteQRURL, remoteQRPopover == nil, !remoteToggle.isHidden else { return }
+    let popover = NSPopover()
+    popover.behavior = .applicationDefined
+    popover.contentViewController = NSViewController()
+    popover.contentViewController?.view = RemoteControlQRView(
+      url: url, account: attached?.accountEmail)
+    popover.show(relativeTo: remoteToggle.bounds, of: remoteToggle, preferredEdge: .maxY)
+    remoteQRPopover = popover
+  }
+
+  private func closeRemoteQR() {
+    remoteQRPopover?.close()
+    remoteQRPopover = nil
   }
 
   /// The attached session's id and whether its turn was under way at the last reload — the
@@ -1267,4 +1333,87 @@ final class RunningColumnViewController: NSViewController {
     view.window?.invalidateRestorableState()
   }
 
+}
+
+/// What the header's antenna shows for a session — pulled out of the column so the decisions can
+/// be read (and tested) without standing a view up, the whole of it being about the session rather
+/// than about layout.
+///
+/// Two questions, and they are not the same one. **Whether to show it** is whether this install
+/// offers the bridge at all — a fact the window carries across from the first engine that answered,
+/// the way the slash command list travels, so a conversation that has not started still says the
+/// feature exists. It was tied to *this* session's engine at first, which meant the antenna was
+/// invisible on every detached row and the feature could not be found without already knowing it
+/// was there. **Whether it can be pressed** is whether an engine of this session's own is up,
+/// because the bridge is the engine's to hold and there is nothing to queue an intent against —
+/// disabled rather than hidden, which is what the model and mode pickers beside it already do for
+/// a held session.
+struct RemoteControlDisplay {
+  let isShown: Bool
+  let isEnabled: Bool
+  /// `connecting` reads as on, so the antenna does not flick back for the beat between the
+  /// request being answered and the bridge arriving.
+  let isOn: Bool
+  let toolTip: String?
+  /// The pill's text, and nil for no pill at all. Present only where there is somewhere to go:
+  /// the bridge up and an address to reach it at.
+  let url: URL?
+
+  init(session: AgentSession?) {
+    self.init(
+      availability: session?.remoteControl, bridge: session?.bridgeState ?? .off,
+      hasLiveEngine: session?.hasLiveEngine ?? false, isHeld: session?.heldByPID != nil,
+      isAsking: session?.isSettingRemoteControl ?? false, url: session?.remoteControlURL)
+  }
+
+  /// The decision on its own facts, which is also how it is read in tests — standing a session up
+  /// with a live engine behind it would mean spawning `claude` to check a tooltip.
+  init(
+    availability: ClaudeRemoteControl?, bridge: ClaudeBridgeState, hasLiveEngine: Bool,
+    isHeld: Bool, isAsking: Bool, url: URL? = nil
+  ) {
+    // An address exists only while the bridge is actually up, which is the whole condition for
+    // the hover having anything to show.
+    self.url = bridge == .connected ? url : nil
+    // `connecting` counts as on and says nothing extra. The engine's own `ready` lands within a
+    // beat of the request, so a word for the gap would be a flicker naming a state nobody can act
+    // on — and the antenna lighting up is already the whole of what there is to report.
+    isOn = bridge.isOn
+    guard let availability, availability.isAvailable else {
+      isShown = false
+      isEnabled = false
+      toolTip = nil
+      return
+    }
+    isShown = true
+    // A held session is somebody else's engine to speak to, a request in flight owns the control
+    // until it is answered, and a session with no engine has nobody to ask.
+    isEnabled = hasLiveEngine && !isHeld && !isAsking
+    guard hasLiveEngine else {
+      toolTip =
+        "Remote Control reaches this conversation from claude.ai/code and the Claude app. "
+        + "Send a message to start the session first — the bridge is the running engine's."
+      return
+    }
+    switch bridge {
+    case .connected:
+      toolTip =
+        "Remote Control is on — this conversation is reachable from claude.ai/code and the "
+        + "Claude app. The session keeps running here."
+    case .connecting:
+      toolTip = "Connecting to Remote Control…"
+    case .failed(let detail):
+      toolTip = "Remote Control failed" + (detail.map { ": \($0)" } ?? ".")
+    case .off:
+      // The disclosure the engine asks a host to show. The standing answer is on, but it came
+      // from a policy or a rollout rather than from this person, so hukan says so rather than
+      // acting on it — which is the same split `startsOnItsOwn` makes at start.
+      toolTip =
+        availability.autoEnable && availability.autoOnByDefault
+        ? "Remote Control is on by default for your organization. Turn it on to reach this "
+          + "conversation from claude.ai/code and the Claude app."
+        : "Turn on to reach this conversation from claude.ai/code and the Claude app. The "
+          + "conversation travels via Anthropic's servers."
+    }
+  }
 }

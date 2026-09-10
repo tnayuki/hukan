@@ -66,6 +66,65 @@ struct ClaudeCommand {
   var isTypeable: Bool { !name.hasPrefix("__") }
 }
 
+/// What the engine says about Remote Control — the bridge that puts this conversation on
+/// claude.ai/code and the Claude mobile app while the process goes on running here.
+///
+/// hukan reads this rather than deciding for itself, and there are three separate facts because
+/// the engine keeps them separate. `isAvailable` is whether the deployment offers it at all
+/// (managed settings can hard-disable it, and a session that is itself remote cannot bridge a
+/// bridge). `autoEnable` is the resolution of `remoteControlAtStartup` — a *user-scope* setting,
+/// since repo-scoped settings are refused outright for this one, so it is the person's own
+/// standing answer and not the repository's. `autoOnByDefault` says that answer came from an org
+/// policy or a rollout rather than from them, which is why it is not folded into `autoEnable`:
+/// the two differ exactly when nobody chose, and putting a conversation on Anthropic's servers is
+/// not something to do because a default said so.
+///
+/// The field names are the engine's own `remote_control_*` init keys, whose descriptions say they
+/// exist "so IDE hosts can mirror TUI behavior" — this is the documented way in rather than a
+/// protocol hukan inferred.
+struct ClaudeRemoteControl {
+  let isAvailable: Bool
+  let autoEnable: Bool
+  let autoOnByDefault: Bool
+
+  /// Whether to turn the bridge on without being asked. Only when the engine offers it *and* the
+  /// standing answer is the person's own: an org default reaching this far is a disclosure to
+  /// show, not an instruction to follow.
+  var startsOnItsOwn: Bool { isAvailable && autoEnable && !autoOnByDefault }
+}
+
+/// Where the bridge stands, as the engine reports it on the stream (`system` / `bridge_state`).
+///
+/// The engine's vocabulary is open-ended, so an unknown word reads as **off, not failed** — those
+/// are two different claims and only one of them is safe to make. Not knowing a state means not
+/// knowing the conversation is on the wire, which is what `off` says; saying `failed` says the
+/// bridge was refused, which hukan cannot know and which puts a line in the transcript about
+/// something that did not happen. That is not hypothetical: `ready` is a perfectly ordinary state
+/// — the engine itself treats it as attached, alongside `connected` — and it arrives *first*, so
+/// reading anything unfamiliar as a failure reported one on every successful connection.
+enum ClaudeBridgeState: Equatable {
+  case off
+  case connecting
+  case connected
+  /// Off, carrying the engine's own reason, so a failure is not silent. Only ever from a word the
+  /// engine actually uses for one.
+  case failed(String?)
+
+  init(state: String, detail: String?) {
+    switch state {
+    // `ready` and `connected` are one state to the engine (`be === "connected" || be === "ready"`
+    // is what sets its attached flag); they differ only in bookkeeping hukan has no part in.
+    case "connected", "ready": self = .connected
+    case "connecting": self = .connecting
+    case "failed": self = .failed(detail)
+    // `disconnected`, and anything hukan has not met: not on the wire, nothing claimed about why.
+    default: self = .off
+    }
+  }
+
+  var isOn: Bool { self == .connected || self == .connecting }
+}
+
 /// Keeps `claude -p` resident and talks to it both ways over stream-json.
 ///
 /// No PTY. stream-json is a pipe protocol, and the CLI itself treats a non-TTY stdout
@@ -108,6 +167,14 @@ final class ClaudeSession {
   var onModels: (([ClaudeModel]) -> Void)?
   /// The slash-command list carried by the same reply. Fires once, on the main thread.
   var onCommands: (([ClaudeCommand]) -> Void)?
+  /// What the same reply says about Remote Control. Fires once, on the main thread, and only
+  /// when the engine spoke about it at all — an older CLI omits the keys, which reads as
+  /// unavailable rather than as off.
+  var onRemoteControl: ((ClaudeRemoteControl) -> Void)?
+  /// The signed-in account's address, from the same reply's `account.email`. Fires once, on the
+  /// main thread. Read for one purpose: a bridged conversation can only be opened by the account
+  /// that bridged it, so the code offering it has to say whose it is.
+  var onAccountEmail: ((String) -> Void)?
   /// The `initialize` reply came back an error, so the engine never became ready — most often
   /// because the account is signed out (the OAuth token expired or `/logout` was run elsewhere).
   /// Carries the engine's message. Fires on the main thread; the session is dead after this.
@@ -467,6 +534,37 @@ final class ClaudeSession {
     ask("get_context_usage", completion: completion)
   }
 
+  /// Put this conversation on the bridge, or take it off — the request the VS Code extension
+  /// sends down this same stream, verified against its shipped `extension.js` as well as the
+  /// engine's own control dispatch.
+  ///
+  /// The engine does the bridging; hukan only says when. That is what keeps this inside the one
+  /// outbound line hukan draws for itself (see the update check in CLAUDE.md): no socket of
+  /// hukan's opens, no credential of hukan's is sent. What it does mean is that the conversation
+  /// travels to Anthropic's servers so another device can read it, which is why nothing here is
+  /// implicit — every call is a person's decision or their standing user-scope setting.
+  ///
+  /// `name` is what the phone's session list reads, so it is worth spending: hukan sends the
+  /// title the rail shows, and the engine falls back to its hostname prefix when it is nil.
+  /// Two parameters are deliberately not sent. `keep_session_on_exit` would leave the engine up
+  /// on the bridge after hukan quits — an process this window can no longer show, which is the
+  /// same refusal that keeps a closed repository off the rail. And `work_secret` is for a host
+  /// that manages its own bridge environment; omitting it is also what means the engine will
+  /// never ask for a refreshed one (`remote_control_work_secret`), leaving hukan nothing to
+  /// answer.
+  ///
+  /// The reply carries `bridge_session_id` on success. hukan does not keep it: where the bridge
+  /// stands arrives on the stream as `bridge_state`, continuously, and an id held beside that
+  /// would be a second account of one thing. A nil reply is a refusal or a dead engine, which
+  /// the caller reads as the bridge not coming up.
+  func setRemoteControl(
+    _ enabled: Bool, name: String? = nil, completion: @escaping ([String: Any]?) -> Void
+  ) {
+    var parameters: [String: Any] = ["enabled": enabled]
+    if enabled, let name, !name.isEmpty { parameters["name"] = name }
+    ask("remote_control", parameters, completion: completion)
+  }
+
   /// Cut the live conversation back to just before one of its user messages.
   ///
   /// `lastSeen` is the newest user message the caller has actually shown. The engine refuses a
@@ -718,6 +816,27 @@ final class ClaudeSession {
         DispatchQueue.main.async { [weak self] in self?.onCommands?(commands) }
       }
     }
+    // Remote Control's three facts ride in the same reply. Reported only when the engine named
+    // it at all: a CLI that predates the keys says nothing, and the documented reading of an
+    // absent key is false — which lands as unavailable, so the control never appears rather
+    // than appearing dead.
+    if let inner = response["response"] as? [String: Any],
+      let account = inner["account"] as? [String: Any],
+      let email = account["email"] as? String, !email.isEmpty
+    {
+      DispatchQueue.main.async { [weak self] in self?.onAccountEmail?(email) }
+    }
+    if let inner = response["response"] as? [String: Any],
+      inner["remote_control_available"] != nil
+    {
+      DispatchQueue.main.async { [weak self] in
+        self?.onRemoteControl?(
+          ClaudeRemoteControl(
+            isAvailable: inner["remote_control_available"] as? Bool ?? false,
+            autoEnable: inner["remote_control_auto_enable"] as? Bool ?? false,
+            autoOnByDefault: inner["remote_control_auto_on_by_default"] as? Bool ?? false))
+      }
+    }
     writeQueue.async { [weak self] in
       guard let self else { return }
       self.isInitialized = true
@@ -889,6 +1008,27 @@ enum ClaudeSessionStore {
   struct SessionOwner {
     let pid: pid_t
     let cwd: URL?
+    /// What kind of process this is, in the registry's own words — `interactive`, `bg`, `daemon`
+    /// or `daemon-worker`. Read because the last two are not conversations: they are the
+    /// `claude remote-control` server and the sessions it spawns for a phone, and Claude Code
+    /// itself filters them out of `/resume`. Kept as the engine's string rather than mapped to a
+    /// hukan enum, so a kind added later arrives unrecognised instead of being coerced into the
+    /// wrong one.
+    let kind: String?
+
+    /// `kind` defaults to nil because an older CLI's record does not carry one, and the reading of
+    /// its absence is "an ordinary session" — the kinds worth excluding are ones the engine names.
+    init(pid: pid_t, cwd: URL?, kind: String? = nil) {
+      self.pid = pid
+      self.cwd = cwd
+      self.kind = kind
+    }
+
+    /// Whether this record stands for a conversation the rail should carry. The rail is a resume
+    /// list, and a row hukan could neither resume nor act on is the pile of rows standing for
+    /// nothing this window is meant to be the opposite of — the same reasoning that keeps a
+    /// closed repository off it.
+    var isConversation: Bool { kind != "daemon" && kind != "daemon-worker" }
   }
 
   /// The whole registry, read once: which live process holds each session it names, and where.
@@ -911,7 +1051,10 @@ enum ClaudeSessionStore {
         let pid = record["pid"] as? Int, kill(pid_t(pid), 0) == 0
       else { continue }
       let cwd = (record["cwd"] as? String).map { URL(fileURLWithPath: $0) }
-      owners[id] = SessionOwner(pid: pid_t(pid), cwd: cwd)
+      // Every kind is kept here, including the ones no row is made for: the hold this answers is
+      // about a second engine writing one transcript, which is true whoever is holding it.
+      owners[id] = SessionOwner(
+        pid: pid_t(pid), cwd: cwd, kind: record["kind"] as? String)
     }
     return owners
   }

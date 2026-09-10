@@ -1095,6 +1095,20 @@ public enum Transcript {
       ])
   }
 
+  /// A note carrying an address that is meant to be followed.
+  ///
+  /// A note is built directly rather than run through `styled`, so the autolinking that turns a
+  /// bare `https://` blue in an agent's prose never reaches one — which was fine while every note
+  /// was a fact about a file, and stopped being fine when one started carrying the address of a
+  /// bridged conversation. The link is put on the range the address occupies rather than the
+  /// whole line, so the sentence around it stays a note.
+  public static func note(_ string: String, linking url: URL) -> NSAttributedString {
+    let built = NSMutableAttributedString(attributedString: note(string))
+    guard let range = string.range(of: url.absoluteString) else { return built }
+    built.addAttribute(.link, value: url, range: NSRange(range, in: string))
+    return built
+  }
+
   public static func error(_ string: String) -> NSAttributedString {
     NSAttributedString(
       string: string + "\n",

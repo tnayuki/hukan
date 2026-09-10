@@ -380,6 +380,14 @@ extension Workspace {
     let known = Set(sessions.map(\.id))
     var adopted: [(session: AgentSession, pid: pid_t)] = []
     for (id, owner) in owners where !known.contains(id) {
+      // A `claude remote-control` server, and the sessions it spawns for a phone, register here
+      // like anything else — but neither is a conversation this window can carry. The server is a
+      // server, and a worker's engine is not hukan's to speak to: it cannot be resumed (Claude
+      // Code filters both out of `/resume` itself), its approvals are waiting on the phone, and a
+      // row that can only be looked at is the dimmed repository row the rail already refuses.
+      // What such a session *does* leave behind is a worktree, which git lists and the rail shows
+      // — the work is visible, without pretending the conversation is yours.
+      guard owner.isConversation else { continue }
       guard let cwd = owner.cwd, let home = worktree(atRoot: cwd) else { continue }
       // Detached is "there is something to resume", and at this moment there usually is not.
       // Asked rather than assumed, for the session that has been going a while before this

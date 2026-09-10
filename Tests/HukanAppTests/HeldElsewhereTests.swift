@@ -156,6 +156,57 @@ final class HeldElsewhereTests: XCTestCase {
       session.isDetached, "with no transcript yet, a start would be a fresh id and not a resume")
   }
 
+  /// A `claude remote-control` server and the sessions it spawns for a phone register here like
+  /// anything else, and neither is a conversation this window can carry: the server is a server,
+  /// and a worker's engine is not hukan's to speak to — Claude Code filters both out of `/resume`
+  /// itself. What the work leaves behind is a worktree, which git lists and the rail shows.
+  func testTheRemoteControlServerAndItsWorkersGetNoRow() throws {
+    let (workspace, root) = try openedWorktree()
+    let pid = try liveProcess()
+    let server = UUID()
+    let worker = UUID()
+    let mine = UUID()
+
+    workspace.adoptRegisteredSessions([
+      server: .init(pid: pid, cwd: root, kind: "daemon"),
+      worker: .init(pid: pid, cwd: root, kind: "daemon-worker"),
+      mine: .init(pid: pid, cwd: root, kind: "interactive"),
+    ])
+
+    XCTAssertNil(workspace.sessions.first { $0.id == server })
+    XCTAssertNil(workspace.sessions.first { $0.id == worker })
+    XCTAssertNotNil(
+      workspace.sessions.first { $0.id == mine }, "an ordinary session is still adopted")
+  }
+
+  /// A record with no kind is an older CLI's, and the reading of that absence is "a session" —
+  /// the kinds worth excluding are ones the engine names. `bg` is named and kept: a background
+  /// agent is a conversation, and the engine leaves it in `/resume` too.
+  func testAnUnnamedKindIsStillASession() throws {
+    let (workspace, root) = try openedWorktree()
+    let pid = try liveProcess()
+    let old = UUID()
+    let background = UUID()
+
+    workspace.adoptRegisteredSessions([
+      old: .init(pid: pid, cwd: root),
+      background: .init(pid: pid, cwd: root, kind: "bg"),
+    ])
+
+    XCTAssertNotNil(workspace.sessions.first { $0.id == old })
+    XCTAssertNotNil(workspace.sessions.first { $0.id == background })
+  }
+
+  /// The hold is a different question from the row, and it has to see every kind: what it prevents
+  /// is two engines writing one transcript, which is true whoever the other one is.
+  func testTheHoldStillCountsEveryKind() {
+    XCTAssertFalse(
+      ClaudeSessionStore.SessionOwner(pid: 1, cwd: nil, kind: "daemon-worker").isConversation)
+    XCTAssertTrue(
+      ClaudeSessionStore.SessionOwner(pid: 1, cwd: nil, kind: "interactive")
+        .isConversation)
+  }
+
   /// Adoption runs on every registry event, so it has to be idempotent: a session already on the
   /// rail — discovered, or adopted a moment ago — is not listed twice.
   func testASessionAlreadyOnTheRailIsNotAdoptedTwice() throws {

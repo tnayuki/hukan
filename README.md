@@ -218,12 +218,30 @@ plan usage sits in the toolbar instead, since it is true of the whole window, an
 CPU and memory of hukan and every process it spawned, split in the tooltip between hukan itself,
 the Claude Code engines, what those spawned and the terminals, with a process count for each.
 
+**Remote Control.** An antenna in the conversation header puts that one session on claude.ai/code
+and the Claude mobile app, so a turn you started at the desk can be watched — and answered — from
+a phone. The engine does the bridging and keeps running here; hukan only says when. It shows
+wherever your Claude Code offers it — including on a session you have not started, though it takes
+a running engine to switch — and it is never on unless you say so or you have already said so in
+Claude Code's own user-scope setting: a standing "on" that came from an organization default is
+disclosed in the tooltip rather than acted on, since this is the switch that sends a conversation
+via Anthropic's servers. While it is up, hovering the antenna shows the session's address as a QR
+code, with the account it belongs to under it — a bridged conversation opens only for the login
+that bridged it, so the phone has to be signed in as the same one — and the transcript says so
+too, with the address as a link, so a conversation read back later still knows where it went. What
+you type on the phone appears here as you send it, so the conversation reads the same on both
+ends. Nothing is remembered per session — turning it on is a decision
+about this conversation, now — and the bridge goes with the engine, so a session hukan restarts
+comes back off. Turning it off, and a bridge that drops or is refused, say so in the transcript.
+
 **Sessions.** A restored session reads its conversation back rather than opening empty. Names are
 Claude Code's own titles. A session not yet reattached is marked `detached` and resumes on
 selection; one another process already holds shows greyed and cannot be started, but still reads
 and searches, and returns the moment that process exits. A `claude` started outside the window —
 in a terminal, in a worktree open here — joins the rail as it starts, held, and takes its name
-when it writes its first message. Opened, its conversation keeps up: what the other process writes
+when it writes its first message. A `claude remote-control` server and the sessions it spawns for
+a phone are not rows: neither can be resumed or answered from here. What that work leaves behind
+is a worktree, which the rail shows like any other. Opened, its conversation keeps up: what the other process writes
 arrives as it is written, a rollback it makes included.
 
 **Slash commands.** A `/` at the head of the composer opens the engine's own command list — its

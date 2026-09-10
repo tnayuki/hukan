@@ -237,6 +237,46 @@ final class AgentSession {
   /// a completion is most wanted is the first `/` typed into a session that has not started yet.
   private(set) var availableCommands: [ClaudeCommand] = []
 
+  /// What the engine says about Remote Control, from that same reply.
+  ///
+  /// This is a fact about the *install*, not about this conversation — every session in a window
+  /// talks to the same `claude` — so the window seeds it across, exactly as it does the slash
+  /// command list, and the first engine up answers for the rest. That is what lets the header
+  /// show the control on a session that has not started: whether the bridge exists is knowable
+  /// without an engine of one's own, and hiding it until this session had spoken meant the
+  /// feature could not be found at all. Whether it can be *used* right now is a separate
+  /// question, which `hasLiveEngine` answers.
+  /// Internal rather than `private(set)` so tests can seed it, as `tasks` is.
+  var remoteControl: ClaudeRemoteControl?
+
+  /// Where the bridge stands for this session. Reset to `.off` whenever the engine goes: a bridge
+  /// belongs to a live process, so a state carried across a restart would claim a phone can reach
+  /// a conversation nothing is holding.
+  var bridgeState: ClaudeBridgeState = .off
+
+  /// Set while a `remote_control` request is in flight, so a second press cannot stack two. The
+  /// engine answers before its first `bridge_state` arrives, which is why this is not simply read
+  /// off `bridgeState` — between the two there is a beat with no other sign anything is happening.
+  var isSettingRemoteControl = false
+
+  /// Where this conversation can be reached while the bridge is up — `session_url` from the
+  /// `remote_control` reply, the claude.ai/code address for this session.
+  ///
+  /// It is the one thing in that reply worth keeping. The bridge's *state* arrives continuously
+  /// as `bridge_state`, so holding an id beside it would be a second account of one thing — but
+  /// the address is not a state, it is the answer to "so how do I get there from my phone", and
+  /// nothing else on the stream ever says it. The engine treats it as required for a successful
+  /// enable, so its absence is a bridge that came up with no way in.
+  private(set) var remoteControlURL: URL?
+
+  /// The address this conversation has already been told about, so the note is written once per
+  /// bridge rather than on every reconnect the engine makes on its own.
+  private var announcedRemoteControlURL: URL?
+
+  /// The account this session's engine is signed in as. Seeded across the window like the command
+  /// list, since one window talks to one login.
+  var accountEmail: String?
+
   /// Type-ahead held while the agent is mid-turn. Writing a `user` message into a turn the
   /// engine is still working would race it; instead these queue and flush one at a time as
   /// each turn ends. Shown above the composer so a queued line is never invisible.
@@ -315,6 +355,11 @@ final class AgentSession {
   /// The engine reported its slash commands. The window keeps them so every other session —
   /// including one that has never started — can complete against the same list.
   var onCommands: (([ClaudeCommand]) -> Void)?
+  /// The engine answered for Remote Control. Kept by the window for the same reason the commands
+  /// are: it is one fact about the install, and every session in the window shares it.
+  var onRemoteControl: ((ClaudeRemoteControl) -> Void)?
+  /// The signed-in account, from the same reply. Travels the same way — one login per window.
+  var onAccountEmail: ((String) -> Void)?
 
   /// This session wants to send but has no live process — a new session never started, or a
   /// restored one only ever looked at. The window resolves the worktree and spawns `claude`.
@@ -597,6 +642,40 @@ final class AgentSession {
 
   /// Whether a `user` event is a prompt someone typed rather than the engine answering its own
   /// tool call. Both arrive as `user`; only the first is a message a rewind can be aimed at.
+  /// Whether a replayed user message came from somewhere other than this window's composer.
+  ///
+  /// **The test is that an origin is present at all, not what it says.** A message hukan hands
+  /// the engine over stdin is recorded with no `origin` whatever; one typed on claude.ai/code
+  /// arrives with one. Matching a particular value was the first rule and it was wrong twice
+  /// over: `bridge` is a kind the engine uses for something else, and what a person typing on the
+  /// far end actually produces is `{"kind":"human"}` — read out of a real transcript, since this
+  /// is the sort of thing no amount of reading the binary settles.
+  ///
+  /// Absence is the reliable half, and it is the half hukan needs: the only messages it has
+  /// already drawn are the ones it sent, and those are exactly the untagged ones. A tag it has
+  /// never seen therefore shows — the worst that costs is a line drawn twice, against a
+  /// conversation with the answer arriving under no question.
+  static func isFromElsewhere(_ payload: [String: Any]) -> Bool {
+    payload["origin"] != nil
+  }
+
+  /// The text of a user message, however the engine spelled its content — a bare string, or the
+  /// blocks a message with attachments arrives as. Only the text: an image typed on a phone lives
+  /// on Anthropic's side, not in this worktree, so there is no path here to draw it from.
+  static func promptText(_ payload: [String: Any]) -> String? {
+    guard let message = payload["message"] as? [String: Any] else { return nil }
+    if let text = message["content"] as? String {
+      return text.isEmpty ? nil : text
+    }
+    guard let blocks = message["content"] as? [[String: Any]] else { return nil }
+    let text =
+      blocks
+      .filter { $0["type"] as? String == "text" }
+      .compactMap { $0["text"] as? String }
+      .joined(separator: "\n")
+    return text.isEmpty ? nil : text
+  }
+
   private static func isUserPrompt(_ payload: [String: Any]) -> Bool {
     guard let message = payload["message"] as? [String: Any] else { return false }
     if message["content"] is String { return true }
@@ -727,12 +806,40 @@ final class AgentSession {
       self?.onCommands?(commands)
       self?.onStateChange?()
     }
+    session.onRemoteControl = { [weak self] availability in
+      guard let self else { return }
+      // This engine's own answer wins over anything the window seeded in.
+      self.remoteControl = availability
+      self.onRemoteControl?(availability)
+      // The standing user-scope answer, applied once the engine is up. Only when it is theirs:
+      // `startsOnItsOwn` is false for an org/rollout default, which shows the control rather
+      // than acting on it.
+      if availability.startsOnItsOwn, self.bridgeState == .off { self.setRemoteControl(true) }
+      self.onStateChange?()
+    }
+    session.onAccountEmail = { [weak self] email in
+      guard let self else { return }
+      self.accountEmail = email
+      self.onAccountEmail?(email)
+      self.onStateChange?()
+    }
     session.onInitializeFailed = { [weak self] _ in self?.handleSignedOut() }
     session.onExit = { [weak self] status in
       guard let self else { return }
       // Read before the runner goes: the tail lives on it.
       let stderr = self.runner?.lastError
       self.runner = nil
+      // The bridge was that process's, so it does not survive it: a state kept here would say a
+      // phone can reach a conversation nothing is holding. Availability does survive — it is a
+      // fact about the install rather than about this process, and dropping it would take the
+      // control off the header of a session the user has merely stopped.
+      // Assigned rather than run through `applyBridge`: the engine going is not the bridge being
+      // switched off, and a line saying so on every stop and restart would narrate the process's
+      // life in a conversation that is about something else.
+      self.bridgeState = .off
+      self.remoteControlURL = nil
+      self.announcedRemoteControlURL = nil
+      self.isSettingRemoteControl = false
       // The process is gone, which is the whole of what a deferred stop was waiting for. Run it
       // before the branches below, because each of those is an exit too and the work is owed
       // whichever way this one was reached.
@@ -1152,6 +1259,94 @@ final class AgentSession {
     onStateChange?()
   }
 
+  /// Put this conversation on the bridge, or take it off.
+  ///
+  /// Unlike the model and the mode this is *not* remembered for the next launch, and that is the
+  /// point: turning it on sends the conversation to Anthropic's servers so another device can
+  /// read it, and a preference of hukan's that quietly did that again tomorrow would be hukan
+  /// deciding it once on the person's behalf forever. The standing answer, if they want one,
+  /// already exists — `remoteControlAtStartup`, user scope, in Claude Code's own settings, which
+  /// arrives as `startsOnItsOwn` and is applied at start. Master data where it already is; hukan
+  /// gains no setting for this and has no settings window to put one in.
+  ///
+  /// Nothing happens without a live engine: the bridge is the engine's, so there is nothing to
+  /// ask when it is not up, and the control is disabled there rather than queuing an intent.
+  func setRemoteControl(_ enabled: Bool) {
+    guard let runner, remoteControl?.isAvailable == true, !isSettingRemoteControl else { return }
+    guard enabled != bridgeState.isOn else { return }
+    isSettingRemoteControl = true
+    // Optimistic only as far as "something is happening": the settled state is whatever
+    // `bridge_state` says, and the reply below only has to catch the case where it says nothing.
+    if enabled { bridgeState = .connecting }
+    onStateChange?()
+    runner.setRemoteControl(enabled, name: enabled ? title : nil) { [weak self] reply in
+      guard let self else { return }
+      self.isSettingRemoteControl = false
+      // A refusal or a dead engine. `bridge_state` is what reports success, so there is nothing
+      // to do on the happy path here — but a refusal sends no state at all, and without this the
+      // control would sit on "connecting" for the life of the session.
+      // The address rides in on the reply and nowhere else, so it is taken before the state is
+      // settled below — whichever of the two completes the pair writes the note.
+      if enabled { self.remoteControlURL = (reply?["session_url"] as? String).flatMap(URL.init) }
+      if reply == nil, self.bridgeState == .connecting {
+        self.applyBridge(.failed(nil))
+      } else if !enabled {
+        // A disable is answered by the reply; the engine does not always follow it with a state.
+        self.applyBridge(.off, asked: true)
+      } else {
+        self.applyBridge(self.bridgeState)
+      }
+      self.onStateChange?()
+    }
+  }
+
+  /// Move the bridge to a new state and say what that means in the conversation.
+  ///
+  /// One place, because the two things that move it disagree about which of them speaks: a state
+  /// pushed by the engine (`bridge_state`) reports a drop, a reconnect and the engine's own
+  /// retries, while a *disable* hukan asks for is answered by the reply and not always followed
+  /// by a state at all. Narrating at either site alone therefore missed half the transitions.
+  ///
+  /// The transcript is the right place for all three notes because they are facts about the
+  /// conversation rather than about the window: this exchange left the machine here, came back
+  /// there, and the address is what someone reading it back would need. The header's antenna
+  /// cannot carry them — it only ever shows the two states you can choose between, so on its own
+  /// a failure reads as the toggle not having taken.
+  private func applyBridge(_ new: ClaudeBridgeState, asked: Bool = false) {
+    let previous = bridgeState
+    bridgeState = new
+    if !new.isOn { remoteControlURL = nil }
+    switch new {
+    case .connected:
+      // Written once per address, so the engine reconnecting on its own does not repeat it, and
+      // never for a bridge that came up without one — a note offering no way in says nothing.
+      guard let url = remoteControlURL, announcedRemoteControlURL != url else { return }
+      announcedRemoteControlURL = url
+      append(
+        Transcript.note(
+          "Remote Control is on — continue here, on your phone, or at \(url.absoluteString)",
+          linking: url))
+    case .off:
+      // Only for a disable someone asked for, and only from a bridge that was actually up. The
+      // engine drops and reattaches on its own, and a line each way would bury the conversation
+      // the bridge exists to carry — the reasoning that already keeps retries out of here. The
+      // antenna and the pill going quiet is what reports a drop; they are on screen.
+      guard asked, previous == .connected else { return }
+      announcedRemoteControlURL = nil
+      append(Transcript.note("Remote Control is off — this conversation is local again."))
+    case .failed(let detail):
+      // Only ever from a word the engine uses for a failure, so this is its claim and not a guess
+      // at one. Narrated on the transition alone: the engine retries.
+      guard previous != new else { return }
+      append(
+        Transcript.error(
+          "Remote Control " + (previous == .connected ? "disconnected" : "failed")
+            + (detail.map { ": \($0)" } ?? ".")))
+    case .connecting:
+      break
+    }
+  }
+
   /// Change reasoning effort. Remembered and applied at the next launch (no runtime control),
   /// so a running session keeps its current effort until it restarts.
   func setEffort(_ effort: String) {
@@ -1183,6 +1378,20 @@ final class AgentSession {
     guard availableCommands.isEmpty, !commands.isEmpty else { return }
     availableCommands = commands
   }
+
+  /// Take the window's answer about Remote Control, for a session with no engine of its own to
+  /// ask. Never overwrites one this session's own engine gave: that one is current, and it is
+  /// also the only one whose `autoOnByDefault` was resolved against this very process.
+  func seedRemoteControl(_ availability: ClaudeRemoteControl?) {
+    guard remoteControl == nil, let availability else { return }
+    remoteControl = availability
+  }
+
+  /// Whether an engine of this session's own is up. The bridge is the engine's to hold, so this is
+  /// what separates "hukan can offer this" from "hukan can ask for it now" — there is nothing to
+  /// queue an intent against, and a switch that silently meant "next time you start" would be the
+  /// remembered choice this deliberately does not keep.
+  var hasLiveEngine: Bool { runner != nil }
 
   /// Answer the approval on screen. Denying ends the agent's turn rather than the session.
   func resolveApproval(allow: Bool) {
@@ -1547,6 +1756,15 @@ final class AgentSession {
         let uuid = event.payload["uuid"] as? String,
         Self.isUserPrompt(event.payload)
       {
+        // A replay is normally an acknowledgement of a message hukan wrote and has already put on
+        // screen, so only its uuid is taken. But the engine replays *every* message it accepts,
+        // and once a session is bridged some of them were typed on a phone — those hukan never
+        // wrote, and nothing else would ever show them: the answer would arrive under no question.
+        // The engine marks where a message came from, so this is its own account and not a guess.
+        if Self.isFromElsewhere(event.payload), let text = Self.promptText(event.payload) {
+          append(Transcript.userMessage(text, forkAnchor: lastRecordUUID))
+          markTime()
+        }
         userMessages.append((anchor: lastRecordUUID, uuid: uuid))
       }
 
@@ -1674,6 +1892,15 @@ final class AgentSession {
       {
         permissionMode = mode
       }
+      onStateChange?()
+
+    case "system" where event.subtype == "bridge_state":
+      // Where Remote Control stands, pushed by the engine rather than polled — the same stance
+      // as the rest of this protocol. It arrives for every transition, including ones hukan did
+      // not ask for: the bridge dropping on its own, and the engine's own reconnect.
+      guard let raw = event.payload["state"] as? String else { break }
+      isSettingRemoteControl = false
+      applyBridge(ClaudeBridgeState(state: raw, detail: event.payload["detail"] as? String))
       onStateChange?()
 
     default:

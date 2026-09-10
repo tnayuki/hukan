@@ -206,6 +206,89 @@ final class HeaderPicker: NSButton {
   }
 }
 
+/// The header's binary: `HeaderPicker`'s look, without the menu.
+///
+/// The pickers beside it answer "which of several?", where this answers "yes or no?" — and a
+/// two-item menu serves that badly. It pops a list to choose between two things, it makes a state
+/// the engine reports on its own (connecting, failed) read as a third choice, and its two items
+/// have to be named as if they were siblings, which "Off" and "Remote" are not. Clicking to flip
+/// is what every other binary in hukan already does — the files panel's ± scope, the History
+/// section's fold — so this is the existing gesture arriving in a strip that had not needed it
+/// yet.
+///
+/// The display contract is `HeaderPicker`'s exactly, and deliberately so: quiet glyph while it is
+/// at rest, glyph and full-strength text once it is not, so a header of defaults stays a row of
+/// glyphs. `label` is what it says when on; off says nothing, being the default.
+final class HeaderToggle: NSButton {
+  var onToggle: ((Bool) -> Void)?
+  /// The pointer entering or leaving. A header control has room for one word and no more, so
+  /// anything longer than that — an address, a code — hangs off this rather than off the click,
+  /// which is spoken for.
+  var onHover: ((Bool) -> Void)?
+
+  private let symbolName: String
+  private let label: String
+  private var isOn = false
+
+  init(symbol: String, label: String) {
+    symbolName = symbol
+    self.label = label
+    super.init(frame: .zero)
+    translatesAutoresizingMaskIntoConstraints = false
+    isBordered = false
+    imagePosition = .imageLeft
+    font = .systemFont(ofSize: 11)
+    (cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
+    setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    target = self
+    action = #selector(flip)
+    refreshDisplay()
+  }
+
+  required init?(coder: NSCoder) { fatalError() }
+
+  /// Reflect state without acting on it — the engine is what settles this, and it moves for
+  /// reasons nobody here pressed.
+  func setOn(_ on: Bool) {
+    guard on != isOn else { return }
+    isOn = on
+    refreshDisplay()
+  }
+
+  private func refreshDisplay() {
+    image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+      .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+    if isOn {
+      title = label
+      imagePosition = .imageLeft
+      contentTintColor = .labelColor
+    } else {
+      title = ""
+      imagePosition = .imageOnly
+      contentTintColor = .secondaryLabelColor
+    }
+  }
+
+  @objc private func flip() {
+    // The new state is asked for, never assumed: what actually moves is the engine's, and it may
+    // refuse. `setOn` puts the display where the answer lands.
+    onToggle?(!isOn)
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    trackingAreas.forEach(removeTrackingArea)
+    addTrackingArea(
+      NSTrackingArea(
+        rect: .zero,
+        options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+        owner: self))
+  }
+
+  override func mouseEntered(with event: NSEvent) { onHover?(true) }
+  override func mouseExited(with event: NSEvent) { onHover?(false) }
+}
+
 /// Shown when there is nothing to display.
 final class EmptyStateView: NSView {
   /// `secondary` is a pull-down beside the button, for a state whose way out is a list rather than

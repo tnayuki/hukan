@@ -1012,6 +1012,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// The slash commands the last engine to start reported. See `attach` for why it is one list
   /// per window and why it is never saved.
   private var commandRoster: [ClaudeCommand] = []
+  /// The window's answer about Remote Control, from the last engine to give one. Same scope and
+  /// same lifetime as `commandRoster` — one install, one answer, never saved.
+  private var remoteControlRoster: ClaudeRemoteControl?
+  /// The login every session in this window shares, for the QR panel to name.
+  private var accountEmail: String?
 
   private var usageInFlight = false
   private var lastUsageRead: Date?
@@ -1678,6 +1683,25 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       for other in self.workspace.sessions { other.seedCommands(commands) }
     }
     session.seedCommands(commandRoster)
+    // Remote Control's availability travels the same way and for the same reason: whether the
+    // bridge is offered is a fact about the install, so the first engine up answers for every
+    // session in the window — which is what puts the control on the header of a conversation
+    // that has not started, where otherwise the feature could not be found at all. Not saved
+    // either; a managed setting can withdraw it, and one initialize is enough to be right again.
+    session.onRemoteControl = { [weak self] availability in
+      guard let self else { return }
+      self.remoteControlRoster = availability
+      for other in self.workspace.sessions { other.seedRemoteControl(availability) }
+    }
+    session.seedRemoteControl(remoteControlRoster)
+    session.onAccountEmail = { [weak self] email in
+      guard let self else { return }
+      self.accountEmail = email
+      for other in self.workspace.sessions where other.accountEmail == nil {
+        other.accountEmail = email
+      }
+    }
+    if session.accountEmail == nil { session.accountEmail = accountEmail }
     session.onHeldChange = { [weak self] in self?.reload() }
     session.onEnterWorktree = { [weak self] url in self?.moveSession(session, to: url) }
     session.onExitWorktree = { [weak self] url in self?.returnSession(session, to: url) }
