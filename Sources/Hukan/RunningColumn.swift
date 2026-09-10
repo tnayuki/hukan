@@ -573,8 +573,13 @@ final class RunningColumnViewController: NSViewController {
     session?.onAppend = { [weak self] fragment in
       guard let self else { return }
       let wasPinned = self.anchorWasPinned
+      let end = self.textView.textStorage?.length ?? 0
       self.textView.textStorage?.append(fragment)
-      if wasPinned { self.scrollTranscriptToBottom() } else { self.jumpButton.isHidden = false }
+      if wasPinned {
+        self.scrollTranscriptToBottom(changedAt: end)
+      } else {
+        self.jumpButton.isHidden = false
+      }
     }
     session?.onReplace = { [weak self] range, formatted in
       guard let self, let storage = self.textView.textStorage,
@@ -582,7 +587,11 @@ final class RunningColumnViewController: NSViewController {
       else { return }
       let wasPinned = self.anchorWasPinned
       storage.replaceCharacters(in: range, with: formatted)
-      if wasPinned { self.scrollTranscriptToBottom() } else { self.jumpButton.isHidden = false }
+      if wasPinned {
+        self.scrollTranscriptToBottom(changedAt: range.location)
+      } else {
+        self.jumpButton.isHidden = false
+      }
     }
     session?.onEdit = { [weak self] range, replacement in
       guard let self, let storage = self.textView.textStorage,
@@ -671,10 +680,17 @@ final class RunningColumnViewController: NSViewController {
   /// out first: right after a bulk `setAttributedString` (opening a session, a reload) TextKit 2
   /// has laid out almost nothing, so `scrollToEndOfDocument` would stop at the end of that little
   /// — near the top of a long transcript, which is the "restart lands up high" bug. Streaming
-  /// appends skip it: they lay out near the bottom already, and forcing a full pass per token
-  /// would be O(n²).
-  private func scrollTranscriptToBottom(ensuringLayout: Bool = false) {
-    if ensuringLayout { TranscriptScrollAnchor.layOutWholeDocument(of: textView) }
+  /// appends lay out only the tail instead — from where the text changed (`changedAt`, or the
+  /// reader's own line when nothing did) to the end — since a full pass per token would be
+  /// O(n²), and skipping the pass altogether scrolled to an estimated end that a long reply then
+  /// overran by screens (see `TranscriptScrollAnchor.layOutTail`).
+  private func scrollTranscriptToBottom(ensuringLayout: Bool = false, changedAt: Int? = nil) {
+    if ensuringLayout {
+      TranscriptScrollAnchor.layOutWholeDocument(of: textView)
+    } else {
+      TranscriptScrollAnchor.layOutTail(
+        of: textView, from: min(changedAt ?? Int.max, scrollAnchor?.offset ?? 0))
+    }
     textView.scrollToEndOfDocument(nil)
     recordReader(pinned: true)
     jumpButton.isHidden = true

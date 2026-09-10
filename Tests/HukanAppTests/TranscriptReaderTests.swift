@@ -218,6 +218,34 @@ final class TranscriptReaderTests: XCTestCase {
       "the card arrived: \(scrollView.documentVisibleRect) in \(textView.frame.height)")
   }
 
+  /// A long reply landing at once — a tool result, a message that never streamed — is scrolled
+  /// to before it is laid out, and the end it scrolls to is TextKit 2's estimate of where the
+  /// end is. Once the real layout arrives the document is a different height, and the reader who
+  /// was placed at the estimated end is that error away from the real one.
+  @MainActor
+  func testTheBottomStaysTheBottomWhenALongReplyLands() throws {
+    let (controller, window, scrollView, textView) = try openWindow()
+    defer { window.close() }
+    XCTAssertTrue(isAtBottom(scrollView, textView), "a session opens at the bottom")
+
+    let session = try XCTUnwrap(controller.workspace.selectedSession)
+    let reply = (0..<400).map {
+      "reply line \($0) with enough words in it to wrap once or twice in this column, and then some"
+    }
+    .joined(separator: "\n\n")
+    session.apply(
+      ClaudeEvent(
+        type: "assistant", subtype: nil,
+        payload: ["message": ["content": [["type": "text", "text": reply]]]]))
+    settle(scrollView, textView)
+    let before = textView.frame.height
+    TranscriptScrollAnchor.layOutWholeDocument(of: textView)
+    XCTAssertTrue(
+      isAtBottom(scrollView, textView),
+      "the reply landed: \(scrollView.documentVisibleRect) in \(textView.frame.height) (was \(before))"
+    )
+  }
+
   /// Switching to a session that is already waiting on you is where the same thing showed first:
   /// the column scrolls to the end while attaching and hangs the card afterwards, so the end it
   /// scrolled to is the end of a taller pane than the one left once the card is up.

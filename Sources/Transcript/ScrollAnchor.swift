@@ -78,6 +78,37 @@ public struct TranscriptScrollAnchor: Equatable {
     }
   }
 
+  /// Lay out the tail — from a character offset to the end of the document — and make the view
+  /// as tall as the document now measures. The cheaper pass a scroll to the end takes on every
+  /// append, with the offset being where the text last changed.
+  ///
+  /// A scroll to the end is a scroll to where the view believes the end is, and for text it has
+  /// not laid out yet that belief is TextKit 2's estimate: a long reply landing at once was
+  /// scrolled to the estimated end, and once the real layout arrived the document measured
+  /// three screens taller (2144pt on a 400-paragraph reply, measured) and the reader was left
+  /// that far above the tail with nothing to put them back. Laying out from where the text
+  /// changed is what makes the end's position real, and it is bounded by what just arrived:
+  /// everything before it was laid out by the placement before this one, so across a whole
+  /// stream each fragment is laid out once. The start is an offset rather than the viewport's
+  /// top edge because finding the fragment under a point is a walk of every fragment above it —
+  /// 0.77ms on a 2000-line transcript, three times the layout itself — where an offset is
+  /// arithmetic.
+  public static func layOutTail(of textView: NSTextView, from offset: Int) {
+    guard let layout = textView.textLayoutManager, let content = layout.textContentManager,
+      let start = content.location(content.documentRange.location, offsetBy: offset),
+      let tail = NSTextRange(location: start, end: layout.documentRange.endLocation)
+    else {
+      layOutWholeDocument(of: textView)
+      return
+    }
+    layout.ensureLayout(for: tail)
+    let inset = textView.textContainerInset
+    let height = ceil(layout.usageBoundsForTextContainer.height + inset.height * 2)
+    if height != textView.frame.height {
+      textView.setFrameSize(NSSize(width: textView.frame.width, height: height))
+    }
+  }
+
   private func scroll(
     to location: NSTextLocation, in scrollView: NSScrollView, of textView: NSTextView
   ) {
