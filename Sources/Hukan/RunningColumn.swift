@@ -348,6 +348,9 @@ final class RunningColumnViewController: NSViewController {
     // The view says when it has re-wrapped — from its own layout, not a frame notification, which
     // `NSTextView` stops posting at the first live resize (see `onRewrap`).
     textView.onRewrap = { [weak self] in self?.putReaderBack() }
+    // And when it has changed height — the document growing under a reader at the end, or the
+    // view writing its own estimate over a height that was exact (see `onHeightChange`).
+    textView.onHeightChange = { [weak self] in self?.documentHeightChanged() }
 
     titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
     titleLabel.textColor = .labelColor
@@ -583,7 +586,10 @@ final class RunningColumnViewController: NSViewController {
     input.stringValue = session?.draft ?? ""
     // Replacing the storage takes the wash with the text it rode on, so nothing is left to clear.
     hasPaintedHighlight = false
+    // The replacement resizes the view; the placement below is what answers it.
+    isRestoringAnchor = true
     textView.textStorage?.setAttributedString(session?.transcript ?? NSAttributedString())
+    isRestoringAnchor = false
     // New content follows the reader only when they are already at the bottom. Scrolled up,
     // the view stays put and the "新着" pill appears instead.
     //
@@ -621,7 +627,13 @@ final class RunningColumnViewController: NSViewController {
       guard let self, let storage = self.textView.textStorage,
         NSMaxRange(range) <= storage.length
       else { return }
+      // Laid out here, under the flag, so the height the fold adds or takes lands now and not on
+      // the view's own turn — where `documentHeightChanged` would read a fold opened at the end
+      // as the end having moved and scroll the reader off the fold they just opened.
+      self.isRestoringAnchor = true
       storage.replaceCharacters(in: range, with: replacement)
+      TranscriptScrollAnchor.layOutTail(of: self.textView, from: range.location)
+      self.isRestoringAnchor = false
     }
     // Earlier conversation arrived above the reader. Slide it in without moving them: capture
     // where they are first (the last scroll's anchor may already describe a mutated document),
@@ -657,7 +669,9 @@ final class RunningColumnViewController: NSViewController {
     session?.onReload = { [weak self, weak session] in
       guard let self, let session, self.attached === session else { return }
       self.hasPaintedHighlight = false
+      self.isRestoringAnchor = true
       self.textView.textStorage?.setAttributedString(session.transcript)
+      self.isRestoringAnchor = false
       // A pending hit-jump wins over scroll-to-first-match, which wins over the bottom.
       let hasJump = self.pendingScrollOffset != nil
       let matched = self.applyTranscriptHighlight(scrollToFirst: !hasJump)
@@ -709,6 +723,12 @@ final class RunningColumnViewController: NSViewController {
   /// O(n²), and skipping the pass altogether scrolled to an estimated end that a long reply then
   /// overran by screens (see `TranscriptScrollAnchor.layOutTail`).
   private func scrollTranscriptToBottom(ensuringLayout: Bool = false, changedAt: Int? = nil) {
+    // A placement is not the reader's scroll, and the layout it runs resizes the view: neither
+    // the scroll nor the resize may come back in as one (`transcriptScrolled`,
+    // `documentHeightChanged`) while this is under way.
+    let wasRestoring = isRestoringAnchor
+    isRestoringAnchor = true
+    defer { isRestoringAnchor = wasRestoring }
     if ensuringLayout {
       TranscriptScrollAnchor.layOutWholeDocument(of: textView)
     } else {
@@ -718,6 +738,15 @@ final class RunningColumnViewController: NSViewController {
     textView.scrollToEndOfDocument(nil)
     recordReader(pinned: true)
     jumpButton.isHidden = true
+  }
+
+  /// The document changed height under the reader without anyone scrolling. One at the end is no
+  /// longer at it — a long reply landed, or the view wrote its own estimate over the exact height
+  /// the tail had just been laid out to and the exact one came back with the display — so they
+  /// go back to the end. A reader up in the text keeps their origin, and with it their line.
+  private func documentHeightChanged() {
+    guard isReaderScroll, anchorWasPinned else { return }
+    scrollTranscriptToBottom()
   }
 
   @objc private func jumpToBottomTapped() {

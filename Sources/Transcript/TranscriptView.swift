@@ -852,9 +852,23 @@ public final class TranscriptTextView: WordSelectingTextView {
   /// invalidates on its own for plenty of others; this covers the one it does not).
   public override func setFrameSize(_ newSize: NSSize) {
     let widthChanged = newSize.width != frame.width
+    let heightChanged = newSize.height != frame.height
     super.setFrameSize(newSize)
     if widthChanged { needsDisplay = true }
+    if heightChanged { onHeightChange?() }
   }
+
+  /// Called whenever the view's height changes — by a placement's own layout, or by
+  /// `NSTextView` bringing the frame up to what TextKit 2 estimates on its own layout turn.
+  ///
+  /// The second is why this exists. The frame notification is not it, since `NSTextView` stops
+  /// posting those at its first live resize (see `onRewrap`), and the view does write the frame
+  /// on its own: a tail laid out exactly and scrolled to was overwritten a turn later by the
+  /// estimate the view still held, and the exact height came back only once the viewport was
+  /// displayed — which on a window nothing displays is never, measured on the CI runner, where
+  /// the frame settled at 105979pt against the 108116 the tail had been laid out to. A height
+  /// changing under a reader who was at the end is a reader no longer at it, whoever changed it.
+  public var onHeightChange: (() -> Void)?
 
   /// Called after the view has laid out at a wrap width it had not laid out at before — the one
   /// moment the reader's text actually moves, and so the moment to put them back on it.
