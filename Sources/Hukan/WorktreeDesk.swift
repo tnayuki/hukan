@@ -879,24 +879,34 @@ final class WorktreeDeskViewController: NSViewController {
 
   /// Open a new web tab in this worktree, address field focused and ready to type. A popup opens
   /// the same way but arrives with its web view already built (see `wire`); `url` opens a known
-  /// address instead — a link followed from the transcript — and lands on the tab already showing
-  /// it rather than stacking a second copy, which is the rule a file tab follows.
+  /// address instead — a link followed from the transcript, or ⌘-clicked in a page — and lands on
+  /// the tab already showing it rather than stacking a second copy, which is the rule a file tab
+  /// follows.
   ///
   /// A web tab has no preview slot, unlike a file or a commit: the two or three pages an agent
   /// hands you are context you want side by side, so they are lasting from the first click, and
   /// the reuse above is what keeps that from piling up.
-  func openBrowser(worktree: Worktree, webView: WKWebView? = nil, url: URL? = nil) {
+  ///
+  /// `inBackground` is the ⌘-click's half of that gesture: the tab joins the strip and starts
+  /// loading at once — it was asked for, and being ready by the time you reach it is the point —
+  /// while the desk stays on the page being read. An address already open is not switched to
+  /// either, since the reuse rule has already put it on the strip and not moving is what the
+  /// gesture is for.
+  func openBrowser(
+    worktree: Worktree, webView: WKWebView? = nil, url: URL? = nil, inBackground: Bool = false
+  ) {
     loadViewIfNeeded()
     // A popup belongs to the worktree of the page that opened it, which is not necessarily the
     // one on screen: a sign-in finishing in a background worktree's tab must not swap the desk
     // out from under the rail's selection. It joins that worktree's tabs and waits there.
     let popupInBackground = webView != nil && worktreeID != nil && worktreeID != worktree.id
-    if !popupInBackground { self.worktreeID = worktree.id }
+    let opensBehind = popupInBackground || inBackground
+    if !opensBehind { self.worktreeID = worktree.id }
     if let url,
       let existing = (browserTabsByWorktree[worktree.id] ?? []).first(
         where: { $0.pane.currentURL == url })
     {
-      surface = .browser(existing.id)
+      if !opensBehind { surface = .browser(existing.id) }
       terminals = workspace?.terminals(inWorktree: worktree.id) ?? []
       rebuildTabBar()
       applySurface()
@@ -908,16 +918,13 @@ final class WorktreeDeskViewController: NSViewController {
     tabs.append(tab)
     browserTabsByWorktree[worktree.id] = tabs
     view.window?.invalidateRestorableState()
+    if let url { tab.pane.load(url) }
     guard !popupInBackground else { return }
-    surface = .browser(tab.id)
+    if !opensBehind { surface = .browser(tab.id) }
     terminals = workspace?.terminals(inWorktree: worktree.id) ?? []
     rebuildTabBar()
     applySurface()
-    if let url {
-      tab.pane.load(url)
-    } else if webView == nil {
-      tab.pane.focusAddress()
-    }
+    if !opensBehind, url == nil, webView == nil { tab.pane.focusAddress() }
   }
 
   /// Every web tab worth saving, across every worktree — a blank one is one keystroke to make
@@ -1023,6 +1030,12 @@ final class WorktreeDeskViewController: NSViewController {
       guard let self, let worktree = self.workspace?.worktree(id: worktreeID) else { return false }
       self.openBrowser(worktree: worktree, webView: popup)
       return true
+    }
+    // A link ⌘-clicked in the page becomes a tab of the worktree the page belongs to — behind the
+    // one being read, or in front when ⇧ was held with it.
+    tab.pane.onOpenInNewTab = { [weak self] url, background in
+      guard let self, let worktree = self.workspace?.worktree(id: worktreeID) else { return }
+      self.openBrowser(worktree: worktree, url: url, inBackground: background)
     }
     tab.pane.onClose = { [weak self] in
       guard let self else { return }

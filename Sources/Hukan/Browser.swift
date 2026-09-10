@@ -149,6 +149,9 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
   /// A popup (`target=_blank`, `window.open`) wants its own window; the desk turns it into a tab.
   /// Answers whether it could — a worktree that is gone has no desk to open on.
   var onOpenPopup: ((WKWebView) -> Bool)?
+  /// A link ⌘-clicked in the page: the desk opens it as a tab of its own. The flag is whether it
+  /// opens behind the page being read — ⌘ alone — where ⇧ with it opens in front.
+  var onOpenInNewTab: ((URL, Bool) -> Void)?
   /// The page closed itself (`window.close()`, which is how an SSO popup ends). The desk closes
   /// the tab, since a web view with nothing in it is not a tab anyone chose to keep.
   var onClose: (() -> Void)?
@@ -678,8 +681,28 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
       decisionHandler(.cancel)
       return
     }
-    // A link marked `download` is one; so is anything the page cannot show (below).
-    decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow)
+    // A link marked `download` is one, whatever was held down; so is anything the page cannot
+    // show (below).
+    if navigationAction.shouldPerformDownload {
+      decisionHandler(.download)
+      return
+    }
+    // ⌘-click is the browser's gesture for "keep reading this, park that", and it arrives here
+    // rather than at `createWebViewWith`: WebKit asks for a new view only when the *page* asks
+    // for one (`target=_blank`, `window.open`), and hands a modified click over as an ordinary
+    // link activation carrying the flags it was made with — measured, since the other reading
+    // was that a plain WKWebView answers a ⌘-click by itself, which is why the tab used to
+    // follow one in place. ⇧ with it opens in front, Safari's allocation and the whole
+    // difference between the two.
+    if navigationAction.navigationType == .linkActivated,
+      navigationAction.modifierFlags.contains(.command),
+      let url = navigationAction.request.url, let openInNewTab = onOpenInNewTab
+    {
+      openInNewTab(url, !navigationAction.modifierFlags.contains(.shift))
+      decisionHandler(.cancel)
+      return
+    }
+    decisionHandler(.allow)
   }
 
   func webView(

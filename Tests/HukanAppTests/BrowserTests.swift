@@ -309,6 +309,91 @@ final class BrowserTests: XCTestCase {
       BrowserPaneViewController.uniqueURL(in: folder, named: "a.zip").lastPathComponent, "a 2.zip")
   }
 
+  // MARK: The ⌘-click
+
+  /// A ⌘-click on a link is the browser's own gesture for parking a page, and WebKit does not
+  /// answer it by itself: it arrives as an ordinary link activation carrying the modifiers it was
+  /// made with, where `target=_blank` would have asked for a new view. That reading is what this
+  /// pins — the tab followed a ⌘-click in place until it was measured — so the click is a real one
+  /// through the view rather than a navigation action posed for the occasion.
+  func testACommandClickedLinkIsHandedOverRatherThanFollowedInPlace() {
+    let pane = BrowserPaneViewController()
+    pane.loadViewIfNeeded()
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 400, height: 500), styleMask: [.titled],
+      backing: .buffered, defer: false)
+    window.contentView = pane.view
+    window.makeKeyAndOrderFront(nil)
+    pane.view.layoutSubtreeIfNeeded()
+
+    let loaded = expectation(description: "load")
+    let observer = pane.webView.observe(\.isLoading, options: [.new]) { webView, _ in
+      if !webView.isLoading { loaded.fulfill() }
+    }
+    pane.webView.loadHTMLString(
+      "<html><body style='margin:0'><a href='https://example.com/next' "
+        + "style='display:block;width:100%;height:100vh'>go</a></body></html>",
+      baseURL: URL(string: "https://example.com/here"))
+    wait(for: [loaded], timeout: 30)
+    observer.invalidate()
+    settle(1)
+
+    var opened: [(url: URL, background: Bool)] = []
+    var handed = XCTestExpectation(description: "handed over")
+    pane.onOpenInNewTab = { url, background in
+      opened.append((url, background))
+      handed.fulfill()
+    }
+
+    click(pane, in: window, flags: .command)
+    _ = XCTWaiter.wait(for: [handed], timeout: 15)
+    XCTAssertEqual(opened.map(\.url.absoluteString), ["https://example.com/next"])
+    XCTAssertEqual(opened.map(\.background), [true], "⌘ alone parks it behind the page being read")
+    XCTAssertEqual(
+      pane.webView.url?.absoluteString, "https://example.com/here",
+      "the page being read did not follow the link")
+
+    opened.removeAll()
+    handed = XCTestExpectation(description: "handed over in front")
+    click(pane, in: window, flags: [.command, .shift])
+    _ = XCTWaiter.wait(for: [handed], timeout: 15)
+    XCTAssertEqual(opened.map(\.background), [false], "⇧ with it opens in front")
+
+    // A plain click is the navigation it always was, and must not reach the desk at all.
+    opened.removeAll()
+    click(pane, in: window, flags: [])
+    settle(2)
+    XCTAssertTrue(opened.isEmpty, "a plain click follows the link in place: \(opened)")
+    pane.webView.stopLoading()
+  }
+
+  /// A click in the middle of the page, driven through the view the way a pointer would — the
+  /// modifiers are the whole point, so they have to ride on a real event.
+  private func click(
+    _ pane: BrowserPaneViewController, in window: NSWindow, flags: NSEvent.ModifierFlags
+  ) {
+    let middle = NSPoint(x: pane.webView.bounds.midX, y: pane.webView.bounds.midY)
+    let point = pane.webView.convert(middle, to: nil)
+    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+      let event = NSEvent.mouseEvent(
+        with: type, location: point, modifierFlags: flags,
+        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+        context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+      if type == .leftMouseDown {
+        pane.webView.mouseDown(with: event)
+      } else {
+        pane.webView.mouseUp(with: event)
+      }
+    }
+  }
+
+  /// Let the page and the policy decision catch up — both cross to the web process and back.
+  private func settle(_ seconds: TimeInterval) {
+    let done = XCTestExpectation(description: "settle")
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { done.fulfill() }
+    _ = XCTWaiter.wait(for: [done], timeout: seconds + 5)
+  }
+
   /// A popup is built against the configuration WebKit hands back from the opener, not a fresh
   /// one, so this is the path that would silently lose the agent.
   func testAPopupKeepsTheAgent() {
@@ -393,6 +478,27 @@ final class BrowserDeskTests: XCTestCase {
     XCTAssertFalse(desk.isShowingWebTab, "the surface is not a browser: the items disable")
     desk.browserReload()
     desk.zoom(by: -1)
+  }
+
+  /// ⌘-click parks a page: the tab joins the strip and starts loading at once, while the desk
+  /// stays on the one being read. ⇧ with it is the other half, and it is what every other way of
+  /// opening a web tab already does.
+  func testACommandClickedTabOpensBehindTheOneBeingRead() {
+    let (desk, _, worktrees) = desk(worktrees: 1)
+    desk.openBrowser(worktree: worktrees[0], url: URL(string: "https://example.com/issue")!)
+    let reading = desk.selectedBrowserPane
+
+    desk.openBrowser(
+      worktree: worktrees[0], url: URL(string: "https://example.com/pr")!, inBackground: true)
+    let behind = desk.browserTabsReport.components(separatedBy: "\n")
+    XCTAssertEqual(behind.count, 2, "the tab joined the strip: \(desk.browserTabsReport)")
+    XCTAssertTrue(behind[0].contains("●"), "the desk stays put: \(desk.browserTabsReport)")
+    XCTAssertTrue(desk.selectedBrowserPane === reading, "and on the same pane")
+
+    desk.openBrowser(worktree: worktrees[0], url: URL(string: "https://example.com/docs")!)
+    let front = desk.browserTabsReport.components(separatedBy: "\n")
+    XCTAssertEqual(front.count, 3)
+    XCTAssertTrue(front[2].contains("●"), "in front: \(desk.browserTabsReport)")
   }
 
   /// `window.close()` — how an SSO popup ends — takes the tab with it rather than leaving an empty

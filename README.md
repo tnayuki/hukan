@@ -177,6 +177,8 @@ scheme, a slash or a dot makes it an address, anything else is a search. A load 
 so on the page — with what went wrong, the address it was, and the offer to search for what you
 typed instead, or to open it in Safari. A link in the transcript opens here rather than in the
 default browser, ⌘-click sends it out, and a bare URL is a link (code, quoted or fenced, is not).
+Inside a page ⌘ is the browser's instead: ⌘-click opens the link as a tab of its own, behind the
+one being read, and ⌘⇧-click opens it in front.
 The tab does what a page expects of its browser: popups open as tabs and close themselves when
 done, a file picker, dialogs, downloads (into Downloads, the Dock stack bouncing) and a name-and-
 password or client-certificate challenge all get the system's panels, a swipe goes back, and ⌘F

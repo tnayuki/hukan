@@ -244,6 +244,19 @@ Workspace (one window)
   tab in place rather than rebuilding the strip. No process pool: it was set on the belief that it
   shared the sign-in, and it never did — the persistent data store does, and WebKit has managed
   its own processes since macOS 12.
+  **A ⌘-click opens the link as a tab of its own, and the tab is what has to read the click.**
+  WebKit asks for a new view only when the *page* asks for one — `target=_blank`, `window.open` —
+  and hands a modified click over as an ordinary link activation carrying the flags it was made
+  with, so a ⌘-click followed the link in place until that was measured. ⌘ opens the tab behind
+  the page being read and ⌘⇧ opens it in front, which is Safari's allocation and the whole
+  difference between the two: the reason the gesture exists at all is not leaving the page you are
+  on, and a tab in front is what every other way of opening one already gives. It goes through the
+  same open as those, so the reuse rule holds — an address already open is not opened twice, and
+  behind, it is not switched to either, since the strip is carrying it already and not moving is
+  what was asked for. A link marked `download` is still a download, whatever was held down. That ⌘
+  means something else over the transcript — send it out to the default browser — is the same rule
+  read per column rather than a collision: in a page the useful answer is the tab beside this one,
+  out of a transcript it is Safari.
   **Reload is the browser's own key, and it never becomes Stop.** A web tab is the one surface on
   the desk with a manual re-read to give — a file, the tree and the history all come back on the
   batch FSEvents hands them — and the button holds both meanings only because it can show which
