@@ -43,7 +43,9 @@ final class TableAttachment: NSTextAttachment {
     for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation,
     textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, position: CGPoint
   ) -> CGRect {
-    let available = Self.availableWidth(textContainer, proposedLineFragment: lineFrag)
+    let available = Self.availableWidth(
+      textContainer, paragraph: attributes[.paragraphStyle] as? NSParagraphStyle,
+      proposedLineFragment: lineFrag)
     if abs(available - renderedWidth) > 0.5 || image == nil || layout == nil {
       let built = TableLayout(header: header, rows: rows, available: available)
       layout = built
@@ -107,15 +109,29 @@ final class TableAttachment: NSTextAttachment {
   }
 
   /// The width a full-bleed block gets: the container's, less the line-fragment padding on each
-  /// side. Falls back to the proposed fragment when there is no container (rare).
-  private static func availableWidth(_ container: NSTextContainer?, proposedLineFragment: CGRect)
-    -> CGFloat
-  {
+  /// side and less whatever the paragraph holds back. Falls back to the proposed fragment when
+  /// there is no container (rare).
+  ///
+  /// The indents are what a message you typed puts around its text, and the table is inside that
+  /// block: measured against the pane instead, it was laid out as wide as the column and drawn
+  /// from the block's indent, so it ran out past the tint on its right — the one thing a table
+  /// fitted to its pane is there not to do.
+  private static func availableWidth(
+    _ container: NSTextContainer?, paragraph: NSParagraphStyle?, proposedLineFragment: CGRect
+  ) -> CGFloat {
+    var usable = max(1, proposedLineFragment.width)
     if let container {
-      let usable = container.size.width - container.lineFragmentPadding * 2
-      if usable > 1 { return floor(usable) }
+      let width = container.size.width - container.lineFragmentPadding * 2
+      if width > 1 { usable = width }
     }
-    return max(1, proposedLineFragment.width)
+    guard let paragraph else { return floor(usable) }
+    // The attachment is alone on the first line of its own paragraph, so the indent that places it
+    // is the first line's. A tail indent is an inset from the trailing edge when it is negative
+    // and the line's whole width when it is positive, which is AppKit's reading of the two signs.
+    let head = paragraph.firstLineHeadIndent
+    let width =
+      paragraph.tailIndent > 0 ? paragraph.tailIndent - head : usable - head + paragraph.tailIndent
+    return max(1, floor(width))
   }
 }
 

@@ -67,6 +67,50 @@ final class TableLayoutTests: XCTestCase {
     XCTAssertLessThan(layout.size.width, 900)
   }
 
+  /// A table inside a message you typed is as wide as the message's text column, not as wide as
+  /// the pane. The block indents every paragraph in it, so a table measured against the container
+  /// was laid out at the full width and then drawn from the indent — running out past the tint on
+  /// its right, which is what a table fitted to its pane exists not to do.
+  func testATableInATypedMessageStaysInsideTheBlock() throws {
+    let (scrollView, textView) = makeTranscriptTextView()
+    let width: CGFloat = 600
+    scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
+    textView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
+    let storage = try XCTUnwrap(textView.textStorage)
+    // Wide enough that the table wants more room than the block has: what the bug produced is a
+    // table the width of the pane, so a fixture that fits either way says nothing.
+    let message = Transcript.userMessage(
+      """
+      これを返して
+
+      | PR | 状態 |
+      |---|---|
+      | https://github.com/tnayuki/hukan/pull/12 | \(String(repeating: "wide ", count: 40)) |
+      """)
+    storage.setAttributedString(message)
+    let layoutManager = try XCTUnwrap(textView.textLayoutManager)
+    layoutManager.ensureLayout(for: layoutManager.documentRange)
+
+    var table: TableAttachment?
+    var indent: CGFloat = 0
+    storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
+      value, range, stop in
+      guard let found = value as? TableAttachment else { return }
+      table = found
+      indent =
+        (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+        as? NSParagraphStyle)?.firstLineHeadIndent ?? 0
+      stop.pointee = true
+    }
+    let layout = try XCTUnwrap(try XCTUnwrap(table).layout, "the table never laid out")
+    let container = try XCTUnwrap(textView.textContainer)
+    let column = container.size.width - container.lineFragmentPadding * 2
+    XCTAssertGreaterThan(indent, 0, "a message you typed indents what is in it")
+    XCTAssertLessThanOrEqual(
+      indent + layout.size.width, column - indent + 0.5,
+      "the table runs out past the block it is in")
+  }
+
   /// A wide column beside a narrow one still gives the narrow one only what it needs — the fill
   /// hands back what a column does not use rather than splitting the pane down the middle.
   func testAShortColumnKeepsItsNaturalWidthBesideAWideOne() {
