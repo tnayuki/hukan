@@ -305,6 +305,14 @@ final class RunningColumnViewController: NSViewController {
     NotificationCenter.default.addObserver(
       self, selector: #selector(transcriptScrolled),
       name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+    // The bounds notification says the origin moved and nothing else: a clip that only changes
+    // height — the bottom area growing under it — posts a frame change and no bounds change
+    // (measured), and that height change is the one the handler has to see (see
+    // `placedClipHeight`).
+    scrollView.contentView.postsFrameChangedNotifications = true
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(transcriptScrolled),
+      name: NSView.frameDidChangeNotification, object: scrollView.contentView)
     // And the scroll view for when the reader has their hand on it, which the clip view's
     // notification cannot say by itself (see `isLiveScrolling`).
     NotificationCenter.default.addObserver(
@@ -703,6 +711,12 @@ final class RunningColumnViewController: NSViewController {
   /// text; an append grows the tail and leaves it alone.
   private var placedWidth: CGFloat = 0
   private var placedFrameWidth: CGFloat = 0
+  /// The clip's height when the reader was last placed or recorded. A card landing under the
+  /// transcript — an approval, the task list, a draft grown past the composer's floor — makes
+  /// the bottom area taller and this view shorter, and a clip that shrinks keeps its origin: the
+  /// tail slides out of view by the card's height with nothing having scrolled (see
+  /// `transcriptScrolled`).
+  private var placedClipHeight: CGFloat = 0
 
   /// Whether a scroll arriving now can be the reader's. Not while the anchor is being put back,
   /// and not while the view is between widths: the text is still wrapped to a width the reader
@@ -725,6 +739,24 @@ final class RunningColumnViewController: NSViewController {
     // doing (`isReaderScroll`); `putReaderBack` follows it, and the deliberate placements record
     // themselves (`recordReader`).
     guard isReaderScroll else { return }
+    // The clip changing height is not a scroll either, and it arrives here as one. It is the
+    // bottom area growing or shrinking under the transcript — a card coming or going, the
+    // queued line, the composer growing with a draft — and on a session switch it lands *after*
+    // the placement at the end, since `reload` scrolls while attaching and hangs the cards
+    // afterwards. A reader up in the text still has their line, the origin not having moved;
+    // one at the bottom has just lost the tail by the card's height, which measured as having
+    // left it and stopped the follow. The end they were at is where they go back to.
+    let clipHeight = scrollView.contentView.bounds.height
+    if clipHeight != placedClipHeight {
+      if anchorWasPinned {
+        isRestoringAnchor = true
+        scrollTranscriptToBottom()
+        isRestoringAnchor = false
+      } else {
+        recordReader(pinned: false)
+      }
+      return
+    }
     // Away from the tail under the reader's own hand is leaving it, however short the move.
     // `pinTolerance` answers the other question — did this land back at the bottom — and has to
     // stay generous there, because `scrollToEndOfDocument` stops a few points short of the clip's
@@ -761,6 +793,7 @@ final class RunningColumnViewController: NSViewController {
     isRestoringAnchor = false
     placedWidth = textView.wrapWidth
     placedFrameWidth = textView.frame.width
+    placedClipHeight = scrollView.contentView.bounds.height
   }
 
   /// Where the reader now is, taken as theirs. The scroll notification is one way here; a
@@ -772,6 +805,7 @@ final class RunningColumnViewController: NSViewController {
     scrollAnchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView)
     placedWidth = textView.wrapWidth
     placedFrameWidth = textView.frame.width
+    placedClipHeight = scrollView.contentView.bounds.height
   }
 
   /// The header's cost figure: `$1.23`, `<$0.01` for a nonzero sub-cent estimate, empty (hidden)

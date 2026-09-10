@@ -29,14 +29,7 @@ final class TranscriptReaderTests: XCTestCase {
   ) {
     let workspace = RailPreviewTests.sampleWorkspace()
     let session = try XCTUnwrap(workspace.sessions.first)
-    for line in 0..<2000 {
-      session.transcript.append(
-        NSAttributedString(
-          string:
-            "line \(line) — a transcript line long enough to wrap in a narrower column, and then "
-            + "some more words so that it wraps twice\n",
-          attributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)]))
-    }
+    fill(session)
     let controller = WorkspaceWindowController(workspace: workspace)
     let window = try XCTUnwrap(controller.window)
     workspace.selectedWorktreeID = session.worktreeID
@@ -49,6 +42,31 @@ final class TranscriptReaderTests: XCTestCase {
     RunLoop.current.run(until: Date().addingTimeInterval(0.4))
     let textView = try XCTUnwrap(transcriptTextView(in: try XCTUnwrap(window.contentView)))
     return (controller, window, try XCTUnwrap(textView.enclosingScrollView), textView)
+  }
+
+  /// Two thousand lines of transcript: tall enough that a re-wrap moves the reader by thousands
+  /// of points, and that the bottom is a long way from the top.
+  private func fill(_ session: AgentSession) {
+    for line in 0..<2000 {
+      session.transcript.append(
+        NSAttributedString(
+          string:
+            "line \(line) — a transcript line long enough to wrap in a narrower column, and then "
+            + "some more words so that it wraps twice\n",
+          attributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)]))
+    }
+  }
+
+  /// The engine asking to run a tool, which is what puts an approval card under the transcript.
+  private func approvalRequest() -> ClaudeEvent {
+    ClaudeEvent(
+      type: "control_request", subtype: nil,
+      payload: [
+        "request_id": "r1",
+        "request": [
+          "subtype": "can_use_tool", "tool_name": "Bash", "input": ["command": "git push"],
+        ],
+      ])
   }
 
   private func transcriptTextView(in view: NSView) -> NSTextView? {
@@ -178,6 +196,49 @@ final class TranscriptReaderTests: XCTestCase {
       NSRect(x: 0, y: -4000, width: 1600, height: 800), display: true, animate: true)
     settle(scrollView, textView)
     XCTAssertEqual(topLine(of: scrollView, textView), line, "widened again")
+  }
+
+  /// A card landing under the transcript — an approval, a question, the task list — makes the
+  /// bottom area taller and the scroll view shorter, and a clip view that shrinks keeps its
+  /// origin: the tail slides out of view by exactly the card's height, and the reader who was at
+  /// the bottom is now a card short of it with nothing having scrolled.
+  @MainActor
+  func testTheBottomStaysTheBottomWhenACardArrivesUnderIt() throws {
+    let (controller, window, scrollView, textView) = try openWindow()
+    defer { window.close() }
+    XCTAssertTrue(isAtBottom(scrollView, textView), "a session opens at the bottom")
+
+    let session = try XCTUnwrap(controller.workspace.selectedSession)
+    session.apply(approvalRequest())
+    XCTAssertNotNil(session.pendingApproval)
+    controller.reload()
+    settle(scrollView, textView)
+    XCTAssertTrue(
+      isAtBottom(scrollView, textView),
+      "the card arrived: \(scrollView.documentVisibleRect) in \(textView.frame.height)")
+  }
+
+  /// Switching to a session that is already waiting on you is where the same thing showed first:
+  /// the column scrolls to the end while attaching and hangs the card afterwards, so the end it
+  /// scrolled to is the end of a taller pane than the one left once the card is up.
+  @MainActor
+  func testSwitchingToASessionWithACardLandsAtTheBottom() throws {
+    let (controller, window, scrollView, textView) = try openWindow()
+    defer { window.close() }
+    let workspace = controller.workspace
+    let first = try XCTUnwrap(workspace.selectedSession)
+    let other = try XCTUnwrap(
+      workspace.sessions.first { $0.worktreeID == first.worktreeID && $0.id != first.id })
+    fill(other)
+    other.apply(approvalRequest())
+    XCTAssertNotNil(other.pendingApproval)
+
+    workspace.selectedSessionID = other.id
+    controller.reload()
+    settle(scrollView, textView)
+    XCTAssertTrue(
+      isAtBottom(scrollView, textView),
+      "switched: \(scrollView.documentVisibleRect) in \(textView.frame.height)")
   }
 
   /// A conversation long enough that opening it renders the tail and leaves the rest on disk, so
