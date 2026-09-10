@@ -1607,11 +1607,24 @@ final class AgentSession {
   static func worktreePath(fromToolResult text: String) -> URL? {
     guard let start = text.range(of: "worktree at ") else { return nil }
     let rest = text[start.upperBound...]
-    let end = rest.range(of: " on branch ") ?? rest.range(of: ". ")
-    let path = String(end.map { rest[..<$0.lowerBound] } ?? rest)
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let path =
+      rest.range(of: " on branch ")
+      .map { String(rest[..<$0.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines) }
+      ?? pathClosingSentence(in: rest)
     guard path.hasPrefix("/") else { return nil }
     return URL(fileURLWithPath: path)
+  }
+
+  /// A path that runs to the end of the sentence it was named in. The sentence ends at `". "` and
+  /// never at a bare full stop, because a directory name may hold one — this repository's own
+  /// path runs through `github.com`, so cutting at the first full stop handed back
+  /// `/Users/…/Developer/github`, which matches no worktree — and the last sentence in a result
+  /// has no space after its stop, so a trailing one is dropped rather than looked for.
+  private static func pathClosingSentence(in text: Substring) -> String {
+    var path = String(text.range(of: ". ").map { text[..<$0.lowerBound] } ?? text)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if path.hasSuffix(".") { path.removeLast() }
+    return path
   }
 
   /// Pull the directory the session went back to out of an `ExitWorktree` result. Every variant
@@ -1624,8 +1637,7 @@ final class AgentSession {
     let anchors = ["Session is now back in ", "so the session is now in "]
     guard let start = anchors.lazy.compactMap({ text.range(of: $0) }).first else { return nil }
     let rest = text[start.upperBound...]
-    let path = String(rest.range(of: ".").map { rest[..<$0.lowerBound] } ?? rest)
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let path = pathClosingSentence(in: rest)
     guard path.hasPrefix("/") else { return nil }
     return URL(fileURLWithPath: path)
   }

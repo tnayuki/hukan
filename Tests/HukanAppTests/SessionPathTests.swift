@@ -182,6 +182,38 @@ final class SessionPathTests: XCTestCase {
       AgentSession.exitedCwd(fromToolResult: text), URL(fileURLWithPath: "/Users/x/wt/feature"))
   }
 
+  /// The path this app is developed in runs through `github.com`, and a directory name holding a
+  /// full stop is what a bare-stop cut got wrong: the exit read `/Users/x/Developer/github`,
+  /// matched no worktree, and the session stayed on the worktree it had just left.
+  func testExitedCwdKeepsAPathWithADotInIt() {
+    let text =
+      "Exited worktree. Your work is preserved at "
+      + "/Users/x/Developer/github.com/x/hukan/.claude/worktrees/remote-control on branch "
+      + "worktree-remote-control. Session is now back in /Users/x/Developer/github.com/x/hukan."
+    XCTAssertEqual(
+      AgentSession.exitedCwd(fromToolResult: text),
+      URL(fileURLWithPath: "/Users/x/Developer/github.com/x/hukan"))
+    let removed =
+      "Exited and removed worktree at "
+      + "/Users/x/Developer/github.com/x/hukan/.claude/worktrees/remote-control. "
+      + "Session is now back in /Users/x/Developer/github.com/x/hukan."
+    XCTAssertEqual(
+      AgentSession.exitedCwd(fromToolResult: removed),
+      URL(fileURLWithPath: "/Users/x/Developer/github.com/x/hukan"))
+    XCTAssertEqual(
+      AgentSession.worktreePath(fromToolResult: removed),
+      URL(fileURLWithPath: "/Users/x/Developer/github.com/x/hukan/.claude/worktrees/remote-control")
+    )
+  }
+
+  /// The last sentence of a result has nothing after its full stop, so there is no `". "` to cut
+  /// at and the stop itself has to go.
+  func testWorktreePathClosingTheResult() {
+    XCTAssertEqual(
+      AgentSession.worktreePath(fromToolResult: "Exited and removed worktree at /Users/x/wt/f."),
+      URL(fileURLWithPath: "/Users/x/wt/f"))
+  }
+
   func testExitedCwdRejectsWhatIsNotAPath() {
     XCTAssertNil(AgentSession.exitedCwd(fromToolResult: "Session is now back in main."))
     XCTAssertNil(
