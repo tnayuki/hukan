@@ -344,6 +344,13 @@ final class RecentsCommand: NSScriptCommand {
 /// person does. With nothing to open it reports the worktree's web tabs, one line each. Hidden,
 /// like `commit`, `fold` and `files`, and for the same reason: a web tab has no text to read back, so
 /// checking where a click or a typed line landed would otherwise mean clicking at coordinates.
+///
+/// Opening is guarded, where reporting is not. The web tabs carry the person's own logins — one
+/// cookie store, passing as Safari, through the SSO and device trust a bare fetch cannot — and a
+/// session's agent reaches `osascript` with no prompt in the way (the engine is hukan's child, so
+/// the event is self-addressed). Left open, this verb was a way for an agent to steer a logged-in
+/// tab that no card had ever asked about; the way an agent is meant to reach a tab is the tools
+/// hukan hosts for it, which ask first.
 @objc(BrowserCommand)
 final class BrowserCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {
@@ -352,6 +359,7 @@ final class BrowserCommand: NSScriptCommand {
     guard let text = (directParameter as? String), !text.isEmpty else {
       return desk.browserTabsReport
     }
+    guard guardedScriptingEnabled() else { return fail("opening an address is not scriptable") }
     let workspace = controller.workspace
     guard let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
     else { return fail("no selected worktree") }

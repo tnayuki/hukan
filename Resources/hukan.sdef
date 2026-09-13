@@ -327,9 +327,9 @@
             <result type="text"/>
         </command>
 
-        <command name="browser" code="HuknBrws" hidden="yes" description="Open an address on the selected worktree's desk, or report its web tabs, for automated checks">
+        <command name="browser" code="HuknBrws" hidden="yes" description="Open an address on the selected worktree's desk (guarded), or report its web tabs, for automated checks">
             <cocoa class="BrowserCommand"/>
-            <direct-parameter type="text" optional="yes" description="what to type into the address bar; omit to report the open web tabs"/>
+            <direct-parameter type="text" optional="yes" description="what to type into the address bar (requires HUKAN_SCRIPTING_GUARDED=1 — a session's agent can reach osascript, and a logged-in tab is not its to steer); omit to report the open web tabs"/>
             <result type="text"/>
         </command>
 
