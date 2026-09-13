@@ -143,10 +143,17 @@ final class AgentSession {
   /// (see `ClaudeSessionStore.liveBranch`).
   var rollbackAnchor: String?
 
-  /// The uuid of the last transcript record the engine reported writing — the point a fork
-  /// started from the next message would truncate at. Nil until the session has answered
-  /// something: a conversation with nothing above it has no branch point, which is exactly the
-  /// case where forking would produce an empty session rather than a branch.
+  /// The uuid of the last transcript record on this conversation's branch — the point a fork
+  /// started from the next message would truncate at. Nil only while there is genuinely nothing
+  /// above: a conversation with no branch point is exactly the case where forking would produce
+  /// an empty session rather than a branch.
+  ///
+  /// A running engine reports it as it writes (`assistant` events), but a conversation carried
+  /// across a relaunch was written by an engine this window never heard, so the tip has to come
+  /// off the file as well — `historyCursor`'s, which is the same record the engine will hang the
+  /// next message off. Without that the first message sent to a reopened session went down
+  /// unanchored and drew no `…`, with the whole conversation it could have been cut back to
+  /// sitting above it.
   private(set) var lastRecordUUID: String?
 
   /// This conversation's user messages in order, each with its own uuid and the record it hangs
@@ -547,6 +554,10 @@ final class AgentSession {
         guard let self else { return }
         self.pendingPrefix = prefix
         self.historyCursor = history.cursor
+        // Only if nothing live has beaten this read to it: the session may have resumed on the
+        // same click and already have been answered, in which case the engine's own report is
+        // the newer of the two.
+        if self.lastRecordUUID == nil { self.lastRecordUUID = history.cursor.lastUUID }
         self.noteUserMessageUUIDs(in: records)
         // Inserted at the front, not appended: a session that resumed on the same
         // click may already have produced live output while this was being read — in which
@@ -599,6 +610,8 @@ final class AgentSession {
           break
         case .appended(let records, let cursor, let title):
           self.historyCursor = cursor
+          // Nothing of this session is hukan's, so the file is the only place its tip is said.
+          if let tip = cursor.lastUUID { self.lastRecordUUID = tip }
           if let title, self.title != title {
             self.title = title
             self.onStateChange?()
@@ -635,6 +648,7 @@ final class AgentSession {
     streamStart = nil
     lastStamp = nil
     historyCursor = nil
+    lastRecordUUID = nil
     hasLoadedHistory = false
     onReload?()
     loadHistoryIfNeeded(at: worktreeURL)

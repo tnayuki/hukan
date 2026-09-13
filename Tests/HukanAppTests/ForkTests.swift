@@ -261,6 +261,30 @@ final class ForkTests: XCTestCase {
       "and the first message, with nothing above it, has no mark anywhere")
   }
 
+  // MARK: the tip a reopened conversation carries
+
+  /// The point the *next* message hangs off is reported by a running engine as it writes — but a
+  /// conversation reopened after a relaunch was written by an engine this window never heard, so
+  /// it has to come off the file. Without it the first message sent to a reopened session drew no
+  /// `…` at all, with the whole conversation it could have been cut back to right above it.
+  func testReopeningASessionTakesItsTipOffTheFile() throws {
+    let session = try loaded(
+      """
+      {"type":"user","uuid":"u1","message":{"role":"user","content":"first"}}
+      {"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"one"}]}}
+      """)
+    XCTAssertEqual(
+      session.lastRecordUUID, "a1",
+      "the next message hangs off the conversation's tip, whoever wrote it")
+  }
+
+  /// A conversation that has only ever been opened, never answered, still has no branch point —
+  /// which is the case the mark is deliberately absent in.
+  func testAnEmptyTranscriptLeavesNothingToCutBackTo() {
+    let session = AgentSession(worktreeID: UUID())
+    XCTAssertNil(session.lastRecordUUID)
+  }
+
   // MARK: what a held session allows
 
   /// A rollback is only real once an engine reloads from the anchor, and hukan will not start one
@@ -279,6 +303,24 @@ final class ForkTests: XCTestCase {
   }
 
   // MARK: helper
+
+  /// A session whose transcript is already on disk, opened the way the window opens one.
+  private func loaded(_ jsonl: String) throws -> AgentSession {
+    let session = AgentSession(worktreeID: UUID())
+    let worktree = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("hukan-fork-\(session.id.uuidString)")
+    let directory = ClaudeSessionStore.directory(for: worktree)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try jsonl.write(
+      to: ClaudeSessionStore.transcriptURL(id: session.id, worktree: worktree), atomically: true,
+      encoding: .utf8)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let read = expectation(description: "history")
+    session.onReload = { read.fulfill() }
+    session.loadHistoryIfNeeded(at: worktree)
+    wait(for: [read], timeout: 5)
+    return session
+  }
 
   /// Write a transcript and read it back through the real parse, so these assert what the store
   /// actually does with a jsonl rather than a stand-in for it.
