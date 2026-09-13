@@ -70,10 +70,11 @@ stored. The main checkout is the repository's own rail row, naming its branch; t
 under a *Worktrees* heading beneath it, each folding away with its sessions, in order of the
 directory name their row carries. An agent moving worktree (`EnterWorktree`)
 takes its session with it, and leaving it (`ExitWorktree`) brings the session back to the worktree
-it was started from. A `git checkout` run in a terminal renames the row it was run in, as it is
-run. Dragging a repository's heading puts it somewhere else in the rail, worktrees and all — the
-insertion line falls only between repositories, never inside one, the worktrees' own order being
-the name's rather than anyone's. The open panel
+it was started from. What git is told elsewhere arrives as it is told: a `git worktree add` or
+`git worktree remove` run in a terminal puts a row up or takes one down, and a `git checkout`
+renames the row it was run in. Dragging a repository's heading puts it somewhere else in the
+rail, worktrees and all — the insertion line falls only between repositories, never inside one,
+the worktrees' own order being the name's rather than anyone's. The open panel
 takes several at once, and *Open Recent* offers the ones this app has had open and this window has
 not — in the File menu, on the rail's right-click, and beside the empty window's button. An entry
 that is no longer a directory drops itself.

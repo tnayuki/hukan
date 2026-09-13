@@ -71,6 +71,43 @@ final class ChangedPathsTests: XCTestCase {
       "a batch nobody can place is not one to dismiss")
   }
 
+  /// The second question asked of that same batch, and the one the first cannot answer: which
+  /// worktrees the repository has. Everything under `worktrees/` is churn above — a task
+  /// worktree's own HEAD and index move on every command an agent runs there — so the registry
+  /// arriving and leaving is read off the three paths that decide whether git lists a worktree
+  /// at all. The spellings are what `git worktree add` and `git worktree remove` were observed
+  /// to write.
+  func testTheWorktreeRegistryIsReadOffTheSameBatch() {
+    let directory = "/tmp/repo/.git"
+    XCTAssertTrue(
+      Workspace.gitWorktreeListMoved(["\(directory)/worktrees"], under: directory),
+      "the registry itself, which the first `git worktree add` creates")
+    XCTAssertTrue(
+      Workspace.gitWorktreeListMoved(["\(directory)/worktrees/task"], under: directory))
+    XCTAssertTrue(
+      Workspace.gitWorktreeListMoved(["\(directory)/worktrees/task/gitdir"], under: directory))
+    XCTAssertTrue(
+      Workspace.gitWorktreeListMoved(
+        ["\(directory)/worktrees/task/index", "\(directory)/worktrees/task/gitdir"],
+        under: directory),
+      "one that matters carries the batch")
+
+    // The churn the exclusion used to keep off the stream altogether, which is now let through
+    // so that the three above can be: it must go on costing nothing.
+    XCTAssertFalse(
+      Workspace.gitWorktreeListMoved(
+        [
+          "\(directory)/worktrees/task/index", "\(directory)/worktrees/task/index.lock",
+          "\(directory)/worktrees/task/HEAD", "\(directory)/worktrees/task/ORIG_HEAD",
+          "\(directory)/worktrees/task/locked", "\(directory)/worktrees/task/commondir",
+          "\(directory)/worktrees/task/logs/HEAD", "\(directory)/worktrees/task/refs/bisect",
+          "\(directory)/HEAD", "\(directory)/index", "\(directory)/refs/heads/main",
+        ], under: directory))
+    XCTAssertFalse(
+      Workspace.gitWorktreeListMoved(["/somewhere/else"], under: directory),
+      "a path nobody can place is not evidence that git has a different set of worktrees")
+  }
+
   /// FSEvents answers in the paths the filesystem calls canonical; the worktree's own URL may
   /// be spelled the other way. `/tmp` is the case in hand — it is a link to `/private/tmp`, and
   /// so is every temporary directory a test or an agent works in.

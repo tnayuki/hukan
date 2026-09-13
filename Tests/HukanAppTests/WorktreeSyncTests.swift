@@ -103,6 +103,13 @@ final class WorktreeSyncTests: XCTestCase {
     workspace.selectedWorktreeID = task.id
     workspace.selectedSessionID = session.id
 
+    // The streams go first, which is what puts this read where it can be seen doing its job.
+    // The registry is watched now, so the removal below is normally noticed as it happens
+    // (`testARemovedWorktreeLeavesWhileTheWindowHasTheFocus`) and this read would arrive to
+    // find nothing left to reconcile — a race, and an assertion that passes for the wrong
+    // reason. What is under test is the backstop: a window that was not running, or a batch
+    // FSEvents never carried, leaves the enumeration to be read again on the way back in.
+    workspace.watchers.removeAll()
     git(["worktree", "remove", linked.path], in: main)
 
     let refreshed = expectation(description: "refreshGitState")
@@ -505,6 +512,62 @@ final class WorktreeSyncTests: XCTestCase {
     let linkedID = try XCTUnwrap(workspace.worktree(atPath: linked.path)).id
     XCTAssertEqual(workspace.watchers[mainID]?.count, 2)
     XCTAssertEqual(workspace.watchers[linkedID]?.count, 2)
+  }
+
+  /// The list is git's, and the window has to follow it while it has the focus — not on the way
+  /// back to it. `git worktree remove` is the case: it writes nothing outside
+  /// `.git/worktrees/<name>`, so no ref moves and no file in any checkout moves, and while that
+  /// directory was excluded from the repository's stream nothing on disk reported it at all. A
+  /// finished task's worktree therefore sat on the rail, with its sessions, until the window was
+  /// focused again — which on this machine is a window that never lost the focus in the first
+  /// place. Real FSEvents, since which directory is watched is the whole assertion, and
+  /// `refreshGitState` is pointedly not called.
+  func testARemovedWorktreeLeavesWhileTheWindowHasTheFocus() throws {
+    let (main, linked) = try makeRepositoryWithWorktree()
+    let workspace = Workspace()
+    workspace.openRepository(main)
+    let task = try XCTUnwrap(workspace.worktree(atPath: linked.path))
+    settle(workspace, worktreeID: task.id)
+
+    let session = AgentSession(worktreeID: task.id, isDetached: true)
+    workspace.sessions.append(session)
+
+    let left = expectation(description: "the worktree leaves the window")
+    left.assertForOverFulfill = false
+    workspace.onSessionsChanged = { [weak workspace] in
+      guard workspace?.worktree(atPath: linked.path) == nil else { return }
+      left.fulfill()
+    }
+    git(["worktree", "remove", linked.path], in: main)
+
+    wait(for: [left], timeout: 20)
+    XCTAssertEqual(openPaths(workspace), [main.path])
+    XCTAssertTrue(workspace.sessions.isEmpty, "the worktree's sessions leave with it")
+  }
+
+  /// The other direction, and the one that looks as though it were already covered: a
+  /// `git worktree add` does move a ref, so the repository's stream already woke — but the read
+  /// it wakes asks git about files and never about the enumeration. The registry it also writes
+  /// is what says a worktree has arrived.
+  func testAnAddedWorktreeArrivesWhileTheWindowHasTheFocus() throws {
+    let main = try makeRepository()
+    let workspace = Workspace()
+    workspace.openRepository(main)
+    let worktree = try XCTUnwrap(workspace.worktree(atPath: main.path))
+    settle(workspace, worktreeID: worktree.id)
+    XCTAssertEqual(openPaths(workspace), [main.path])
+
+    let linked = root.appendingPathComponent("task")
+    let arrived = expectation(description: "the worktree joins the window")
+    arrived.assertForOverFulfill = false
+    workspace.onSessionsChanged = { [weak workspace] in
+      guard workspace?.worktree(atPath: linked.path) != nil else { return }
+      arrived.fulfill()
+    }
+    git(["worktree", "add", "-q", "-b", "task", linked.path], in: main)
+
+    wait(for: [arrived], timeout: 20)
+    XCTAssertEqual(openPaths(workspace), [linked.path, main.path].sorted())
   }
 
   /// A `git checkout` run elsewhere reaches the name the rail and the window title carry, on the

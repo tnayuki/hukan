@@ -31,9 +31,9 @@ Workspace (one window)
 - **Repository identity is `git rev-parse --git-common-dir`'s parent** — something git
   computes, not a folder someone nominated. Worktrees are enumerated from git, never opened or
   closed individually; they arrive with the repository and leave when git stops listing one —
-  the `git worktree remove` a session runs once its task has landed, noticed on the next return
-  to the window. Closing the repository takes the rest, the main checkout included: git will not
-  remove that one, so nothing but a decision can.
+  the `git worktree remove` a session runs once its task has landed, noticed as it is run.
+  Closing the repository takes the rest, the main checkout included: git will not remove that
+  one, so nothing but a decision can.
 - **What was open and is not is a list, not a row.** Open Recent — in the File menu, on the rail's
   right-click and beside the empty window's button, the three places Open Repository… is already
   reached from — offers the repositories this app has had open that the window it would add to has
@@ -1367,19 +1367,32 @@ Workspace (one window)
   takes and drops, the message an editor is handed, the hooks — and another worktree's
   directory, which holds that worktree's own HEAD and index and is watched on its own, so while
   it counted an agent working on a task re-read the main checkout from top to bottom on every
-  command it ran. The heaviest of those never leave the stream either. Anything not recognised
-  as churn counts, since what is being decided is whether to read, and a read nobody needed is
-  cheaper than a reading left stale.
-  **What the repository moving also moves is the branch's name, and that used to wait for the
-  window to be focused.** Which is the one moment it cannot be needed: the window is the one
-  being worked in, so it never lost the focus to come back to, and the read the repository's
-  own stream already wakes had by then swapped the history and the ± over to the new branch
-  while the rail and the top bar went on naming the old one. So the branch is read on the
-  wholesale question and on no other — a batch that named files in the checkout is by
-  construction one that did not move HEAD — which costs one more repository open on a read that
-  already makes several, and is reported apart from the files, a branch move being what they
-  are measured against rather than one of them. The focus-in read stays, as the backstop for
-  what a stream did not carry rather than as the way this is normally noticed.
+  command it ran. The heaviest of those never leave the stream either — bar the one that turned
+  out to carry a second question, below. Anything not recognised as churn counts, since what is
+  being decided is whether to read, and a read nobody needed is cheaper than a reading left
+  stale.
+  **What the repository moving also moves is the branch's name and the set of worktrees, and
+  both used to wait for the window to be focused.** That is the one moment they cannot be
+  needed: the window is the one being worked in, so it never lost the focus to come back to,
+  and the read the repository's own stream already wakes had by then swapped the history and
+  the ± over to the new branch while the rail and the top bar went on naming the old one. So
+  the branch is read on the wholesale question and on no other — a batch that named files in
+  the checkout is by construction one that did not move HEAD — which costs one more repository
+  open on a read that already makes several, and is reported apart from the files, a branch
+  move being what they are measured against rather than one of them.
+  **The set of worktrees is the other half, and nothing on disk reported it at all.**
+  `git worktree remove` writes nowhere outside `.git/worktrees/<name>`: no ref moves, no file
+  in any checkout moves, and that directory was excluded from the stream outright — for the
+  reason above, a task worktree's own HEAD and index being in there. So the end of a task was
+  invisible, which is the one thing about a worktree this window most has to notice. It is let
+  through now and asked a second, narrow question: the registry directory, a worktree's own
+  directory, and its `gitdir` file, which is what `git worktree add` and `git worktree remove`
+  were measured writing and what decides whether git lists a worktree at all. Letting it
+  through cannot widen the first question, which read everything under there as churn and still
+  does; what it costs is a callback per git command an agent runs in a task worktree, answered
+  by a string comparison, against the whole-worktree read the exclusion was there to prevent.
+  **The focus-in read stays**, as the backstop for what a stream did not carry — a window
+  launched after the fact, a batch dropped — rather than as the way either is normally noticed.
 
 - **hukan observes worktrees, it does not act on them.** Work reaches main through a PR the
   agent opens itself; cleaning up a merged worktree is a plain `git worktree remove` any

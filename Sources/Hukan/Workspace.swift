@@ -112,6 +112,24 @@ final class Workspace {
     }
   }
 
+  /// Whether a batch on the *repository's* stream moved git's worktree registry — see
+  /// `Git.movesTheWorktreeList`, which is the narrow question this asks of every path the one
+  /// above dismissed as churn.
+  ///
+  /// A path that cannot be placed counts for nothing here, where it counts for the read above:
+  /// that one is deciding whether something on screen has gone stale, and this one is deciding
+  /// whether git has a different set of worktrees, which only git's own answer establishes.
+  static func gitWorktreeListMoved(_ paths: [String], under gitDirectory: String) -> Bool {
+    let roots = Set([gitDirectory, canonicalPath(gitDirectory)].compactMap { $0 })
+    return paths.contains { path in
+      let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+      guard let root = roots.first(where: { standardized.hasPrefix($0 + "/") }) else {
+        return false
+      }
+      return Git.movesTheWorktreeList(gitPath: String(standardized.dropFirst(root.count + 1)))
+    }
+  }
+
   /// What the filesystem calls this path, or nil if there is nothing there to ask about.
   ///
   /// `realpath` rather than `resolvingSymlinksInPath`, which answers a different question: it

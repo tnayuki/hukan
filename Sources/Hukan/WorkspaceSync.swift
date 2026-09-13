@@ -195,6 +195,29 @@ extension Workspace {
     return true
   }
 
+  /// git's worktree registry moved on disk — re-read the list and reconcile against it.
+  ///
+  /// The live half of what `refreshGitState` does on the way back to the window, and the half a
+  /// return to the window was the only way to get. `git worktree remove` writes nothing outside
+  /// `.git/worktrees/<name>`, so no ref moves, no file in any checkout moves, and nothing else
+  /// hukan watches has anything to say about it; `git worktree add` does move a ref, but the
+  /// read that answers for a moved ref asks git about files and never about the list.
+  ///
+  /// One directory listing per repository, run on a batch that named the registry and on no
+  /// other, so there is nothing here to throttle and nothing to remember. Only the main
+  /// checkout's stream can raise one — the registry lives in the common directory, which is the
+  /// git directory of exactly that worktree — so a repository asks this once however many
+  /// worktrees it has open.
+  func refreshWorktreeList(ofRepository repositoryID: String) {
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let listed = Git.worktrees(at: URL(fileURLWithPath: repositoryID))
+      DispatchQueue.main.async {
+        guard let self, self.reconcileWorktrees(listed, ofRepository: repositoryID) else { return }
+        self.onSessionsChanged?()
+      }
+    }
+  }
+
   /// A worktree's first read, in two hops rather than one: which files there are, and then what
   /// has moved in them.
   ///
@@ -544,13 +567,25 @@ extension Workspace {
       // is git's own churn, and a `git add` writing a dozen blobs must not read the worktree a
       // dozen times. The heaviest of it never leaves the stream (`Git.movesTheWorkingSet` still
       // answers for the rest, and for a directory this repository happens not to have).
+      //
+      // `worktrees/` used to be excluded with them and is now let through, because it is the one
+      // piece of churn that also carries a fact nothing else reports: `git worktree remove`
+      // writes nowhere else, so while the stream never saw it, a finished task's worktree stayed
+      // on the rail — with its sessions — until the window was focused again. Letting it in
+      // cannot widen the question above, which reads every path in there as churn and always
+      // did; it is asked a second, narrow question instead. What it costs is a callback per git
+      // command an agent runs in a task worktree, answered by a string comparison.
       if let gitDirectory = Git.gitDirectory(at: worktree.url) {
         let directory = gitDirectory.standardizedFileURL.path
+        let repositoryID = worktree.repositoryID
         started.append(
           DirectoryWatcher(
             url: gitDirectory,
-            excluding: ["objects", "logs", "worktrees"].map(gitDirectory.appendingPathComponent)
+            excluding: ["objects", "logs"].map(gitDirectory.appendingPathComponent)
           ) { [weak self] paths in
+            if Workspace.gitWorktreeListMoved(paths, under: directory) {
+              self?.refreshWorktreeList(ofRepository: repositoryID)
+            }
             guard Workspace.gitDirectoryMoved(paths, under: directory) else { return }
             self?.refreshFiles(worktreeID: id, moved: nil)
           })

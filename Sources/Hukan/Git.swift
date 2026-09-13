@@ -145,7 +145,8 @@ enum Git {
   /// message files an editor is handed, and the hooks. Another worktree's directory is in the
   /// list for a different reason: it holds that worktree's own HEAD and index, watched by that
   /// worktree's own watcher, and while it counted here an agent working in a task worktree
-  /// re-read the main checkout from top to bottom on every command it ran.
+  /// re-read the main checkout from top to bottom on every command it ran. What that directory
+  /// *does* answer for is the question below, which is the narrow half of the same batch.
   static func movesTheWorkingSet(gitPath path: String) -> Bool {
     if path.hasSuffix(".lock") { return false }
     let churn = ["objects/", "logs/", "hooks/", "worktrees/"]
@@ -155,6 +156,29 @@ enum Git {
       return false
     default:
       return true
+    }
+  }
+
+  /// Whether a write at this path inside git's directory moves the repository's *worktree
+  /// registry* — the `worktrees/<name>` directory `git worktree add` writes and
+  /// `git worktree remove` deletes. `path` is relative to that directory, as above.
+  ///
+  /// It is the second question asked of one batch on the repository's stream, and it is narrow
+  /// where the first errs towards yes: everything under `worktrees/` is churn to that one — a
+  /// task worktree's own `HEAD`, `index` and reflog move on every command an agent runs, and
+  /// they say nothing about the checkout the stream belongs to — while exactly three things in
+  /// there decide whether git lists a worktree at all. The registry directory itself, the
+  /// per-worktree directory, and its `gitdir` file: measured against `git worktree add` and
+  /// `git worktree remove`, which report all three and touch nothing else outside `worktrees/`
+  /// between them. So the arrival and the departure are noticed live, and the churn beside them
+  /// goes on costing a string comparison.
+  static func movesTheWorktreeList(gitPath path: String) -> Bool {
+    guard path == "worktrees" || path.hasPrefix("worktrees/") else { return false }
+    let parts = path.split(separator: "/")
+    switch parts.count {
+    case 1, 2: return true
+    case 3: return parts[2] == "gitdir"
+    default: return false
     }
   }
 
