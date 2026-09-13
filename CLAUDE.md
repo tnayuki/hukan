@@ -265,6 +265,41 @@ Workspace (one window)
   only if the page did not want it: that ordering is the whole reason it is not a menu key
   equivalent, since one of those is matched before the page ever sees the event and would take
   Escape from every menu and dialog a page has.
+- **A web tab is shared with the agent per tab, on a card the agent's own call raises.** The
+  tools are hukan's — list the desk's tabs, open one, read one, load an address in it, screenshot
+  it, run JavaScript in it — hosted in-process on the session's own stream: a name in the engine's
+  `initialize` and its JSON-RPC arrives as control requests, the same door `set_model` and Remote
+  Control go through. No second process, no config file, no socket, and the call arrives on the
+  stream of the session making it, so whose tabs it means is a fact rather than an argument
+  anything on the machine could forge. It is read off the shipped binary, like the permission
+  prompt tool, and re-verified on upgrades. **The tab is the unit of consent**, where every other
+  browser agent scopes it to a site: a site is what nobody is looking at, and a hukan tab belongs
+  to a worktree and was opened for its task. **The call is the request**: a tab it has not been
+  given stops the session on a card naming the page and the address, with three answers — read,
+  read and drive, or not at all — and the answer stays with the tab rather than the call, which is
+  what lets the standing yes be narrow instead of the whole permission mode. **Opening a tab is
+  the same card asked before the tab exists**, and the tab is made only on a yes, already shared
+  and showing — the yes is the click, and opened behind it sat on the strip reading as an open
+  that had not happened. It shows only on the worktree the desk is on: which worktree that is
+  belongs to the rail's selection, not to the agent. That is also why
+  hukan's own tools never reach the generic approval card, and why the grant is asked for whatever
+  the mode says: a `can_use_tool` is not sent under `bypassPermissions` at all, so a gate hung off
+  it would be gone exactly where it mattered, and a mode loosened for a checkout was never a
+  decision about the person's logins. **Driving lapses when the tab leaves the site it was granted
+  on; reading does not.** A read that lapsed on every link would make following a PR a card per
+  click, and a drive that survived a navigation would be consent to act on a page nobody saw —
+  the shape of the hole that has been found in browser agents' origin checks. The person never
+  meets the word origin: the glyph goes hollow, and the next drive asks again. The glyph is the model picker's sparkles —
+  the agent's mark in this window already; the symbol set has no robot, and the chip is the
+  toolbar's load gauge — and a wand once the tab may be driven, two glyphs rather than a fill. One grant serves
+  every session of the worktree, since the tabs are the worktree's and so is the task. **Never
+  saved**: a grant back after a relaunch would be hukan making it again tomorrow on nobody's
+  behalf, and a grant that lives nowhere on disk is one nothing can forge — the other attack on
+  browser agents' permission stores. What the grant is not is a boundary on identity: every tab
+  shares one cookie store, so inside a shared tab the agent is the person, on whatever the page
+  reaches. That is the whole reason it is asked for, and the reason the hidden `browser` verb's
+  loading half is guarded now — a session's agent reaches `osascript` with no prompt in the way,
+  and that verb steered a logged-in tab with no card in front of it.
 - **The whole strip comes back after a relaunch, at the tab that was showing.** Each tab is saved
   as what identifies it and nothing more — a worktree and a relative path, an oid, a directory
   and a scrollback, and for a web tab WebKit's own `interactionState` (the back/forward list and where

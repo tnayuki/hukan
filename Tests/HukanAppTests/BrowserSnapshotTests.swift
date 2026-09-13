@@ -8,7 +8,9 @@ import XCTest
 /// WebKit's, and a snapshot of a rendered page would be pinning a browser engine rather than
 /// hukan. The three rows are the states the bar is ever in — a fresh tab with nothing to go back
 /// to, a load under way (Stop in place of Reload, the progress line along the foot, an address
-/// long enough to truncate), and the find field ⌘F opens beside it.
+/// long enough to truncate), and the find field ⌘F opens beside it — plus a fourth, the tab the
+/// agent has been given to drive, since the sparkles at the trailing edge are quiet on the other
+/// three and this is the one state of it that is not.
 ///
 /// Same recording flow as the others: `TEST_RUNNER_HUKAN_RECORD=1` re-records, and
 /// `TEST_RUNNER_HUKAN_PREVIEW=browser` writes /tmp/hukan-preview-browser.png and leaves the
@@ -75,7 +77,7 @@ final class BrowserSnapshotTests: XCTestCase {
     let appearance = NSAppearance(named: .darkAqua)!
     NSApplication.shared.appearance = appearance
 
-    let panes = (0..<3).map { _ in BrowserPaneViewController() }
+    let panes = (0..<4).map { _ in BrowserPaneViewController() }
     let stack = NSStackView(views: panes.map(\.view))
     stack.orientation = .vertical
     stack.spacing = Self.spacing
@@ -88,7 +90,7 @@ final class BrowserSnapshotTests: XCTestCase {
       ])
     }
 
-    let height = Self.barHeight * 3 + Self.spacing * 2
+    let height = Self.barHeight * 4 + Self.spacing * 3
     let size = NSSize(width: Self.width, height: height)
     let window = SnapshotSurface.window(size: size, appearance: appearance)
     window.contentView = stack
@@ -96,10 +98,13 @@ final class BrowserSnapshotTests: XCTestCase {
 
     // The first is left as it opens. The second is put on an address and drawn while it is still
     // going out; the third has been asked to find, which is the field appearing rather than
-    // anything found.
+    // anything found. The fourth is shared with the agent for driving — the grant set outright,
+    // since what is posed is the glyph and not a navigation.
     panes[1].load(Self.address)
     panes[2].load(Self.address)
     panes[2].performFind(nil)
+    panes[3].load(Self.address)
+    panes[3].grant = BrowserGrant(level: .drive, origin: "https://github.com")
     stack.layoutSubtreeIfNeeded()
 
     return SnapshotSurface.png(size: size, appearance: appearance) { context in

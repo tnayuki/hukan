@@ -1001,9 +1001,214 @@ final class WorktreeDeskViewController: NSViewController {
     guard !tabs.isEmpty else { return "(no web tabs)" }
     return tabs.enumerated().map { index, tab in
       let marker = surface == .browser(tab.id) ? "●" : " "
+      let shared = tab.pane.grant.map { "  (shared: \($0.level.label))" } ?? ""
       return
-        "\(index + 1) \(marker) \(tab.pane.pageTitle)  \(tab.pane.currentURL?.absoluteString ?? "")"
+        "\(index + 1) \(marker) \(tab.pane.pageTitle)  \(tab.pane.currentURL?.absoluteString ?? "")\(shared)"
     }.joined(separator: "\n")
+  }
+
+  // MARK: The agent's tools
+
+  /// A browser tool call from `session`, against the tabs of the worktree it is in — not the
+  /// worktree on screen, which is whichever the rail has selected and may be another task's.
+  /// `browser_tabs` answers from here; anything else names a tab and needs its grant, and a tab
+  /// without one puts the card up on the session and holds the call until it is answered.
+  func performBrowserTool(
+    _ call: BrowserMCP.Call, for session: AgentSession,
+    completion: @escaping (BrowserMCP.Outcome) -> Void
+  ) {
+    let worktreeID = session.worktreeID
+    let tabs = browserTabsByWorktree[worktreeID] ?? []
+    if call.name == "browser_tabs" {
+      guard !tabs.isEmpty else {
+        completion(.text("No web tabs are open on this worktree's desk."))
+        return
+      }
+      let lines = inStripOrder(tabs, in: worktreeID, surface: { .browser($0.id) }).map { tab in
+        let shared = tab.pane.grant.map { "shared: \($0.level.label)" } ?? "not shared"
+        let url = tab.pane.currentURL?.absoluteString ?? ""
+        return "\(tab.id.uuidString)\t\(tab.pane.pageTitle)\t\(url)\t\(shared)"
+      }
+      completion(.text(("id\ttitle\taddress\tsharing\n" + lines.joined(separator: "\n"))))
+      return
+    }
+    if call.name == "browser_open" {
+      guard let url = call.string("url").flatMap({ URL(string: $0) }),
+        BrowserEnvironment.opensAsWebTab(url)
+      else {
+        completion(.error("url has to be an http(s) address."))
+        return
+      }
+      guard let worktree = workspace?.worktree(id: worktreeID) else {
+        completion(.error("The worktree is gone."))
+        return
+      }
+      // The tab is made only once the card is answered: a tab opened and then declined would be
+      // a tab nobody asked for, sitting on the strip unshared.
+      session.requestGrant(
+        tabID: UUID(), title: url.host ?? url.absoluteString, url: url.absoluteString,
+        level: .read, opening: true
+      ) { [weak self] granted in
+        guard let self else {
+          completion(.error("The desk is gone."))
+          return
+        }
+        guard let granted else {
+          completion(
+            .error("The user declined to open this address. Do not try again unless they say to."))
+          return
+        }
+        let tab = self.openBrowserTabForAgent(worktree: worktree, url: url)
+        tab.pane.grant = BrowserGrant(level: granted, at: url)
+        tab.pane.whenSettled {
+          if let failure = tab.pane.lastFailure {
+            completion(
+              .error("Opened tab \(tab.id.uuidString), but the page did not load: \(failure)"))
+          } else {
+            completion(
+              .text(
+                "\(tab.id.uuidString)\n\(tab.pane.pageTitle)\n\(tab.pane.currentURL?.absoluteString ?? "")"
+              ))
+          }
+        }
+      }
+      return
+    }
+    guard let id = call.string("tab").flatMap({ UUID(uuidString: $0) }),
+      let tab = tabs.first(where: { $0.id == id })
+    else {
+      completion(.error("No such tab on this worktree's desk — browser_tabs lists the ids."))
+      return
+    }
+    let pane = tab.pane
+    let needed: BrowserGrant.Level = call.name == "browser_run" ? .drive : .read
+    if let grant = pane.grant, grant.allows(needed) {
+      run(call, on: pane, completion: completion)
+      return
+    }
+    session.requestGrant(
+      tabID: id, title: pane.pageTitle, url: pane.currentURL?.absoluteString ?? "",
+      level: needed
+    ) { [weak self, weak pane] granted in
+      guard let self, let pane else {
+        completion(.error("The tab is gone."))
+        return
+      }
+      guard let granted else {
+        completion(
+          .error(
+            "The user declined to share this tab. Do not ask for it again unless the user says to."
+          ))
+        return
+      }
+      // Raise, never lower: a read asked for on a tab already shared for driving keeps the drive.
+      if pane.grant?.allows(granted) != true { pane.share(granted) }
+      guard pane.grant?.allows(needed) == true else {
+        completion(.error("The user shared this tab for reading only; driving it was not allowed."))
+        return
+      }
+      self.run(call, on: pane, completion: completion)
+    }
+  }
+
+  /// A tab the agent asked for, on its session's worktree. It is shown, when that worktree is
+  /// the one on screen: the card was just answered yes, so the tab appearing is the person's
+  /// answer being carried out and not the agent taking the desk — opened behind, it sat on the
+  /// strip unread until clicked, which read as the open not having happened. On a worktree that
+  /// is not on screen it is added the way a restored tab is, and waits there: which worktree the
+  /// desk shows is the rail's selection, and that is not the agent's to move. An address already
+  /// open is that tab, not a second one.
+  private func openBrowserTabForAgent(worktree: Worktree, url: URL) -> BrowserTab {
+    loadViewIfNeeded()
+    let tab: BrowserTab
+    if let existing = (browserTabsByWorktree[worktree.id] ?? []).first(
+      where: { $0.pane.currentURL == url })
+    {
+      tab = existing
+    } else {
+      tab = BrowserTab(pane: BrowserPaneViewController())
+      wire(tab, in: worktree.id)
+      browserTabsByWorktree[worktree.id, default: []].append(tab)
+      view.window?.invalidateRestorableState()
+      tab.pane.load(url)
+    }
+    if worktree.id == worktreeID {
+      surface = .browser(tab.id)
+      rebuildTabBar()
+      applySurface()
+    }
+    return tab
+  }
+
+  /// A call whose grant is settled. Reads wait for the page to be there — a restored tab may be
+  /// loading for the first time — and a navigation waits for what it loaded, and reports the
+  /// error page's reason rather than the error page.
+  private func run(
+    _ call: BrowserMCP.Call, on pane: BrowserPaneViewController,
+    completion: @escaping (BrowserMCP.Outcome) -> Void
+  ) {
+    func heading() -> String {
+      "\(pane.pageTitle)\n\(pane.currentURL?.absoluteString ?? "")"
+    }
+    switch call.name {
+    case "browser_read":
+      pane.whenSettled {
+        pane.readText(selector: call.string("selector")) { result in
+          switch result {
+          case .success(let text):
+            completion(.text(heading() + "\n\n" + Self.capped(text, at: 60_000)))
+          case .failure(let error):
+            completion(.error(error.localizedDescription))
+          }
+        }
+      }
+    case "browser_navigate":
+      guard let url = call.string("url").flatMap({ URL(string: $0) }),
+        BrowserEnvironment.opensAsWebTab(url)
+      else {
+        completion(.error("url has to be an http(s) address."))
+        return
+      }
+      pane.load(url)
+      pane.whenSettled {
+        if let failure = pane.lastFailure {
+          completion(.error("The page did not load: \(failure)"))
+        } else {
+          completion(.text(heading()))
+        }
+      }
+    case "browser_screenshot":
+      pane.whenSettled {
+        pane.snapshot { result in
+          switch result {
+          case .success(let png): completion(.image(png, mimeType: "image/png"))
+          case .failure(let error): completion(.error(error.localizedDescription))
+          }
+        }
+      }
+    case "browser_run":
+      guard let code = call.string("javascript") else {
+        completion(.error("javascript is required."))
+        return
+      }
+      pane.runScript(code) { result in
+        switch result {
+        case .success(let value): completion(.text(Self.capped(value, at: 20_000)))
+        case .failure(let error): completion(.error(error.localizedDescription))
+        }
+      }
+    default:
+      completion(.error("No such tool: \(call.name)"))
+    }
+  }
+
+  /// A page is longer than a context window wants to be handed at once — hukan measures that
+  /// window in the session header — so a read is cut, and says so, the way the commit tab caps
+  /// a file.
+  private static func capped(_ text: String, at limit: Int) -> String {
+    guard text.count > limit else { return text }
+    return String(text.prefix(limit))
+      + "\n\n[cut at \(limit) characters — narrow the read with a selector]"
   }
 
   /// The web tab showing right now — what a script loads an address into.
@@ -1036,6 +1241,10 @@ final class WorktreeDeskViewController: NSViewController {
     tab.pane.onOpenInNewTab = { [weak self] url, background in
       guard let self, let worktree = self.workspace?.worktree(id: worktreeID) else { return }
       self.openBrowser(worktree: worktree, url: url, inBackground: background)
+    }
+    tab.pane.onGrantChange = { [weak self] in
+      guard let self, worktreeID == self.worktreeID else { return }
+      self.rebuildTabBar()
     }
     tab.pane.onClose = { [weak self] in
       guard let self else { return }
@@ -1322,10 +1531,15 @@ final class WorktreeDeskViewController: NSViewController {
       case .browser(let id):
         guard let browser = browsers.first(where: { $0.id == id }) else { continue }
         // Every web tab wears the same globe, so the address is what tells three GitHub tabs
-        // apart — on the tooltip, where a file tab keeps its path.
+        // apart — on the tooltip, where a file tab keeps its path. A tab the agent has been
+        // given wears the pane's own glyph instead — the sparkles, or the wand once it may act —
+        // so which tabs it can see reads off the strip whichever one is showing.
+        let symbol =
+          browser.pane.grant.map { $0.level == .drive ? "wand.and.sparkles" : "sparkles" }
+          ?? "globe"
         let tab = makeTab(
           index: index, title: browser.pane.pageTitle,
-          image: NSImage(systemSymbolName: "globe", accessibilityDescription: nil),
+          image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil),
           selected: surface == item, surface: item)
         tab.toolTip = browser.pane.currentURL?.absoluteString
         tabs.append(tab)
@@ -1467,7 +1681,29 @@ final class WorktreeDeskViewController: NSViewController {
     // Only a preview tab has anything to keep open; the rest already are.
     if preview { add("Keep Open", #selector(keepTabOpen(_:))) }
     add(isMaximized ? "Restore Layout" : "Maximize Tab", #selector(toggleMaximized(_:)))
+    // A web tab's share with the agent, spelled out: the glyph on its bar is the read and the
+    // withdrawal, and driving is otherwise only offered by the card that asks for it.
+    let order = orderedSurfaces
+    if order.indices.contains(index), case .browser(let id) = order[index],
+      let tab = browserTabs.first(where: { $0.id == id })
+    {
+      menu.addItem(.separator())
+      let level = tab.pane.grant?.level
+      add("Let the Agent Read", #selector(shareTabForReading(_:)), enabled: level == nil)
+      add("Let the Agent Drive", #selector(shareTabForDriving(_:)), enabled: level != .drive)
+      add("Stop Sharing with the Agent", #selector(stopSharingTab(_:)), enabled: level != nil)
+    }
     return menu
+  }
+
+  @objc private func shareTabForReading(_ sender: NSMenuItem) { share(.read, at: sender.tag) }
+  @objc private func shareTabForDriving(_ sender: NSMenuItem) { share(.drive, at: sender.tag) }
+  @objc private func stopSharingTab(_ sender: NSMenuItem) { share(nil, at: sender.tag) }
+
+  private func share(_ level: BrowserGrant.Level?, at index: Int) {
+    let order = orderedSurfaces
+    guard order.indices.contains(index), case .browser(let id) = order[index] else { return }
+    browserTabs.first { $0.id == id }?.pane.share(level)
   }
 
   private func tabSeparator() -> NSView {

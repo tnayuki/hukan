@@ -147,6 +147,87 @@ final class ApprovalCard: LayerSurface {
   @objc private func denyClicked() { onDecision(false) }
 }
 
+/// The card a browser tool call stops on: whether this session's agent may have the tab it asked
+/// for, and how far. Three answers where the approval card has two, because reading a page and
+/// acting on it as you are different decisions and this is the one place they are made — the
+/// answer outlives the call and stays with the tab (see `BrowserGrant`), so what is being decided
+/// is the tab, not the call. Orange like the approval card: it is stopped on you.
+final class GrantCard: LayerSurface {
+  private let onDecision: (BrowserGrant.Level?) -> Void
+
+  init(grant: PendingGrant, onDecision: @escaping (BrowserGrant.Level?) -> Void) {
+    self.onDecision = onDecision
+    super.init(frame: .zero)
+    wantsLayer = true
+    layer?.cornerRadius = 8
+    layer?.borderWidth = 1
+    paintLayer = {
+      $0.borderColor = NSColor.systemOrange.withAlphaComponent(0.5).cgColor
+      $0.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.08).cgColor
+    }
+
+    let icon = NSImageView()
+    icon.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Share a tab")
+    icon.contentTintColor = .systemOrange
+    icon.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
+
+    // Opening names the site rather than a page: there is no page yet, and the address under
+    // the question is what says where the tab is going.
+    let question: String
+    if grant.opening {
+      let site = URL(string: grant.url)?.host ?? grant.url
+      question = "Let the agent open a tab on \(site)?"
+    } else {
+      let verb = grant.level == .drive ? "drive" : "read"
+      question = "Let the agent \(verb) \u{201C}\(grant.title)\u{201D}?"
+    }
+    let title = NSTextField(labelWithString: question)
+    title.font = .systemFont(ofSize: 12, weight: .semibold)
+    title.lineBreakMode = .byTruncatingTail
+    title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+    let spacer = NSView()
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    let decline = NSButton(
+      title: "Don\u{2019}t Share", target: self, action: #selector(declineClicked))
+    let read = NSButton(title: "Read", target: self, action: #selector(readClicked))
+    let drive = NSButton(title: "Read and Drive", target: self, action: #selector(driveClicked))
+    for button in [decline, read, drive] {
+      button.bezelStyle = .rounded
+      button.controlSize = .small
+    }
+
+    let header = NSStackView(views: [icon, title, spacer, decline, read, drive])
+    header.orientation = .horizontal
+    header.alignment = .centerY
+    header.spacing = 6
+
+    // The address under the question, the way a tool's argument sits under an approval's name:
+    // the title says which page, the address says which site the answer is about.
+    let body = NSTextField(labelWithString: grant.url)
+    body.font = monospace
+    body.textColor = .secondaryLabelColor
+    body.lineBreakMode = .byTruncatingTail
+    body.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+    let stack = NSStackView(views: [header, body])
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 6
+    addSubview(stack)
+    stack.pin(to: self, insets: NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12))
+    header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    body.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+  }
+
+  required init?(coder: NSCoder) { fatalError() }
+
+  @objc private func declineClicked() { onDecision(nil) }
+  @objc private func readClicked() { onDecision(.read) }
+  @objc private func driveClicked() { onDecision(.drive) }
+}
+
 /// The agent's own question (`AskUserQuestion`), shown one at a time as its options rather than a
 /// generic allow/deny. A click answers with the option label; Skip answers with nothing. Like the
 /// approval card, it sits above the composer and never blocks the other sessions.

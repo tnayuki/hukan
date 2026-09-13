@@ -187,6 +187,17 @@ password or client-certificate challenge all get the system's panels, a swipe go
 finds in the page. A web tab comes back after a relaunch with its history, and its address is
 what it is found again by before the page has loaded.
 
+A session's agent can be given a web tab. It has tools for the desk's tabs — list them, open one
+at an address, read one as text, load an address in it, screenshot
+it, run JavaScript in it — and the first time it asks for a tab you have not shared, or to open
+one, a card stops the session on you: share it for reading, for reading and driving, or not at
+all. The answer stays with the tab, not the call: the sparkles on the tab's bar
+and on the strip say it is shared (a wand once it may be driven), a click on it or the tab's menu
+takes it back, and a tab shared for driving falls back to reading the moment it moves to another
+site. Nothing about it survives a relaunch. Inside a shared tab the agent is you — same cookies,
+same logins — which is what lets it read a page behind a sign-in that nothing else it has can
+reach, and why the sharing is per tab and asked for.
+
 ![A web tab open on the desk beside the commit tab it was opened next to, showing a repository
 page under the tab strip's own address bar, with the conversation still running in the column to
 its left](docs/hukan-browser.png)

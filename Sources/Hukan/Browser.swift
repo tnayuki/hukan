@@ -155,6 +155,20 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
   /// The page closed itself (`window.close()`, which is how an SSO popup ends). The desk closes
   /// the tab, since a web view with nothing in it is not a tab anyone chose to keep.
   var onClose: (() -> Void)?
+  /// The grant moved — made, withdrawn, or lapsed by a navigation — so the strip's glyph for this
+  /// tab has to follow.
+  var onGrantChange: (() -> Void)?
+
+  /// What the agent may do with this tab (see `BrowserGrant`). On the pane rather than the strip's
+  /// tab, because the pane is what observes the address the lapse rule reads and draws the glyph
+  /// that says it. Never part of `restorableState`.
+  var grant: BrowserGrant? {
+    didSet {
+      guard grant != oldValue else { return }
+      syncGrant()
+      onGrantChange?()
+    }
+  }
 
   private(set) var pageTitle = "New Tab"
   let webView: WKWebView
@@ -162,6 +176,7 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
   private let back = NSButton()
   private let forward = NSButton()
   private let reload = NSButton()
+  private let share = NSButton()
   private let progress = LayerSurface()
   private lazy var progressWidth = progress.widthAnchor.constraint(equalToConstant: 0)
   private let findField = NSSearchField()
@@ -181,6 +196,9 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
   /// title round-trip lands a beat later, and a tab named after the host it could not reach is
   /// indistinguishable from one showing it.
   private var failureTitle: String?
+  /// The failure as the error page states it, so a navigation the agent asked for can report why
+  /// it did not arrive rather than handing back the error page's text as the page.
+  private(set) var lastFailure: String?
   /// A restored tab's state, applied the first time the pane is shown rather than when the window
   /// comes back: a restored window may carry a dozen web tabs across its worktrees, and loading
   /// them all at launch is what a browser's session restore is known for. Until then the tab
@@ -276,7 +294,19 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
     findLabel.textColor = .secondaryLabelColor
     findLabel.isHidden = true
 
-    let bar = NSStackView(views: [back, forward, reload, address, findLabel, findField])
+    // The one glyph in the bar that is not the browser's: whether the agent has this tab. Quiet
+    // when it does not, the way the session header's antenna is, and a click is the yes-or-no —
+    // a read, the common case; driving is decided on the card that asks for it, or the tab's
+    // menu. Where a switch would live on the bar is the trailing edge, past the address it is a
+    // fact about.
+    share.imagePosition = .imageOnly
+    share.isBordered = false
+    share.bezelStyle = .accessoryBarAction
+    share.target = self
+    share.action = #selector(toggleShare)
+    syncGrant()
+
+    let bar = NSStackView(views: [back, forward, reload, address, findLabel, findField, share])
     bar.orientation = .horizontal
     bar.alignment = .centerY
     bar.spacing = 4
@@ -312,7 +342,10 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
     // issue and its PR without one: the address, title and history all change with nothing
     // committed, and a chrome synced there stayed on the first page all day.
     observers = [
-      webView.observe(\.url) { [weak self] _, _ in self?.syncChrome() },
+      webView.observe(\.url) { [weak self] _, _ in
+        self?.syncChrome()
+        self?.lapseGrantIfNeeded()
+      },
       webView.observe(\.title) { [weak self] _, _ in self?.syncChrome() },
       webView.observe(\.canGoBack) { [weak self] _, _ in self?.syncChrome() },
       webView.observe(\.canGoForward) { [weak self] _, _ in self?.syncChrome() },
@@ -370,6 +403,7 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
   private func clearFailure() {
     failedURL = nil
     failureTitle = nil
+    lastFailure = nil
   }
 
   /// The address showing, for the tab-reuse check and the scripting report. The error page keeps
@@ -476,11 +510,145 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
   /// Reload becomes Stop while a page is loading, and the progress line runs under the bar.
   private func syncLoading() {
     let loading = webView.isLoading
+    if !loading {
+      let waiting = loadWaiters
+      loadWaiters = []
+      for waiter in waiting { waiter() }
+    }
     reload.image = NSImage(
       systemSymbolName: loading ? "xmark" : "arrow.clockwise", accessibilityDescription: nil)
     reload.toolTip = loading ? "Stop" : "Reload"
     progress.isHidden = !loading
     progressWidth.constant = loading ? view.bounds.width * webView.estimatedProgress : 0
+  }
+
+  // MARK: The agent's half
+
+  private func syncGrant() {
+    let level = grant?.level
+    // The sparkles are the agent's glyph in this window already — the model picker's — so a tab
+    // wearing them is one the agent has. The wand is the same sparkles with something to act
+    // with, which is what a drive adds, and it keeps the two states two glyphs rather than a
+    // fill only the accent tint would show.
+    share.image = NSImage(
+      systemSymbolName: level == .drive ? "wand.and.sparkles" : "sparkles",
+      accessibilityDescription: nil)
+    share.contentTintColor = level == nil ? .tertiaryLabelColor : .controlAccentColor
+    switch level {
+    case nil: share.toolTip = "Share with the agent — it can then read this tab"
+    case .read?: share.toolTip = "The agent can read this tab — click to stop sharing"
+    case .drive?: share.toolTip = "The agent can read and drive this tab — click to stop sharing"
+    }
+  }
+
+  /// The click is the yes-or-no: off → a read on the site showing, anything → off. A blank tab
+  /// has no site to grant on, so the click does nothing there.
+  @objc private func toggleShare() {
+    share(grant == nil ? .read : nil)
+  }
+
+  /// Make, raise or withdraw the grant, on the site the tab is showing.
+  func share(_ level: BrowserGrant.Level?) {
+    grant = level.flatMap { BrowserGrant(level: $0, at: currentURL) }
+  }
+
+  private func lapseGrantIfNeeded() {
+    guard let grant else { return }
+    let after = grant.afterNavigating(to: webView.url)
+    if after != grant { self.grant = after }
+  }
+
+  /// Completions waiting for the current load to end (see `whenSettled`).
+  private var loadWaiters: [() -> Void] = []
+
+  /// Run `completion` once the tab is not loading — after a beat, since a load put in just now
+  /// may not have raised `isLoading` yet, and a restored tab starts its load in `loadView`. Bounded
+  /// by `timeout`, since a page can hang: the completion runs once either way.
+  func whenSettled(timeout: TimeInterval = 30, completion: @escaping () -> Void) {
+    loadViewIfNeeded()
+    final class Once { var fired = false }
+    let once = Once()
+    let finish = {
+      guard !once.fired else { return }
+      once.fired = true
+      completion()
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+      guard let self, self.webView.isLoading else {
+        finish()
+        return
+      }
+      self.loadWaiters.append(finish)
+      DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: finish)
+    }
+  }
+
+  /// The page as text — the rendered `innerText`, of the whole document or of one selector.
+  func readText(selector: String?, completion: @escaping (Result<String, Error>) -> Void) {
+    let script = """
+      const target = selector ? document.querySelector(selector) : document.body;
+      if (!target) { throw new Error("nothing matches " + selector); }
+      return target.innerText;
+      """
+    webView.callAsyncJavaScript(
+      script, arguments: ["selector": selector ?? ""], in: nil, in: .page
+    ) { result in
+      completion(result.map { $0 as? String ?? "" })
+    }
+  }
+
+  /// Run the agent's code in the page — the page's own world, so it sees what the page sees.
+  /// What it evaluates to comes back as text: JSON where it can be, `String(describing:)` where
+  /// it cannot.
+  func runScript(_ code: String, completion: @escaping (Result<String, Error>) -> Void) {
+    let (script, arguments) = Self.asyncBody(for: code)
+    webView.callAsyncJavaScript(script, arguments: arguments, in: nil, in: .page) { result in
+      completion(
+        result.map { value in
+          guard !(value is NSNull) else { return "undefined" }
+          if let data = try? JSONSerialization.data(
+            withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys]),
+            let text = String(data: data, encoding: .utf8)
+          {
+            return text
+          }
+          return String(describing: value)
+        })
+    }
+  }
+
+  /// What `callAsyncJavaScript` is handed for the agent's code. WebKit runs it as the body of an
+  /// async function, so a bare expression — `document.title`, the most likely line — evaluates to
+  /// nothing without a `return`, which is what came back the first time this was tried. Code that
+  /// says `return` or `await` is a function body and runs as one; anything else is evaluated for
+  /// its completion value, the way a console would read it, with the code passed in as an
+  /// argument rather than spliced into the source. One or the other, never a retry: a click run
+  /// twice is two clicks.
+  static func asyncBody(for code: String) -> (script: String, arguments: [String: Any]) {
+    if code.range(of: #"\b(return|await)\b"#, options: .regularExpression) != nil {
+      return (code, [:])
+    }
+    return ("return eval(code);", ["code": code])
+  }
+
+  /// The tab as it is showing, as a PNG. Only a tab on screen has a picture: a view without a
+  /// size draws nothing, and WebKit says so.
+  func snapshot(completion: @escaping (Result<Data, Error>) -> Void) {
+    webView.takeSnapshot(with: nil) { image, error in
+      guard let image, let tiff = image.tiffRepresentation,
+        let rep = NSBitmapImageRep(data: tiff),
+        let png = rep.representation(using: .png, properties: [:])
+      else {
+        completion(
+          .failure(
+            error
+              ?? NSError(
+                domain: "hukan", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "the tab has to be on screen"])))
+        return
+      }
+      completion(.success(png))
+    }
   }
 
   // MARK: The find bar
@@ -571,6 +739,7 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
   /// they mean. Its three actions ride on a private scheme intercepted in `decidePolicyFor`,
   /// which is also why that interception has to run before the hand-it-to-the-system rule.
   private func present(failure: String, detail: String, for url: URL?, offeringSearch: Bool) {
+    lastFailure = detail.isEmpty ? failure : "\(failure): \(detail)"
     failedURL = url
     failureTitle = failure
     let query = lastInput ?? url?.host ?? ""

@@ -1707,6 +1707,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     session.onExitWorktree = { [weak self] url in self?.returnSession(session, to: url) }
     session.onRecencyChange = { [weak self] in self?.scheduleRailReload() }
     session.onLoginRequested = { [weak self] verb in self?.runLogin(verb, for: session) }
+    // The tools hukan hosts for the engine act on the desk, which holds every worktree's tabs;
+    // the session says which worktree.
+    session.onBrowserTool = { [weak self, weak session] call, done in
+      guard let self, let session else {
+        done(.error("the session is gone"))
+        return
+      }
+      self.files.desk.performBrowserTool(call, for: session, completion: done)
+    }
     session.onNeedsStart = { [weak self] in self?.startSession(session) }
     session.onInstructed = { [weak self] in self?.unarchiveOnInstruction(session) }
   }

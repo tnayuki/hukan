@@ -356,6 +356,19 @@ final class BrowserCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {
     guard let controller = frontController() else { return fail("no window") }
     let desk = controller.deskForScripting
+    // `sharing` stands in for the click on the tab's glyph or the answer on its card, so it is
+    // guarded like them.
+    if let level = argument("sharing", as: String.self) {
+      guard guardedScriptingEnabled() else { return fail("sharing a tab is not scriptable") }
+      guard let pane = desk.selectedBrowserPane else { return fail("no web tab is showing") }
+      switch level {
+      case "read": pane.share(.read)
+      case "drive": pane.share(.drive)
+      case "none", "": pane.share(nil)
+      default: return fail("sharing takes read, drive or none")
+      }
+      return desk.browserTabsReport
+    }
     guard let text = (directParameter as? String), !text.isEmpty else {
       return desk.browserTabsReport
     }

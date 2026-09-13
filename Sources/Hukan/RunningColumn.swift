@@ -1074,7 +1074,10 @@ final class RunningColumnViewController: NSViewController {
           self?.reload()
         })
     }
-    if let question = session.pendingQuestion {
+    if let grant = session.pendingGrant {
+      cards.append(
+        GrantCard(grant: grant) { [weak session] level in session?.resolveGrant(level) })
+    } else if let question = session.pendingQuestion {
       cards.append(
         QuestionCard(
           question: question,

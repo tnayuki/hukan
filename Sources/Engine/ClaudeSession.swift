@@ -431,10 +431,24 @@ final class ClaudeSession {
       [
         "type": "control_request",
         "request_id": Self.initializeRequestID,
-        "request": ["subtype": "initialize", "hooks": [:]],
+        "request": Self.initializeRequest,
       ],
       waitForInitialize: false)
   }
+
+  /// The `initialize` request, the first thing written to a fresh engine. No hooks. What it does
+  /// register is the one MCP server hukan hosts in this process (`BrowserMCP`): named here, its
+  /// messages arrive on this stream as `mcp_message` control requests from then on, and its
+  /// config sets the per-call clock — a call may be waiting on a person answering a card. Both
+  /// keys read off the shipped binary; see `BrowserMCP`.
+  static let initializeRequest: [String: Any] = [
+    "subtype": "initialize",
+    "hooks": [String: Any](),
+    "sdkMcpServers": [BrowserMCP.serverName],
+    "sdkMcpServerConfigs": [
+      BrowserMCP.serverName: ["timeout": BrowserMCP.toolTimeoutMilliseconds]
+    ],
+  ]
 
   func send(_ text: String, attachments: [Attachment] = []) {
     var content: [[String: Any]] = []
@@ -617,6 +631,21 @@ final class ClaudeSession {
         "response": [
           "subtype": "success", "request_id": requestID,
           "response": ["behavior": "deny", "message": message],
+        ],
+      ],
+      waitForInitialize: false)
+  }
+
+  /// Answer an `mcp_message` control_request with the hosted server's JSON-RPC reply. Like an
+  /// approval, the engine holds the tool call open until this is sent — which is what lets a
+  /// call wait on a card.
+  func respondToMCP(requestID: String, response: [String: Any]) {
+    write(
+      [
+        "type": "control_response",
+        "response": [
+          "subtype": "success", "request_id": requestID,
+          "response": ["mcp_response": response],
         ],
       ],
       waitForInitialize: false)

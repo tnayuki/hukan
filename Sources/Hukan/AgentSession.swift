@@ -58,6 +58,23 @@ struct PendingApproval {
   let input: [String: Any]
 }
 
+/// A browser tool call stopped on the card that asks whether the agent may have the tab. Not a
+/// `can_use_tool`: the call is one of hukan's own (`BrowserMCP`), held open on the stream until
+/// `decide` runs, which is what lets the answer be made once for the tab rather than once per call.
+struct PendingGrant {
+  let tabID: UUID
+  let title: String
+  let url: String
+  /// What the call needs — reading, or driving — which is what the card's question names.
+  let level: BrowserGrant.Level
+  /// The tab does not exist yet: `browser_open` is asking to make one at `url` and have it. The
+  /// card asks about opening rather than reading, and the answer decides what the new tab is
+  /// shared for.
+  var opening = false
+  /// Answered exactly once: the level granted, or nil for declined.
+  let decide: (BrowserGrant.Level?) -> Void
+}
+
 /// A line typed ahead while the agent was mid-turn, held as the pair the send handed over —
 /// its text and whatever was attached to it, not one flattened string. Flattening was the bug:
 /// a pasted screenshot became a `/var/folders` path in the message body, so the agent got a
@@ -383,6 +400,16 @@ final class AgentSession {
   /// `pendingApproval` — a `can_use_tool` is one or the other. Must be answered (even a skip
   /// replies), or the agent waits forever, same as an approval.
   private(set) var pendingQuestion: PendingQuestion?
+
+  /// Set while a browser tool call waits on the card asking for its tab. Cleared by
+  /// `resolveGrant`, or declined by anything that ends the turn — the same duty the two above
+  /// have, since the engine holds the call open until it is answered.
+  private(set) var pendingGrant: PendingGrant?
+
+  /// The window's answer to a browser tool call: it holds the desk, and so the tabs of the
+  /// worktree this session is in. Every call arrives here, on this session's own stream, which
+  /// is what makes "whose tabs" a fact rather than an argument.
+  var onBrowserTool: BrowserMCP.Handler?
 
   /// The agent's own task list, as last read from Claude Code's own store. Nothing of hukan's
   /// keeps it — `refreshTasks` re-reads the directory, which is what makes it survive a restart
@@ -860,6 +887,7 @@ final class AgentSession {
       self.completePendingStop()
       self.pendingApproval = nil
       self.pendingQuestion = nil
+      self.declinePendingGrant()
       // The turn is over and nothing can deliver what was queued, so drop it rather than
       // firing it into a fresh process on the next start.
       self.isTurnActive = false
@@ -958,6 +986,7 @@ final class AgentSession {
     queueHeldByInterrupt = false
     pendingApproval = nil
     pendingQuestion = nil
+    declinePendingGrant()
     state = .signedOut
     append(Transcript.error("Not signed in — type /login and press Enter to authenticate."))
     onStateChange?()
@@ -1025,7 +1054,7 @@ final class AgentSession {
         answerQuestion(question.current.labels(ticked: question.ticked) + [command])
         return
       }
-      if pendingApproval != nil || pendingQuestion != nil {
+      if pendingApproval != nil || pendingQuestion != nil || pendingGrant != nil {
         queuedMessages.insert(QueuedMessage(text: text, attachments: attachments), at: 0)
         interrupt(resending: true)
         return
@@ -1419,6 +1448,69 @@ final class AgentSession {
     onStateChange?()
   }
 
+  /// One JSON-RPC message for the server hukan hosts, arrived on this session's stream. The
+  /// handshake and the tool list are the protocol's; a call goes to the window, which has the
+  /// tabs. The reply goes to the runner that asked, not whichever is up when the answer comes —
+  /// a call waiting on a card can outlive a restart.
+  private func handleMCPMessage(requestID: String, request: [String: Any]) {
+    guard let runner, request["server_name"] as? String == BrowserMCP.serverName,
+      let message = request["message"] as? [String: Any]
+    else {
+      self.runner?.declineControlRequest(id: requestID, cancelled: false)
+      return
+    }
+    BrowserMCP.handle(
+      message,
+      handler: { [weak self] call, done in
+        guard let self, let onBrowserTool = self.onBrowserTool else {
+          done(.error("hukan has no window to answer this in"))
+          return
+        }
+        onBrowserTool(call, done)
+      },
+      reply: { response in runner.respondToMCP(requestID: requestID, response: response) })
+  }
+
+  /// A browser tool call needs a tab it has not been given: put the card up and hold the call.
+  /// One at a time — the engine runs one tool at a time, so a second cannot arrive while the
+  /// first waits.
+  func requestGrant(
+    tabID: UUID, title: String, url: String, level: BrowserGrant.Level, opening: Bool = false,
+    decide: @escaping (BrowserGrant.Level?) -> Void
+  ) {
+    pendingGrant = PendingGrant(
+      tabID: tabID, title: title, url: url, level: level, opening: opening, decide: decide)
+    state = .needsAttention
+    touch()  // needing you is activity; float it up so it is easy to find
+    onStateChange?()
+  }
+
+  /// Answer the grant card: the level shared, or nil for declined. Either way it is on the
+  /// record — what the agent was given is the one fact about a tab worth reading back later.
+  func resolveGrant(_ level: BrowserGrant.Level?) {
+    guard let grant = pendingGrant else { return }
+    pendingGrant = nil
+    let name = "\u{201C}\(grant.opening ? grant.url : grant.title)\u{201D}"
+    let act = grant.opening ? "opened \(name) for the agent" : "shared \(name) with the agent"
+    switch level {
+    case .read?: append(Transcript.note("→ \(act) (read)"))
+    case .drive?: append(Transcript.note("→ \(act) (read and drive)"))
+    case nil: append(Transcript.note("→ declined to \(grant.opening ? "open" : "share") \(name)"))
+    }
+    state = .running
+    onStateChange?()
+    grant.decide(level)
+  }
+
+  /// The turn ended, or the engine went, with a grant card up: the call is over whatever the
+  /// card would have said, and the closure holding it must not wait for an answer that will
+  /// never come. Silent, unlike `resolveGrant` — nothing was decided.
+  private func declinePendingGrant() {
+    guard let grant = pendingGrant else { return }
+    pendingGrant = nil
+    grant.decide(nil)
+  }
+
   /// Answer the question on screen with the chosen option labels — more than one only when the
   /// question is `multiSelect`, none at all when it is skipped. Advances to the next question;
   /// once the last is answered, all the choices go back to the model at once.
@@ -1521,8 +1613,9 @@ final class AgentSession {
     queueHeldByInterrupt = !resending
     isTurnActive = false
     interruptedTurn = true
-    // Leaving either kind of request unanswered would strand the engine, so reply first.
+    // Leaving any kind of request unanswered would strand the engine, so reply first.
     if pendingApproval != nil { resolveApproval(allow: false) }
+    if pendingGrant != nil { resolveGrant(nil) }
     if let question = pendingQuestion {
       pendingQuestion = nil
       runner?.respondDeny(
@@ -1828,6 +1921,10 @@ final class AgentSession {
       guard let requestID = event.payload["request_id"] as? String,
         let request = event.payload["request"] as? [String: Any]
       else { return }
+      if request["subtype"] as? String == "mcp_message" {
+        handleMCPMessage(requestID: requestID, request: request)
+        return
+      }
       guard request["subtype"] as? String == "can_use_tool" else {
         // `request_user_dialog` and friends have no surface here yet. Cancelling is
         // the reply that lets the agent carry on instead of hanging.
@@ -1836,6 +1933,13 @@ final class AgentSession {
       }
       let toolName = request["tool_name"] as? String ?? "tool"
       let input = request["input"] as? [String: Any] ?? [:]
+      // hukan's own tools answer their own permission: the consent that matters is the tab's
+      // grant, asked for by the tool itself when it runs, and a generic Allow in front of that
+      // would be the same question twice — the first of them saying nothing about which tab.
+      if toolName.hasPrefix("mcp__\(BrowserMCP.serverName)__") {
+        runner?.respond(requestID: requestID, allow: true, updatedInput: input)
+        return
+      }
       // AskUserQuestion arrives here too (stdio has no dialog channel), but it is a set of
       // choices, not an allow/deny. Surface it as a question card; everything else is an
       // approval.
@@ -1866,6 +1970,7 @@ final class AgentSession {
     case "result":
       pendingApproval = nil
       pendingQuestion = nil
+      declinePendingGrant()
       state = .idle
       // A turn cut short can end without the `assistant` close that normally retires the run;
       // left set, the next turn's first delta would replace from the dead run's start, taking

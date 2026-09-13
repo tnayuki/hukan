@@ -330,6 +330,9 @@
         <command name="browser" code="HuknBrws" hidden="yes" description="Open an address on the selected worktree's desk (guarded), or report its web tabs, for automated checks">
             <cocoa class="BrowserCommand"/>
             <direct-parameter type="text" optional="yes" description="what to type into the address bar (requires HUKAN_SCRIPTING_GUARDED=1 — a session's agent can reach osascript, and a logged-in tab is not its to steer); omit to report the open web tabs"/>
+            <parameter name="sharing" code="Shar" type="text" optional="yes" description="share the showing web tab with the agent — read, drive or none — as the tab's glyph and its card do (guarded); reports the tabs afterwards">
+                <cocoa key="sharing"/>
+            </parameter>
             <result type="text"/>
         </command>
 

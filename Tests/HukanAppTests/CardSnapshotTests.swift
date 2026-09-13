@@ -44,6 +44,19 @@ final class CardSnapshotTests: XCTestCase {
     try compare(pngOfView(card, width: 380), named: "exit-plan-card")
   }
 
+  /// The grant card: the question names the page and what was asked of it, the address sits under
+  /// it as the site the answer is about, and the three answers are read left to right from the one
+  /// that gives nothing to the one that gives everything. Drawn at a width where the title has to
+  /// truncate against the buttons.
+  func testGrantCard() throws {
+    let grant = PendingGrant(
+      tabID: UUID(), title: "Read change bars off the buffer, not the file · Pull Request #1234",
+      url: "https://github.com/tnayuki/hukan/pull/1234/files",
+      level: .drive, decide: { _ in })
+    let card = GrantCard(grant: grant, onDecision: { _ in })
+    try compare(pngOfView(card, width: 420), named: "grant-card")
+  }
+
   /// The task card, opened: the count and what is in flight on the folded row, and under it
   /// what is left of the list — a glyph a state, the subjects aligned under each other however
   /// wide that glyph is, and the one waiting on unfinished work drawn as held up rather than

@@ -389,6 +389,10 @@ final class SDSession: NSObject {
   @objc var title: String { agentSession?.title ?? "" }
   @objc var transcript: String { agentSession?.transcript.string ?? "" }
   @objc var pendingApproval: String {
+    // A grant card is a decision the session waits on the same way, so it reads back here too.
+    if let grant = agentSession?.pendingGrant {
+      return "browser (\(grant.level.label)): \(grant.title)"
+    }
     guard let approval = agentSession?.pendingApproval else { return "" }
     return approval.detail.isEmpty ? approval.toolName : "\(approval.toolName): \(approval.detail)"
   }
@@ -555,6 +559,12 @@ final class SDSession: NSObject {
   private func resolveApproval(_ command: NSScriptCommand, allow: Bool) -> Any? {
     guard guardedScriptingEnabled() else { return command.fail("approvals are not scriptable") }
     guard let session = agentSession else { return command.fail("no such session") }
+    // A grant card answers with what the call asked for, the way Allow answers an approval.
+    if let grant = session.pendingGrant {
+      session.resolveGrant(allow ? grant.level : nil)
+      controller?.reload()
+      return allow ? "shared (\(grant.level.label))" : "declined"
+    }
     guard session.pendingApproval != nil else { return command.fail("nothing to approve") }
     session.resolveApproval(allow: allow)
     controller?.reload()
