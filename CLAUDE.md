@@ -1370,6 +1370,16 @@ Workspace (one window)
   command it ran. The heaviest of those never leave the stream either. Anything not recognised
   as churn counts, since what is being decided is whether to read, and a read nobody needed is
   cheaper than a reading left stale.
+  **What the repository moving also moves is the branch's name, and that used to wait for the
+  window to be focused.** Which is the one moment it cannot be needed: the window is the one
+  being worked in, so it never lost the focus to come back to, and the read the repository's
+  own stream already wakes had by then swapped the history and the ± over to the new branch
+  while the rail and the top bar went on naming the old one. So the branch is read on the
+  wholesale question and on no other — a batch that named files in the checkout is by
+  construction one that did not move HEAD — which costs one more repository open on a read that
+  already makes several, and is reported apart from the files, a branch move being what they
+  are measured against rather than one of them. The focus-in read stays, as the backstop for
+  what a stream did not carry rather than as the way this is normally noticed.
 
 - **hukan observes worktrees, it does not act on them.** Work reaches main through a PR the
   agent opens itself; cleaning up a merged worktree is a plain `git worktree remove` any

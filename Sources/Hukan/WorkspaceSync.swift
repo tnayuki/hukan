@@ -646,14 +646,30 @@ extension Workspace {
       // drawing the list from before it.
       let history = Git.history(at: url, limit: limit, tags: knownTags)
       let base = Git.measurementBase(at: url)
+      // Which branch this is, read on a wholesale question and on no other: a batch that named
+      // files in the checkout is by construction one that did not move HEAD. Nested, so "not
+      // asked" stays a different answer from "asked, and git gave no name" — a checkout detached
+      // outside a rebase has none.
+      let branch: String?? = asked == nil ? .some(Git.currentBranch(at: url)) : nil
       DispatchQueue.main.async {
         guard let self else { return }
         self.refreshInFlight.remove(worktreeID)
+        var branchMoved = false
         // The same rule `loadFiles` keeps: a read that started earlier read the disk earlier,
         // so it has nothing to say once a later one has landed — and a narrowed read folds into
         // the changed set, which makes writing an older answer into it worse than useless.
         if let worktree = self.worktree(id: worktreeID), stamp > worktree.readStamp {
           worktree.readStamp = stamp
+          // The name the rail and the window title carry. It moves here rather than only on the
+          // way back to the window, which is where a `git checkout` run elsewhere used to be
+          // noticed: this same read had already swapped the history and the ± over to the new
+          // branch, so what stood on screen in between was the new branch's work under the old
+          // branch's name. Reported on its own, once the worktree is settled — a branch move is
+          // what the files are measured against, not a file that moved.
+          if let branch, branch != worktree.branch {
+            worktree.branch = branch
+            branchMoved = true
+          }
           // A narrowed read answers for the paths it was given and for nothing else, so it is
           // folded into what the worktree already holds rather than replacing it — the
           // collapsed wholesale included, whose scope is its candidates.
@@ -697,6 +713,7 @@ extension Workspace {
         }
         // Whatever the result, git has just been asked — a branch move's re-read is satisfied.
         self.worktree(id: worktreeID)?.needsFileReload = false
+        if branchMoved { self.onSessionsChanged?() }
         // A change landed while the query ran, so its result may already be stale — catch up
         // with one more pass (which re-enters here with nothing in flight).
         if self.refreshPending.remove(worktreeID) != nil {

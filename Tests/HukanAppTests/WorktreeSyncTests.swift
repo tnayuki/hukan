@@ -45,8 +45,8 @@ final class WorktreeSyncTests: XCTestCase {
     return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
-  /// A repository with one commit and one linked worktree — the shape every test here starts from.
-  private func makeRepositoryWithWorktree() throws -> (main: URL, linked: URL) {
+  /// A repository with one commit and no linked worktrees yet.
+  private func makeRepository() throws -> URL {
     let main = root.appendingPathComponent("main")
     try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
     git(["init", "-q", "-b", "main"], in: main)
@@ -56,6 +56,12 @@ final class WorktreeSyncTests: XCTestCase {
     try "hello\n".write(to: main.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
     git(["add", "."], in: main)
     git(["commit", "-q", "-m", "Initial"], in: main)
+    return main
+  }
+
+  /// A repository with one commit and one linked worktree — the shape every test here starts from.
+  private func makeRepositoryWithWorktree() throws -> (main: URL, linked: URL) {
+    let main = try makeRepository()
     let linked = root.appendingPathComponent("task")
     git(["worktree", "add", "-q", "-b", "task", linked.path], in: main)
     return (main, linked)
@@ -499,6 +505,31 @@ final class WorktreeSyncTests: XCTestCase {
     let linkedID = try XCTUnwrap(workspace.worktree(atPath: linked.path)).id
     XCTAssertEqual(workspace.watchers[mainID]?.count, 2)
     XCTAssertEqual(workspace.watchers[linkedID]?.count, 2)
+  }
+
+  /// A `git checkout` run elsewhere reaches the name the rail and the window title carry, on the
+  /// read it already wakes. The repository moving is what the branch can move on — a batch that
+  /// named files in the checkout is by construction one that did not — and that read was already
+  /// swapping the history and the ± over to the new branch, so the name being left to the next
+  /// focus-in meant the new branch's work stood on screen under the old branch's name.
+  func testACheckoutElsewhereRenamesTheWorktreeWhileTheWindowHasTheFocus() throws {
+    let main = try makeRepository()
+    let workspace = Workspace()
+    workspace.openRepository(main)
+    let worktree = try XCTUnwrap(workspace.worktree(atPath: main.path))
+    settle(workspace, worktreeID: worktree.id)
+    XCTAssertEqual(worktree.branch, "main")
+
+    let renamed = expectation(description: "the worktree is named for the branch it is on")
+    renamed.assertForOverFulfill = false
+    workspace.onSessionsChanged = {
+      guard worktree.branch == "other" else { return }
+      renamed.fulfill()
+    }
+    git(["checkout", "-q", "-b", "other"], in: main)
+
+    wait(for: [renamed], timeout: 20)
+    XCTAssertEqual(worktree.displayName, "other", "and the window titles itself with it")
   }
 
   /// The guard that keeps a bad read from emptying a window: git answering nothing is a failure
