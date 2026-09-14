@@ -60,6 +60,24 @@ public struct TranscriptScrollAnchor: Equatable {
     scroll(to: location, in: scrollView, of: textView)
   }
 
+  /// Put the reader back on their own text where the layout places it *now*, laying out nothing.
+  ///
+  /// The other half of `restore`, for the one case that must not lay the document out. On a long
+  /// transcript `NSTextView` drops the layout of everything outside the viewport and sizes itself
+  /// to TextKit 2's estimate of the rest — 183364pt against the 180015 the same 4000 lines
+  /// measure laid out, with 3900 of them back to no layout at all — and leaves the clip's origin
+  /// where it was. The origin then names a different place: the next scroll drew a line 74
+  /// lines earlier than the one being read. Laying the whole document out again would put the
+  /// exact height back and hand the view the same re-estimate on the next scroll, so this asks
+  /// where the anchor's fragment stands in the layout as it is — an estimated frame, which is
+  /// exactly the coordinate system the clip is being scrolled in — and goes there.
+  public func restoreWithinCurrentLayout(in scrollView: NSScrollView, of textView: NSTextView) {
+    guard let layout = textView.textLayoutManager, let content = layout.textContentManager,
+      let location = content.location(content.documentRange.location, offsetBy: offset)
+    else { return }
+    scroll(to: location, in: scrollView, of: textView)
+  }
+
   /// Lay the whole document out at the view's current width, and make the view as tall as it.
   ///
   /// Laying out is not enough on its own: TextKit 2 knows the new height the moment the pass

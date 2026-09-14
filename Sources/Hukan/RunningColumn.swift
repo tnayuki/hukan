@@ -45,8 +45,10 @@ final class RunningColumnViewController: NSViewController {
   /// the thinking pill when that is showing — both are bottom-centre, so they would collide.
   private var jumpAtBottom: NSLayoutConstraint!
   private var jumpAbovePill: NSLayoutConstraint!
-  /// How near the bottom still counts as "pinned", in points. A turn's own layout jitter and the
-  /// reserved thinking strip mean the clip rarely sits exactly at the end.
+  /// How near the bottom a reader who is pinned may drift and still count as pinned, in points.
+  /// A turn's own layout jitter and the reserved thinking strip mean the clip rarely sits
+  /// exactly at the end. It is for *staying* pinned, never for becoming so — that takes reaching
+  /// the end (see `transcriptScrolled`).
   private static let pinTolerance: CGFloat = 24
 
   /// Per-session controls, sitting in the header next to the cost. Model, mode and effort are
@@ -706,12 +708,14 @@ final class RunningColumnViewController: NSViewController {
   /// view is flipped, so the latest content sits at the largest y; "at the bottom" is the clip's
   /// origin having reached the furthest it can scroll. Content shorter than the view is always
   /// pinned.
-  private var isTranscriptPinnedToBottom: Bool {
+  private var isTranscriptPinnedToBottom: Bool { isTranscriptPinned(within: Self.pinTolerance) }
+
+  private func isTranscriptPinned(within tolerance: CGFloat) -> Bool {
     guard let document = scrollView.documentView else { return true }
     let clip = scrollView.contentView
     let maxOriginY = document.bounds.height + scrollView.contentInsets.bottom - clip.bounds.height
     if maxOriginY <= 0 { return true }
-    return clip.bounds.origin.y >= maxOriginY - Self.pinTolerance
+    return clip.bounds.origin.y >= maxOriginY - tolerance
   }
 
   /// Scroll so the latest content is visible. `ensuringLayout` forces the whole document to lay
@@ -743,10 +747,23 @@ final class RunningColumnViewController: NSViewController {
   /// The document changed height under the reader without anyone scrolling. One at the end is no
   /// longer at it — a long reply landed, or the view wrote its own estimate over the exact height
   /// the tail had just been laid out to and the exact one came back with the display — so they
-  /// go back to the end. A reader up in the text keeps their origin, and with it their line.
+  /// go back to the end. One up in the text keeps their *line*, which is not the same as keeping
+  /// their origin: on a long transcript the view drops the layout outside the viewport and sizes
+  /// itself to an estimate of the rest, leaving the origin where it was — and the origin then
+  /// names text four screens from the line being read (see
+  /// `TranscriptScrollAnchor.restoreWithinCurrentLayout`). So the anchor is put back, in the
+  /// layout as the view now has it: a whole-document pass here would restore the exact height
+  /// and be handed the same estimate again on the next scroll.
   private func documentHeightChanged() {
-    guard isReaderScroll, anchorWasPinned else { return }
-    scrollTranscriptToBottom()
+    guard isReaderScroll else { return }
+    if anchorWasPinned {
+      scrollTranscriptToBottom()
+    } else if let anchor = scrollAnchor {
+      isRestoringAnchor = true
+      anchor.restoreWithinCurrentLayout(in: scrollView, of: textView)
+      isRestoringAnchor = false
+      recordReader(pinned: false)
+    }
   }
 
   @objc private func jumpToBottomTapped() {
@@ -826,16 +843,22 @@ final class RunningColumnViewController: NSViewController {
       }
       return
     }
-    // Away from the tail under the reader's own hand is leaving it, however short the move.
-    // `pinTolerance` answers the other question — did this land back at the bottom — and has to
-    // stay generous there, because `scrollToEndOfDocument` stops a few points short of the clip's
-    // own limit. Only a live scroll may be read as a direction: outside one, the origin coming up
-    // is the document having shrunk under a clip that was already at the bottom (a fold closing,
-    // a streamed run re-rendering shorter), which is the layout's doing and not a decision to
-    // stop following.
+    // Away from the tail under the reader's own hand is leaving it, however short the move; and
+    // rejoining it is reaching the clip's limit, not nearing it. `pinTolerance` is read only to
+    // let a reader who is pinned stay pinned through the layout's own jitter — it used to answer
+    // for becoming pinned as well, and a nudge back toward the end that stopped inside it was
+    // taken for a return, after which the next change to the document's height sent the reader
+    // on to an end they had not asked for. On a long transcript that is the very next moment,
+    // since the view re-estimates its height on the first downward scroll (see
+    // `documentHeightChanged`), and the bounds change that resize brings arrives here too, with
+    // nobody's hand on the view. Only a live scroll may be read as a direction: outside one, the
+    // origin coming up is the document having shrunk under a clip that was already at the bottom
+    // (a fold closing, a streamed run re-rendering shorter), which is the layout's doing and not
+    // a decision to stop following — and that is the drift the tolerance is for.
     let origin = scrollView.documentVisibleRect.minY
     let leftTheTail = isLiveScrolling && origin < lastReaderOrigin - 0.5
-    let pinned = leftTheTail ? false : isTranscriptPinnedToBottom
+    let pinned =
+      !leftTheTail && isTranscriptPinned(within: anchorWasPinned ? Self.pinTolerance : 0.5)
     if pinned { jumpButton.isHidden = true }
     recordReader(pinned: pinned)
     // Nearing the top of a tail-loaded transcript is the ask for what comes before it: within
