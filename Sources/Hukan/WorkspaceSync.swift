@@ -21,15 +21,27 @@ extension Workspace {
     var visited = Set<String>()
 
     for worktree in worktrees {
-      for worktree in Git.worktrees(at: worktree.url) {
+      // git's enumeration, or the open root itself where git has none to give. A directory git
+      // knows nothing about opens as its own repository — the degenerate case the model already
+      // has — and its transcripts sit under `~/.claude/projects` like any checkout's, so the
+      // only thing it lacks is a list to look them up by. Without the fallback the inner loop
+      // never ran there at all and the promise above held for checkouts alone: a rebuild kept
+      // only what was still attached, so every session below it left the rail the moment its
+      // process did. An empty list from a *real* repository is a failure to read it rather than
+      // an answer (`reconcileWorktrees` draws the same line), and the fallback is the right
+      // answer to that too — the root is open either way, so a checkout that is briefly
+      // unreadable keeps its sessions instead of losing them.
+      let listed = Git.worktrees(at: worktree.url)
+      for worktree in listed.isEmpty ? [worktree.url.standardizedFileURL] : listed {
         let path = worktree.standardizedFileURL.path
         guard visited.insert(path).inserted else { continue }
 
         let found = ClaudeSessionStore.sessions(in: worktree)
 
-        // git lists it, so it exists — register it even with no sessions. Hiding a
-        // session-less worktree would leave a state git disagrees with, and one created
-        // behind the app's back (`git worktree add` in a terminal) would never surface.
+        // It exists — git listed it, or it is a root this window has open — so register it even
+        // with no sessions. Hiding a session-less worktree would leave a state git disagrees
+        // with, and one created behind the app's back (`git worktree add` in a terminal) would
+        // never surface.
         // It contributes no rail row of its own — only its repository heading, so the
         // heading's `+` is there to start a first session — and leaves only by landing.
         // A worktree holding sessions likewise becomes a worktree of its own, which is how
