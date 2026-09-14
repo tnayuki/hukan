@@ -85,7 +85,7 @@ jobs:
 
       - name: Build .app
         # hukan.xcodeproj is the only build system; signing is ad-hoc (`-`). Gatekeeper
-        # quarantine is stripped by the cask's postflight on the user's machine.
+        # quarantine is stripped by the cask's postflight steps on the user's machine.
         # -skipPackagePluginValidation pre-trusts SwiftTerm's build-tool plugin (see the Build
         # note): plugin trust is per-user and uncommittable, so a headless runner must skip it or
         # the build fails at plug-in validation.
