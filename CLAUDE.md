@@ -1733,7 +1733,8 @@ early. Each was measured against a runner, and each moved a reference on its own
 the *screen's* backing grid and not to the window's, which no amount of pinning reaches: an
 `NSButton` holding a symbol measures 13.5pt on a 2× display and 14pt on a 1× one, so the browser's
 bar and everything after it sits a device pixel over, and the same rounding catches the commit
-tab, the History section's tag rule and the approval card's icon row. The reader tests were skipped too, for a second thing the screen decides — they
+tab, the History section's tag rule and the approval card's icon row — and the grant card's,
+which is built the same way. The reader tests were skipped too, for a second thing the screen decides — they
 open a window wider than it, and AppKit constrains a frame to fit — but that one a resolution
 *can* answer, so the workflow asks the display for the widest mode it advertises. They all run
 now: the two that used to fail in a parallel whole-suite run and pass alone were waiting a fixed

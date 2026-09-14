@@ -72,6 +72,7 @@ jobs:
             -skip-testing:HukanAppTests/HistorySnapshotTests \
             -skip-testing:HukanAppTests/BrowserSnapshotTests \
             -skip-testing:HukanAppTests/CardSnapshotTests/testExitPlanApprovalCard \
+            -skip-testing:HukanAppTests/CardSnapshotTests/testGrantCard \
             > xcodebuild-test.log 2>&1
           status=$?
           R=$(ls -td .build/DerivedData/Logs/Test/*.xcresult 2>/dev/null | head -1)
