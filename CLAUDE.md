@@ -317,8 +317,14 @@ Workspace (one window)
   list — and a tab that did not come back is a row past the end of its list, which the strip
   closes up over. **The showing tab is a place in that order**, applied once the strip is in it:
   the terminals arrive on a reload of their own, before the rest of the strip is on it, so an index
-  spent at the first reload available is spent against half a strip. Only the one worktree's — the
-  desk does not remember a tab per worktree, so there is nothing else to save. A restored tab is
+  spent at the first reload available is spent against half a strip. **A showing tab is a fact about
+  a strip, not about the desk**, so there is one per worktree and every one of them is saved. The
+  desk holds every worktree's tabs at once and shows one worktree's, and a single showing tab was
+  the desk standing in for each strip: switching the rail away left the reconcile nothing to land
+  on and it fell to the end of the new strip, which is then what the old worktree came back to as
+  well. Saving only the showing worktree's would be that same bug one relaunch later — the desk you
+  were looking at right, every other one on its last tab — where coming back to a worktree is the
+  same act whether the window was restarted in between or not. A restored tab is
   lasting, never a preview: a preview is what the last click made of a tab, and a relaunch is not
   a click.
 - **A window that closes, and a quit, ask about every unsaved edit first.** The same Save / Don't

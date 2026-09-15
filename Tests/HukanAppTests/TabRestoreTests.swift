@@ -35,7 +35,8 @@ final class TabRestoreTests: XCTestCase {
     let archiver = NSKeyedArchiver(requiringSecureCoding: true)
     workspace.encodeState(
       to: archiver, fileTabs: desk.restorableFileTabs, commitTabs: desk.restorableCommitTabs,
-      tabOrder: desk.restorableTabOrder, selectedTabIndex: desk.restorableSelectedTabIndex)
+      tabOrder: desk.restorableTabOrder,
+      selectedTabIndexes: desk.restorableSelectedTabIndexes)
     archiver.finishEncoding()
 
     let restored = Workspace()
@@ -48,9 +49,7 @@ final class TabRestoreTests: XCTestCase {
     deck.restoreFileTabs(restored.takeRestoredFileTabs())
     deck.restoreCommitTabs(restored.takeRestoredCommitTabs())
     deck.restoreTabOrder(restored.takeRestoredTabOrder())
-    if let selection = restored.takeRestoredTabSelection() {
-      deck.restoreSelectedTab(worktreeID: selection.worktreeID, index: selection.index)
-    }
+    deck.restoreSelectedTabs(restored.takeRestoredTabSelection())
     return (restored, deck)
   }
 
@@ -117,6 +116,40 @@ final class TabRestoreTests: XCTestCase {
 
     XCTAssertEqual(deck.activeFileContent?.currentPath, "a.swift")
     XCTAssertEqual(deck.unreadRestoredTabCount, 2, "the other two are still unread")
+  }
+
+  /// Every strip's showing tab comes back, not only the one the window opens on — coming back to
+  /// a worktree is the same act whether the window was relaunched in between or not, so a saved
+  /// desk that put one worktree right and landed the rest on the end of their strips would be the
+  /// bug it fixes, one relaunch later.
+  func testEveryWorktreeComesBackOnTheTabItWasLeftOn() throws {
+    let workspace = Workspace()
+    let first = workspace.addWorktree(worktreeRoot(["a.swift", "b.swift", "c.swift"]))
+    let second = workspace.addWorktree(worktreeRoot(["x.swift", "y.swift"]))
+    workspace.selectedWorktreeID = first.id
+    let desk = desk(workspace)
+
+    desk.reload(worktreeID: second.id)
+    for name in ["x.swift", "y.swift"] {
+      desk.openFile(worktree: second, path: name, preview: false)
+    }
+    desk.selectTab(at: 0)
+    desk.reload(worktreeID: first.id)
+    for name in ["a.swift", "b.swift", "c.swift"] {
+      desk.openFile(worktree: first, path: name, preview: false)
+    }
+    desk.selectTab(at: 1)
+
+    let (restored, deck) = try relaunch(workspace, desk)
+    let backFirst = try XCTUnwrap(restored.worktrees.first { $0.url.path == first.url.path })
+    let backSecond = try XCTUnwrap(restored.worktrees.first { $0.url.path == second.url.path })
+
+    deck.reload(worktreeID: backFirst.id)
+    XCTAssertEqual(deck.activeFileContent?.currentPath, "b.swift", "the worktree it opens on")
+    deck.reload(worktreeID: backSecond.id)
+    XCTAssertEqual(
+      deck.activeFileContent?.currentPath, "x.swift",
+      "and the one it does not, which would otherwise land on the end of its strip")
   }
 
   /// A file that is gone by the next launch takes its tab with it rather than restoring a tab with

@@ -112,7 +112,8 @@ tab's own search field marks every occurrence in every open card at once, and Re
 through them.
 
 **The desk.** The selected worktree's tabs, with the files panel as the trailing column, hidden
-by the toggle at the toolbar's far end. The tree is the worktree as it is on disk — every file and
+by the toggle at the toolbar's far end. Each worktree's strip keeps its own showing tab, so
+switching away on the rail and back — or relaunching — lands on what was being read there. The tree is the worktree as it is on disk — every file and
 directory, including the ones git ignores, which are drawn dimmed — walked once in the background
 when the worktree is first selected and kept in step with what moves, so a file a build or an
 agent just wrote is there as it lands. git's diffstats are laid over it. One field over the tree runs two jobs, told apart by

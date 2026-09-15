@@ -329,7 +329,19 @@ final class WorktreeDeskViewController: NSViewController {
     case terminal(UUID)
     case commit(UUID)
   }
-  private var surface: Surface = .none
+  /// Which tab is showing, per worktree — so the rail's selection moving away and coming back
+  /// lands on the tab that was being read. The desk holds every worktree's tabs at once and only
+  /// shows one worktree's, so a single showing tab was a fact about the desk standing in for a
+  /// fact about each strip: switching away left `reconcileSurface` nothing to land on, and it fell
+  /// to the end of the new strip — which then became what the old worktree came back to as well.
+  /// Keyed rather than saved and restored at the switch, because a worktree's tab is also chosen
+  /// while the desk is on another one (a file handed in from outside, a restored selection read
+  /// before the reload), and those writes have to reach the strip they belong to.
+  private var surfaceByWorktree: [UUID: Surface] = [:]
+  private var surface: Surface {
+    get { worktreeID.flatMap { surfaceByWorktree[$0] } ?? .none }
+    set { if let worktreeID { surfaceByWorktree[worktreeID] = newValue } }
+  }
   /// The strip's label per surface, so a title that changes on its own — a page loading — can be
   /// relabelled without rebuilding the strip.
   private var tabButtons: [Surface: NSButton] = [:]
@@ -489,12 +501,24 @@ final class WorktreeDeskViewController: NSViewController {
     }
   }
 
-  /// Where the strip was standing: the showing tab's place in the showing worktree's strip, or a
-  /// negative when the desk is empty. Only the one worktree's — the desk does not remember a tab
-  /// per worktree, so there is nothing else to save.
-  var restorableSelectedTabIndex: Int {
-    guard surface != .none else { return -1 }
-    return orderedSurfaces.firstIndex(of: surface) ?? -1
+  /// Where each strip was standing: the showing tab's place in its worktree's strip, one entry per
+  /// worktree that had one. Every worktree's and not only the one on screen, because coming back
+  /// to a worktree is the same act whether the window was relaunched in between or not — saving
+  /// the showing worktree's alone would put the desk you were looking at right and land every
+  /// other one on the end of its strip, which is the bug this remembers its way out of one
+  /// selection at a time. A tab named here by position, the way the order's rows are, so nothing
+  /// identifies a tab twice.
+  var restorableSelectedTabIndexes: [UUID: Int] {
+    guard let workspace else { return [:] }
+    var indexes: [UUID: Int] = [:]
+    for worktree in workspace.worktrees {
+      guard let showing = surfaceByWorktree[worktree.id], showing != .none else { continue }
+      let order = orderedSurfaces(
+        in: worktree.id, terminals: workspace.terminals(inWorktree: worktree.id))
+      guard let index = order.firstIndex(of: showing) else { continue }
+      indexes[worktree.id] = index
+    }
+    return indexes
   }
 
   /// Every file tab, across every worktree, in strip order — the order `restoreFileTabs` puts
@@ -561,19 +585,23 @@ final class WorktreeDeskViewController: NSViewController {
     }
   }
 
-  /// Land on the tab the window was left on. Called once every kind is back and in order, and
-  /// before the desk is reloaded onto its worktree: it names the tab by its place in that
-  /// worktree's strip, and the reload's own reconcile then finds the surface already on the strip
-  /// and leaves it alone. Doing it the other way round — letting the reload pick — is what put a
-  /// restored window on the end of its strip, and taking the index inside the reload was worse
-  /// still: the terminals arrive on a reload of their own, so the index was spent against a strip
-  /// that was still half of one.
-  func restoreSelectedTab(worktreeID: UUID, index: Int) {
-    guard let workspace, workspace.worktree(id: worktreeID) != nil else { return }
-    let order = orderedSurfaces(
-      in: worktreeID, terminals: workspace.terminals(inWorktree: worktreeID))
-    guard order.indices.contains(index) else { return }
-    surface = order[index]
+  /// Land each strip on the tab it was left on. Called once every kind is back and in order, and
+  /// before the desk is reloaded onto its worktree: a tab is named by its place in its worktree's
+  /// strip, and the reload's own reconcile then finds the surface already on the strip and leaves
+  /// it alone. Doing it the other way round — letting the reload pick — is what put a restored
+  /// window on the end of its strip, and taking the index inside the reload was worse still: the
+  /// terminals arrive on a reload of their own, so the index was spent against a strip that was
+  /// still half of one. An index past the end is a tab that did not come back, and the worktree
+  /// is left to the reconcile, which is where every other strip that saved nothing lands too.
+  func restoreSelectedTabs(_ indexes: [UUID: Int]) {
+    guard let workspace else { return }
+    for (worktreeID, index) in indexes {
+      guard workspace.worktree(id: worktreeID) != nil else { continue }
+      let order = orderedSurfaces(
+        in: worktreeID, terminals: workspace.terminals(inWorktree: worktreeID))
+      guard order.indices.contains(index) else { continue }
+      surfaceByWorktree[worktreeID] = order[index]
+    }
   }
 
   /// How many restored tabs are still unread. The laziness a restored desk rests on is the one
@@ -1465,6 +1493,7 @@ final class WorktreeDeskViewController: NSViewController {
       commitTabsByWorktree[key] = nil
     }
     for key in tabOrderByWorktree.keys where !live.contains(key) { tabOrderByWorktree[key] = nil }
+    for key in surfaceByWorktree.keys where !live.contains(key) { surfaceByWorktree[key] = nil }
   }
 
   // MARK: Tab strip

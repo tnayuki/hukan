@@ -183,10 +183,12 @@ final class RestorableStateTests: XCTestCase {
 
   /// The strip order spans all four kinds now, and the tab that was showing is a place in it —
   /// carried with the worktree it is a place in, since that is the one strip it means anything
-  /// against.
-  func testTheSelectedTabRoundTripsAsAPlaceInTheSelectedWorktreesStrip() throws {
+  /// against. One per worktree, not one per window: the desk shows a tab per strip, and a
+  /// worktree the window does not open on is exactly the one nothing else would put right.
+  func testEveryWorktreesSelectedTabRoundTripsAsAPlaceInItsStrip() throws {
     let workspace = Workspace()
     let worktree = UUID()
+    let other = UUID()
     workspace.selectedWorktreeID = worktree
     let order: [Workspace.RestoredTabOrder] = [
       .init(worktreeID: worktree, kind: .file), .init(worktreeID: worktree, kind: .commit),
@@ -194,16 +196,15 @@ final class RestorableStateTests: XCTestCase {
     ]
 
     let archiver = NSKeyedArchiver(requiringSecureCoding: true)
-    workspace.encodeState(to: archiver, tabOrder: order, selectedTabIndex: 1)
+    workspace.encodeState(
+      to: archiver, tabOrder: order, selectedTabIndexes: [worktree: 1, other: 0])
     archiver.finishEncoding()
     let restored = Workspace()
     restored.decodeState(from: try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData))
 
     XCTAssertEqual(restored.takeRestoredTabOrder(), order)
-    let selection = try XCTUnwrap(restored.takeRestoredTabSelection())
-    XCTAssertEqual(selection.worktreeID, worktree)
-    XCTAssertEqual(selection.index, 1)
-    XCTAssertNil(restored.takeRestoredTabSelection(), "taken once")
+    XCTAssertEqual(restored.takeRestoredTabSelection(), [worktree: 1, other: 0])
+    XCTAssertTrue(restored.takeRestoredTabSelection().isEmpty, "taken once")
   }
 
   /// An empty desk saves no selection, and a restored one must not be handed a place in a strip
@@ -212,12 +213,12 @@ final class RestorableStateTests: XCTestCase {
     let workspace = Workspace()
     workspace.selectedWorktreeID = UUID()
     let archiver = NSKeyedArchiver(requiringSecureCoding: true)
-    workspace.encodeState(to: archiver, selectedTabIndex: -1)
+    workspace.encodeState(to: archiver)
     archiver.finishEncoding()
     let restored = Workspace()
     restored.decodeState(from: try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData))
 
-    XCTAssertNil(restored.pendingRestoredTabSelection)
+    XCTAssertTrue(restored.pendingRestoredTabSelection.isEmpty)
   }
 
   func testRosterShortFieldsFallBackToValue() throws {

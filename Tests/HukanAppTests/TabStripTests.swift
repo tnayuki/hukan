@@ -63,6 +63,66 @@ final class TabStripTests: XCTestCase {
     return scroll.documentView.flatMap(walk)
   }
 
+  /// Two worktrees, each with tabs, so the desk can be switched between them.
+  private func twoWorktreeDesk() -> (WorktreeDeskViewController, Worktree, Worktree) {
+    let workspace = Workspace()
+    let desk = WorktreeDeskViewController()
+    desk.workspace = workspace
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 900, height: 400),
+      styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = desk.view
+
+    var made: [Worktree] = []
+    for names in [["a.swift", "b.swift", "c.swift"], ["x.swift", "y.swift"]] {
+      let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      let worktree = workspace.addWorktree(root)
+      for name in names {
+        try? "let a = 1\n".write(
+          to: root.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        desk.openFile(worktree: worktree, path: name, preview: false)
+      }
+      made.append(worktree)
+    }
+    return (desk, made[0], made[1])
+  }
+
+  /// The showing tab belongs to the strip, not to the desk: coming back to a worktree lands on the
+  /// tab that was being read there. It used to land on the end of that strip, because a single
+  /// showing tab had nothing to say about a worktree that was not on screen and the reconcile fell
+  /// through to the last tab.
+  func testSwitchingWorktreesKeepsEachStripsShowingTab() {
+    let (desk, first, second) = twoWorktreeDesk()
+    desk.openFile(worktree: first, path: "a.swift", preview: false)
+    desk.openFile(worktree: second, path: "x.swift", preview: false)
+
+    desk.reload(worktreeID: first.id)
+    XCTAssertTrue(
+      desk.tabStripReport.contains("● file      a.swift"),
+      "the first worktree comes back on the tab it was left on:\n\(desk.tabStripReport)")
+
+    desk.reload(worktreeID: second.id)
+    XCTAssertTrue(
+      desk.tabStripReport.contains("● file      x.swift"),
+      "and so does the second:\n\(desk.tabStripReport)")
+  }
+
+  /// The memory is per worktree and nothing else: a tab closed while its worktree was off screen
+  /// still lands on a neighbour rather than on nothing.
+  func testAShowingTabClosedWhileAwayLandsOnWhatIsLeft() {
+    let (desk, first, second) = twoWorktreeDesk()
+    desk.openFile(worktree: first, path: "a.swift", preview: false)
+    desk.reload(worktreeID: second.id)
+    desk.fileDeleted(worktreeID: first.id, path: "a.swift")
+    desk.reload(worktreeID: first.id)
+    XCTAssertTrue(
+      desk.tabStripReport.contains("●"),
+      "something is showing on a strip that still has tabs:\n\(desk.tabStripReport)")
+    XCTAssertFalse(
+      desk.tabStripReport.contains("a.swift"), "the closed tab is gone")
+  }
+
   /// The strip used to answer a crowd of tabs by compressing all of them at once; now the tabs
   /// keep their width and the strip runs past the column, which is the thing that can be scrolled.
   func testManyTabsOverflowTheStripRatherThanSqueezingIt() {

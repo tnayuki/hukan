@@ -1329,7 +1329,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       terminals: files.desk.restorableTerminals(workspace.terminals),
       fileTabs: files.desk.restorableFileTabs, commitTabs: files.desk.restorableCommitTabs,
       tabOrder: files.desk.restorableTabOrder,
-      selectedTabIndex: files.desk.restorableSelectedTabIndex)
+      selectedTabIndexes: files.desk.restorableSelectedTabIndexes)
   }
 
   /// ⌘Z is aimed by the focus, the way ⌘F is — and this is the whole of what aims it. A menu
@@ -1367,11 +1367,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.desk.restoreCommitTabs(workspace.takeRestoredCommitTabs())
     // Only once every kind is back, since the order names them by position.
     files.desk.restoreTabOrder(workspace.takeRestoredTabOrder())
-    // And the tab that was showing only once the strip is in its order, since that is what its
+    // And the tab each strip was showing only once it is in its order, since that is what a
     // place is a place in.
-    if let selection = workspace.takeRestoredTabSelection() {
-      files.desk.restoreSelectedTab(worktreeID: selection.worktreeID, index: selection.index)
-    }
+    files.desk.restoreSelectedTabs(workspace.takeRestoredTabSelection())
     reload()
     // The column widths only exist now. Arranging from init instead would run before this
     // and lay out the defaults — and then record them, destroying what was saved.

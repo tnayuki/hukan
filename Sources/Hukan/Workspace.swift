@@ -346,11 +346,11 @@ final class Workspace {
     return pendingRestoredTabOrder
   }
 
-  /// Which tab was showing, as a place in the selected worktree's strip.
-  private(set) var pendingRestoredTabSelection: (worktreeID: UUID, index: Int)?
+  /// Which tab was showing on each worktree's strip, as a place in it.
+  private(set) var pendingRestoredTabSelection: [UUID: Int] = [:]
 
-  func takeRestoredTabSelection() -> (worktreeID: UUID, index: Int)? {
-    defer { pendingRestoredTabSelection = nil }
+  func takeRestoredTabSelection() -> [UUID: Int] {
+    defer { pendingRestoredTabSelection = [:] }
     return pendingRestoredTabSelection
   }
 
@@ -802,20 +802,22 @@ final class Workspace {
     // order, which is what makes a row's kind enough to name its tab.
     static let tabOrderWorktreeIDs = "tabs.orderWorktreeIDs"
     static let tabOrderKinds = "tabs.orderKinds"
-    // Which tab of the selected worktree was showing, as its place in that worktree's strip.
-    // The worktree half is `selectedWorktreeID`, already stored above.
-    static let tabSelectedIndex = "tabs.selectedIndex"
+    // Which tab was showing on each worktree's strip, as its place in that strip — one row per
+    // worktree that had one, since the desk keeps a showing tab per strip and coming back to a
+    // worktree is the same act whether the window was restarted in between or not.
+    static let tabSelectedWorktreeIDs = "tabs.selectedWorktreeIDs"
+    static let tabSelectedIndexes = "tabs.selectedIndexes"
   }
 
   /// The tabs come from the desk, which owns them; they are passed in rather than read off the
   /// model because the model has no view to read them from. `terminals` too, when given: the
   /// model's list is in the order they were opened, and the desk's is the order they stand in,
   /// which is the one to come back in. `tabOrder` is the strip order the four lists are in, and
-  /// `selectedTabIndex` is the place in it that was showing (negative for none).
+  /// `selectedTabIndexes` is the place in it that was showing, per worktree.
   func encodeState(
     to coder: NSCoder, browserTabs: [BrowserTabState] = [], terminals: [TerminalSession]? = nil,
     fileTabs: [FileTabState] = [], commitTabs: [CommitTabState] = [],
-    tabOrder: [RestoredTabOrder] = [], selectedTabIndex: Int = -1
+    tabOrder: [RestoredTabOrder] = [], selectedTabIndexes: [UUID: Int] = [:]
   ) {
     let terminals = terminals ?? self.terminals
     coder.encode(worktrees.map(\.url.path) as NSArray, forKey: Key.worktreePaths)
@@ -921,7 +923,12 @@ final class Workspace {
     coder.encode(
       tabOrder.map(\.worktreeID.uuidString) as NSArray, forKey: Key.tabOrderWorktreeIDs)
     coder.encode(tabOrder.map(\.kind.rawValue) as NSArray, forKey: Key.tabOrderKinds)
-    coder.encode(selectedTabIndex, forKey: Key.tabSelectedIndex)
+    // Sorted, because a dictionary has no order and two runs of the same desk should write the
+    // same state.
+    let selected = selectedTabIndexes.sorted { $0.key.uuidString < $1.key.uuidString }
+    coder.encode(selected.map(\.key.uuidString) as NSArray, forKey: Key.tabSelectedWorktreeIDs)
+    coder.encode(
+      selected.map { NSNumber(value: $0.value) } as NSArray, forKey: Key.tabSelectedIndexes)
   }
 
   func decodeState(from coder: NSCoder) {
@@ -1094,12 +1101,19 @@ final class Workspace {
       pendingRestoredTabOrder.append(RestoredTabOrder(worktreeID: worktreeID, kind: kind))
     }
 
-    // The place in that strip that was showing. Kept for the desk to consume rather than applied
+    // The place in each strip that was showing. Kept for the desk to consume rather than applied
     // here: the tabs are not on it yet, and the reload that puts them there is what would
     // otherwise choose for it.
-    let selectedTab = coder.decodeInteger(forKey: Key.tabSelectedIndex)
-    if selectedTab >= 0, let worktreeID = selectedWorktreeID {
-      pendingRestoredTabSelection = (worktreeID, selectedTab)
+    let selectedWorktrees = strings(coder, Key.tabSelectedWorktreeIDs)
+    let selectedIndexes =
+      (coder.decodeArrayOfObjects(ofClass: NSNumber.self, forKey: Key.tabSelectedIndexes) ?? [])
+      .map(\.intValue)
+    pendingRestoredTabSelection = [:]
+    for (index, idString) in selectedWorktrees.enumerated() where index < selectedIndexes.count {
+      guard let worktreeID = UUID(uuidString: idString), selectedIndexes[index] >= 0 else {
+        continue
+      }
+      pendingRestoredTabSelection[worktreeID] = selectedIndexes[index]
     }
 
     // The session list is never stored — it is read back off disk every time.
