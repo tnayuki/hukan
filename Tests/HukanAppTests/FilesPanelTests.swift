@@ -210,14 +210,18 @@ final class FilesPanelTests: XCTestCase {
     let outline = try XCTUnwrap(findOutline(in: panel.view))
 
     panel.searchForScripting("needle")
+    // The search waits for the walk that produces its file set (`FileUniverse`, one `rg`) and
+    // then reads the files on the panel's own queue, so what it takes is a process and two hops
+    // rather than a countable number of them. Poll for the rows rather than guessing.
     let listed = expectation(description: "the scan answers")
-    DispatchQueue.main.async {
-      // The scan runs on the panel's own queue and hops back to the main queue to show what it
-      // found; one more hop lands after it.
-      DispatchQueue.main.async { listed.fulfill() }
+    let deadline = Date().addingTimeInterval(10)
+    func poll() {
+      window.displayIfNeeded()
+      guard outline.numberOfRows != 24, Date() < deadline else { return listed.fulfill() }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { poll() }
     }
-    wait(for: [listed], timeout: 5)
-    window.displayIfNeeded()
+    poll()
+    wait(for: [listed], timeout: 15)
     XCTAssertEqual(outline.numberOfRows, 24, "twelve files, each with its one matching line")
 
     panel.show(worktree: other)
@@ -286,7 +290,17 @@ final class FilesPanelTests: XCTestCase {
     panel.filterSearchField.stringValue = "file"
     panel.controlTextDidChange(
       Notification(name: NSControl.textDidChangeNotification, object: panel.filterSearchField))
-    window.displayIfNeeded()
+    // The rows are rg's answer, which arrives as it walks (see `FileFilter`), so what is waited
+    // for is the tree having been narrowed rather than a countable number of main-queue hops.
+    let narrowed = expectation(description: "the filter answers")
+    let deadline = Date().addingTimeInterval(10)
+    func poll() {
+      window.displayIfNeeded()
+      guard outline.numberOfRows <= 200, Date() < deadline else { return narrowed.fulfill() }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { poll() }
+    }
+    poll()
+    wait(for: [narrowed], timeout: 15)
 
     XCTAssertGreaterThan(outline.numberOfRows, 200, "it did open itself")
     XCTAssertLessThan(

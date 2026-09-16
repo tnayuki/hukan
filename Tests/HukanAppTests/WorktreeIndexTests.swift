@@ -2,7 +2,9 @@ import XCTest
 
 @testable import Hukan
 
-/// The walk behind the files panel: what it goes into, what it leaves out, and how it keeps up.
+/// What the files panel's tree keeps: the listings it has actually made, and how a change on disk
+/// turns into "these rows read differently". Nothing here walks a worktree — that went with the
+/// index that used to hold one (see `WorktreeIndex`), and the whole path set is `Ripgrep`'s now.
 final class WorktreeIndexTests: XCTestCase {
   private var temporaries: [URL] = []
 
@@ -25,30 +27,15 @@ final class WorktreeIndexTests: XCTestCase {
     return root
   }
 
-  private func built(_ index: WorktreeIndex) {
-    let done = expectation(description: "walked")
-    index.build { done.fulfill() }
-    wait(for: [done], timeout: 5)
-  }
-
-  /// A directory git ignores is not walked — it is a hundred thousand files nobody wants filtered
-  /// — but an ignored file in a plain directory is walked with its neighbours.
-  func testTheWalkStopsAtAnIgnoredDirectoryAndNotAtAnIgnoredFile() throws {
-    let root = try makeTree(["src/a.swift", "src/noise.log", "build/deep/x.o", "README.md"])
-    try FileManager.default.createDirectory(
-      at: root.appendingPathComponent("empty"), withIntermediateDirectories: true)
-    let index = WorktreeIndex(root: root) { directories in
-      Set(directories.filter { $0 == "build" })
+  private func update(_ index: WorktreeIndex, moved: Set<String>?) -> Set<String>? {
+    var answer: Set<String>?
+    let done = expectation(description: "batch")
+    index.update(moved: moved) {
+      answer = $0
+      done.fulfill()
     }
-    built(index)
-
-    XCTAssertTrue(index.isBuilt)
-    XCTAssertEqual(index.filePaths, ["README.md", "src/a.swift", "src/noise.log"])
-    XCTAssertNil(index.entries(of: "build"), "not walked")
-    XCTAssertTrue(index.isIgnoredDirectory("build"))
-    XCTAssertEqual(index.entries(of: "empty"), [], "walked, and empty")
-    XCTAssertEqual(
-      index.entries(of: "")?.map(\.name).sorted(), ["README.md", "build", "empty", "src"])
+    wait(for: [done], timeout: 5)
+    return answer
   }
 
   /// The listing is `readdir`, so what the entry itself says about a name has to agree with what
@@ -60,8 +47,7 @@ final class WorktreeIndexTests: XCTestCase {
     let manager = FileManager.default
     try manager.createSymbolicLink(
       at: root.appendingPathComponent("link"),
-      withDestinationURL: root.appendingPathComponent(
-        "elsewhere"))
+      withDestinationURL: root.appendingPathComponent("elsewhere"))
     try manager.createSymbolicLink(
       at: root.appendingPathComponent("dangling"),
       withDestinationURL: root.appendingPathComponent("nothing-here"))
@@ -82,145 +68,98 @@ final class WorktreeIndexTests: XCTestCase {
     XCTAssertNil(WorktreeIndex.list(root.appendingPathComponent("nothing-here")))
   }
 
-  /// A name can change kind. A directory standing where a file stood is one the walk has never
-  /// been into, so it has to be walked like any other new directory — while the names of what
-  /// was there were taken regardless of kind, and it was mistaken for a directory already known,
-  /// everything under it stayed out of the index and so out of the filter and the search.
-  func testADirectoryStandingWhereAFileStoodIsWalked() throws {
-    let root = try makeTree(["src/a.swift", "top.txt"])
-    let manager = FileManager.default
-    let index = WorktreeIndex(root: root) { _ in [] }
-    built(index)
-    XCTAssertEqual(index.filePaths, ["src/a.swift", "top.txt"])
-
-    try manager.removeItem(at: root.appendingPathComponent("top.txt"))
-    try manager.createDirectory(
-      at: root.appendingPathComponent("top.txt"), withIntermediateDirectories: true)
-    try "inside\n".write(
-      to: root.appendingPathComponent("top.txt/now.txt"), atomically: true, encoding: .utf8)
-
-    let done = expectation(description: "batch")
-    index.update(moved: ["top.txt"]) { _ in done.fulfill() }
-    wait(for: [done], timeout: 5)
-
-    XCTAssertEqual(index.filePaths, ["src/a.swift", "top.txt/now.txt"])
-    XCTAssertEqual(index.entries(of: "top.txt")?.map(\.name), ["now.txt"])
-  }
-
-  /// The flattened list is spliced rather than rebuilt, so the splice has to be indistinguishable
-  /// from the rebuild — over a run of batches that between them create, delete, replace a file
-  /// with a directory and a directory with a file, and take a whole subtree away. The oracle is
-  /// the index's own full walk of the same disk.
-  func testTheSplicedFlatteningMatchesAFullWalk() throws {
-    let root = try makeTree(["src/a.swift", "src/deep/b.swift", "top.txt"])
-    let manager = FileManager.default
-    let index = WorktreeIndex(root: root) { directories in
-      Set(directories.filter { ($0 as NSString).lastPathComponent == "ignored" })
-    }
-    built(index)
-
-    func batch(_ paths: Set<String>, _ change: () throws -> Void) rethrows {
-      try change()
-      let done = expectation(description: "batch")
-      index.update(moved: paths) { _ in done.fulfill() }
-      wait(for: [done], timeout: 5)
-
-      // The oracle: a second index over the same disk, walked from scratch.
-      let fresh = WorktreeIndex(root: root) { directories in
-        Set(directories.filter { ($0 as NSString).lastPathComponent == "ignored" })
-      }
-      built(fresh)
-      XCTAssertEqual(index.filePaths, fresh.filePaths, "after \(paths.sorted())")
-    }
-
-    // A file edited: no name moves at all, which is the case the splice exists for.
-    try batch(["src/a.swift"]) {
-      try "changed\n".write(
-        to: root.appendingPathComponent("src/a.swift"), atomically: true, encoding: .utf8)
-    }
-    // Made, and made in a directory that is itself new — the walk has to bring both in.
-    try batch(["src/c.swift", "fresh/d.swift", "fresh"]) {
-      try "c\n".write(
-        to: root.appendingPathComponent("src/c.swift"), atomically: true, encoding: .utf8)
-      try manager.createDirectory(
-        at: root.appendingPathComponent("fresh/inner"), withIntermediateDirectories: true)
-      try "d\n".write(
-        to: root.appendingPathComponent("fresh/d.swift"), atomically: true, encoding: .utf8)
-      try "e\n".write(
-        to: root.appendingPathComponent("fresh/inner/e.swift"), atomically: true, encoding: .utf8)
-    }
-    // A whole subtree taken away.
-    try batch(["src/deep", "src/deep/b.swift"]) {
-      try manager.removeItem(at: root.appendingPathComponent("src/deep"))
-    }
-    // A file where a directory was, and a directory where a file was.
-    try batch(["fresh/inner", "top.txt"]) {
-      try manager.removeItem(at: root.appendingPathComponent("fresh/inner"))
-      try "was a directory\n".write(
-        to: root.appendingPathComponent("fresh/inner"), atomically: true, encoding: .utf8)
-      try manager.removeItem(at: root.appendingPathComponent("top.txt"))
-      try manager.createDirectory(
-        at: root.appendingPathComponent("top.txt"), withIntermediateDirectories: true)
-      try "inside\n".write(
-        to: root.appendingPathComponent("top.txt/now.txt"), atomically: true, encoding: .utf8)
-    }
-    // One git has started ignoring keeps its files out of the list, the walk not going in.
-    try batch(["ignored", "ignored/junk.o"]) {
-      try manager.createDirectory(
-        at: root.appendingPathComponent("ignored"), withIntermediateDirectories: true)
-      try "junk\n".write(
-        to: root.appendingPathComponent("ignored/junk.o"), atomically: true, encoding: .utf8)
-    }
-    XCTAssertFalse(index.filePaths.contains { $0.hasPrefix("ignored/") })
-    XCTAssertTrue(index.filePaths.contains("fresh/inner"))
-    XCTAssertTrue(index.filePaths.contains("top.txt/now.txt"))
-  }
-
-  /// A batch names paths; the directories they sit in are read again, a new directory is walked
-  /// in, and a directory that went takes its subtree out. Each answer says which directories
-  /// now read differently.
-  func testABatchRelistsItsDirectoriesAndWalksWhatIsNew() throws {
+  /// A directory nobody has opened has no answer here, which is the tree's cue to list it itself
+  /// — and what it lists, it says, so the next batch has something to compare against.
+  func testADirectoryIsKnownOnlyOnceTheTreeHasListedIt() throws {
     let root = try makeTree(["src/a.swift"])
-    let index = WorktreeIndex(root: root) { _ in [] }
-    built(index)
-    let before = index.generation
+    let index = WorktreeIndex(root: root)
+
+    XCTAssertNil(index.entries(of: ""), "nothing is walked because a worktree exists")
+    XCTAssertNil(index.entries(of: "src"))
+
+    index.note("", entries: try XCTUnwrap(WorktreeIndex.list(root)))
+    XCTAssertEqual(index.entries(of: "")?.map(\.name), ["src"])
+    XCTAssertNil(index.entries(of: "src"), "opened rows only")
+  }
+
+  /// A batch re-lists the directories it names and answers with those that now read differently
+  /// — the ones the tree has listed, since a directory nobody opened has no rows to be stale.
+  func testABatchRelistsWhatTheTreeHasOpenedAndNothingElse() throws {
+    let root = try makeTree(["src/a.swift", "vendor/b.swift"])
+    let index = WorktreeIndex(root: root)
+    index.note("", entries: try XCTUnwrap(WorktreeIndex.list(root)))
+    index.note(
+      "src", entries: try XCTUnwrap(WorktreeIndex.list(root.appendingPathComponent("src"))))
 
     try "y\n".write(
-      to: root.appendingPathComponent("src/b.swift"), atomically: true, encoding: .utf8)
-    try FileManager.default.createDirectory(
-      at: root.appendingPathComponent("lib/inner"), withIntermediateDirectories: true)
-    try "z\n".write(
-      to: root.appendingPathComponent("lib/inner/c.swift"), atomically: true, encoding: .utf8)
-    var answered: Set<String>??
-    let updated = expectation(description: "relisted")
-    index.update(moved: ["src/b.swift", "lib"]) { directories in
-      answered = directories
-      updated.fulfill()
-    }
-    wait(for: [updated], timeout: 5)
+      to: root.appendingPathComponent("src/new.swift"), atomically: true, encoding: .utf8)
+    try "y\n".write(
+      to: root.appendingPathComponent("vendor/new.swift"), atomically: true, encoding: .utf8)
 
-    XCTAssertEqual(answered ?? nil, ["src", ""])
-    XCTAssertGreaterThan(index.generation, before)
-    XCTAssertEqual(index.filePaths, ["lib/inner/c.swift", "src/a.swift", "src/b.swift"])
-
-    try FileManager.default.removeItem(at: root.appendingPathComponent("lib"))
-    let removed = expectation(description: "removed")
-    index.update(moved: ["lib"]) { _ in removed.fulfill() }
-    wait(for: [removed], timeout: 5)
-    XCTAssertEqual(index.filePaths, ["src/a.swift", "src/b.swift"])
-    XCTAssertNil(index.entries(of: "lib/inner"), "the subtree went with it")
+    let changed = update(index, moved: ["src/new.swift", "vendor/new.swift"])
+    XCTAssertEqual(changed, ["src"], "vendor was never listed, so nothing was drawn from it")
+    XCTAssertEqual(index.entries(of: "src")?.map(\.name).sorted(), ["a.swift", "new.swift"])
+    XCTAssertNil(index.entries(of: "vendor"))
   }
 
-  /// The panel's own write is read in at once, on the caller's thread, so the row exists before
-  /// the next line names it.
+  /// A write that moves nothing in a listing is not a change: a file's contents are not its name.
+  func testAFileEditedInPlaceIsNotAChangedListing() throws {
+    let root = try makeTree(["src/a.swift"])
+    let index = WorktreeIndex(root: root)
+    index.note(
+      "src", entries: try XCTUnwrap(WorktreeIndex.list(root.appendingPathComponent("src"))))
+
+    try "changed\n".write(
+      to: root.appendingPathComponent("src/a.swift"), atomically: true, encoding: .utf8)
+
+    XCTAssertEqual(update(index, moved: ["src/a.swift"]), [], "the names in it are the same")
+  }
+
+  /// A directory that has left the disk is forgotten with everything under it, and its own path
+  /// is what the panel is told about.
+  func testADirectoryThatWentIsForgottenWithItsSubtree() throws {
+    let root = try makeTree(["src/deep/a.swift"])
+    let index = WorktreeIndex(root: root)
+    index.note(
+      "src", entries: try XCTUnwrap(WorktreeIndex.list(root.appendingPathComponent("src"))))
+    index.note(
+      "src/deep",
+      entries: try XCTUnwrap(WorktreeIndex.list(root.appendingPathComponent("src/deep")))
+    )
+
+    try FileManager.default.removeItem(at: root.appendingPathComponent("src"))
+
+    // The batch names something inside `src/deep`, so the directory asked about is its parent —
+    // and that one is gone, which is what takes the whole subtree with it.
+    XCTAssertEqual(update(index, moved: ["src/deep/a.swift"]), ["src/deep"])
+    XCTAssertNil(index.entries(of: "src/deep"))
+    XCTAssertEqual(update(index, moved: ["src/deep"]), ["src"], "and its parent in turn")
+    XCTAssertNil(index.entries(of: "src"))
+  }
+
+  /// The wholesale question — a batch that could not be placed — drops the listings rather than
+  /// re-reading them. The tree asks here first, so a listing that may be wrong is worse than none.
+  func testAWholesaleBatchForgetsEverything() throws {
+    let root = try makeTree(["src/a.swift"])
+    let index = WorktreeIndex(root: root)
+    index.note("", entries: try XCTUnwrap(WorktreeIndex.list(root)))
+    let before = index.generation
+
+    XCTAssertNil(update(index, moved: nil), "all of them")
+    XCTAssertNil(index.entries(of: ""))
+    XCTAssertGreaterThan(index.generation, before)
+  }
+
+  /// The panel's own write needs the row before the next line of code names it, so that one
+  /// directory is re-listed on the spot rather than through a batch.
   func testRefreshNowReadsOneDirectoryOnTheSpot() throws {
     let root = try makeTree(["a.swift"])
-    let index = WorktreeIndex(root: root) { _ in [] }
-    built(index)
+    let index = WorktreeIndex(root: root)
+    index.note("", entries: try XCTUnwrap(WorktreeIndex.list(root)))
     try "y\n".write(to: root.appendingPathComponent("untitled"), atomically: true, encoding: .utf8)
 
     index.refreshNow("")
 
-    XCTAssertEqual(index.filePaths, ["a.swift", "untitled"])
+    XCTAssertEqual(index.entries(of: "")?.map(\.name).sorted(), ["a.swift", "untitled"])
   }
 }

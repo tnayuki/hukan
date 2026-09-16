@@ -310,18 +310,20 @@ final class GitTests: XCTestCase {
   }
 
   /// No `git init`: a Worktree may be a plain directory. git has no tracked list to give for it,
-  /// and none is invented — the files panel's tree, filter and search read the disk through
-  /// `WorktreeIndex`, which lists a plain directory the same way it lists a checkout.
-  func testANonGitDirectoryHasNoTrackedListAndIsListedByTheIndex() throws {
+  /// and none is invented — the files panel's tree reads the disk a directory at a time
+  /// (`WorktreeIndex.list`) and its filter reads `Ripgrep`, so a plain directory is shown exactly
+  /// the way a checkout is. This is also the case that made the walk that used to run here
+  /// unbounded: with no repository, nothing answers "is this ignored".
+  func testANonGitDirectoryHasNoTrackedListAndIsListedFromTheDisk() throws {
     try write("a.txt", to: "a.txt")
     try write("b.txt", to: "sub/b.txt")
     XCTAssertEqual(Git.trackedFiles(at: root), [])
     XCTAssertEqual(Git.ignored(at: root, directories: ["sub"]), [], "nothing to ignore by")
 
-    let index = WorktreeIndex(root: root) { [root] in Git.ignored(at: root!, directories: $0) }
-    let built = expectation(description: "walked")
-    index.build { built.fulfill() }
-    wait(for: [built], timeout: 5)
-    XCTAssertEqual(index.filePaths, ["a.txt", "sub/b.txt"])
+    XCTAssertEqual(
+      try XCTUnwrap(WorktreeIndex.list(root)).map(\.name).sorted(), ["a.txt", "sub"])
+    XCTAssertEqual(
+      try XCTUnwrap(WorktreeIndex.list(root.appendingPathComponent("sub"))).map(\.name),
+      ["b.txt"])
   }
 }

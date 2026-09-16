@@ -33,26 +33,6 @@ private final class FilesOutlineView: NSOutlineView {
   }
 }
 
-/// A running background read's kill switch, shared between the main thread that starts it and
-/// the queue that runs it — one flag, so the lock is a formality the compiler's concurrency
-/// checking needs rather than contention.
-final class Cancellation {
-  private let lock = NSLock()
-  private var cancelled = false
-
-  func cancel() {
-    lock.lock()
-    cancelled = true
-    lock.unlock()
-  }
-
-  var isCancelled: Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return cancelled
-  }
-}
-
 /// One file the content search hit, and the lines it hit on.
 private final class ResultFile: NSObject {
   let path: String
@@ -64,10 +44,10 @@ private final class ResultLine: NSObject {
   let path: String
   let line: Int
   let text: String
-  init(_ hit: FileSearch.Hit) {
-    path = hit.path
-    line = hit.line
-    text = hit.text
+  init(path: String, line: Int, text: String) {
+    self.path = path
+    self.line = line
+    self.text = text
   }
 }
 
@@ -196,22 +176,28 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   private var builtFrom:
     (
       paths: [String], changed: [ChangedFile], query: String, changedOnly: Bool,
-      indexGeneration: Int
+      indexGeneration: Int, filterGeneration: Int
     )?
 
-  /// The scoped path set, and the same paths folded ready to be matched against. Typing is what
-  /// this cache is for: the filter runs over every path in the worktree on each keystroke, and on
-  /// a large one deriving that list — and folding it — costs more per keystroke than the matching
-  /// does. Its key deliberately holds the changed files' *paths* and not their diffstats, since
-  /// the numbers move while an agent works and the set of paths does not.
+  /// The ± scope's path set: what git says has changed, sorted, since `FileTree`'s prefix search
+  /// relies on byte order and a changed-file list arrives in git's diff order. Its key
+  /// deliberately holds the changed files' *paths* and not their diffstats, since the numbers
+  /// move while an agent works and the set of paths does not.
   private struct ScopeKey: Equatable {
     let tracked: [String]
     let changed: [String]
     let changedOnly: Bool
-    /// The index's generation, so a directory relisted moves the filter's universe with it.
-    let indexGeneration: Int
   }
-  private var scoped: (key: ScopeKey, paths: [String], folded: [FoldedText]?)?
+  private var scoped: (key: ScopeKey, paths: [String])?
+
+  /// The walk behind a filter with text in it — see `FileFilter`. Nil while the panel is being
+  /// browsed, which is what makes opening a directory of any size cost nothing: nothing is walked
+  /// until someone types, and what was walked goes when the field empties.
+  private var fileFilter: FileFilter?
+  private var filterRoot: URL?
+  private var filterSnapshot: FileFilter.Snapshot?
+  /// Bumped on every publish, so a narrowed tree built from an older one is rebuilt.
+  private var filterGeneration = 0
   /// Every path git would take, for the disk tree to tell an ignored file from one git simply
   /// has not been asked about — nil where there is no git. Keyed like `scoped`, on git's answer.
   private var known: (tracked: [String], changed: [String], paths: Set<String>?)?
@@ -227,12 +213,14 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   }
 
   private var results: [ResultFile] = []
-  private var truncated = false
+  /// The result rows by path, so a hit arriving for a file already on the list finds it without
+  /// a scan — rg reports a file's lines together, but the files themselves arrive in whatever
+  /// order they finish.
+  private var resultsByPath: [String: ResultFile] = [:]
   private var generation = 0
-  /// The scan now out, so a query that is no longer wanted can be dropped mid-read rather than
-  /// run to the end while the next one waits behind it on this serial queue.
-  private var runningScan: Cancellation?
-  private let queue = DispatchQueue(label: "dev.tnayuki.hukan.files-search")
+  /// The search now out, so a query that is no longer wanted is killed mid-read rather than run
+  /// to the end while its rows land on a list nobody is looking at.
+  private var searchRun: Ripgrep.Run?
 
   var query: String { filterField.stringValue }
 
@@ -493,6 +481,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       diskTree = nil
       generation += 1
       cancelScan()
+      dropFilter()
       // Emptied here rather than left for the rebuild below: the rows on screen belong to the
       // worktree being left, and `refresh()` reads them back (what was open, what was selected)
       // through the data source, which now answers for the worktree being arrived at. Nothing
@@ -524,7 +513,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       tree.markAllStale()
       rootTouched = true
     }
-    // The filter's universe moved with the index; a filter on screen is rebuilt from it.
+    // What the tree is built from moved; a filter on screen is rebuilt over it.
     guard isDiskMode else {
       if !isShowingResults, editingPath == nil { refresh() }
       return
@@ -566,48 +555,65 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
 
   // MARK: Tree
 
-  /// The file set both the tree and the search work over: everything tracked, or — scoped — only
-  /// what has changed. Sorted, since `FileTree`'s prefix search relies on byte order, and a
-  /// changed-file list arrives in git's diff order rather than the index's. Held in `scoped`
-  /// until git says something that moves it, because both callers ask per keystroke.
+  /// The file set the ± scope works over: what git says has changed, sorted, and held until git
+  /// says something that moves it — the tree asks per keystroke, and so does a search scoped to
+  /// it. Everything else the panel shows comes off the disk (the tree) or out of rg (a filter, a
+  /// search), neither of which is a list hukan keeps.
   private func scopedPaths() -> [String] {
     guard let worktree else { return [] }
     let key = ScopeKey(
       tracked: worktree.trackedFiles, changed: worktree.changedFiles.map(\.path),
-      changedOnly: isChangedOnly, indexGeneration: worktree.index?.generation ?? -1)
+      changedOnly: isChangedOnly)
     if let scoped, scoped.key == key { return scoped.paths }
-
-    var paths: [String]
-    if isChangedOnly {
-      paths = key.changed.sorted(by: FileTree.precedesBytewise)
-    } else if let index = worktree.index {
-      // The disk, as the walk found it: the same files the tree shows, less the directories git
-      // ignores, which the walk does not go into.
-      paths = index.filePaths
-    } else {
-      // No walk yet — the worktree has not been selected through the workspace, which is the
-      // tests' case — so git's list stands in.
-      paths = worktree.trackedFiles
-      let known = Set(paths)
-      let extra = key.changed.filter { !known.contains($0) }
-      if !extra.isEmpty {
-        paths.append(contentsOf: extra)
-        paths.sort(by: FileTree.precedesBytewise)
-      }
-    }
-    scoped = (key, paths, nil)
+    let paths = key.changed.sorted(by: FileTree.precedesBytewise)
+    scoped = (key, paths)
     return paths
   }
 
-  /// The same paths, folded ready to match against — prepared on the first keystroke that needs
-  /// them rather than with the list itself, since the list is rebuilt whenever an agent adds or
-  /// removes a file and most of those redraws have nothing typed in the field at all.
-  private func foldedPaths() -> [FoldedText] {
-    guard let scoped else { return [] }
-    if let folded = scoped.folded { return folded }
-    let folded = scoped.paths.map(FoldedText.init)
-    self.scoped = (scoped.key, scoped.paths, folded)
-    return folded
+  /// Whether `path` carries `query`, for the ± scope's own narrowing. Foundation's case-insensitive
+  /// compare rather than anything cleverer: this runs over the changed set, which is what one
+  /// person or one agent has touched, where the whole-worktree matching that had to be cheap is
+  /// rg's now.
+  private static func matches(_ path: String, _ query: String) -> Bool {
+    path.range(of: query, options: .caseInsensitive) != nil
+  }
+
+  /// The walk behind a filter with text in it, started by the keystroke that needs it and
+  /// replaced by the next one.
+  ///
+  /// Started here rather than when the worktree opens, which is the whole of the change: the tree
+  /// lists what it shows and needs no walk at all, so the only reader of a worktree's whole path
+  /// set is a query, and a query begins with someone typing. What it costs is a process per
+  /// keystroke — 0.03s on this checkout, 10s on a home directory, the one before it killed as the
+  /// next starts. What it buys is that a directory nobody bounded costs nothing to have open, and
+  /// that nothing at all is held between two questions.
+  private func ensureFilter(query: String) {
+    guard let worktree else { return }
+    let root = worktree.url
+    guard fileFilter?.query != query || filterRoot != root else { return }
+    fileFilter?.cancel()
+    filterSnapshot = nil
+    filterRoot = root
+    fileFilter = FileFilter(root: root, query: query) { [weak self] snapshot in
+      guard let self, self.filterRoot == root, self.fileFilter?.query == query else { return }
+      self.filterSnapshot = snapshot
+      self.filterGeneration += 1
+      // A result list is the answer to the other gesture and must not be rebuilt into a tree
+      // under the reader; the snapshot is kept for when they come back to the filter.
+      guard !self.isShowingResults else { return }
+      self.refresh()
+    }
+  }
+
+  /// Stop the walk and forget what it found. The filter is empty, or the worktree on screen is
+  /// not the one it was walking.
+  private func dropFilter() {
+    guard fileFilter != nil else { return }
+    fileFilter?.cancel()
+    fileFilter = nil
+    filterRoot = nil
+    filterSnapshot = nil
+    filterGeneration += 1
   }
 
   /// Rebuild the tree if anything it is derived from moved, keeping the open directories and the
@@ -638,7 +644,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     let query = filterField.stringValue
     let inputs = (
       worktree.trackedFiles, worktree.changedFiles, query, isChangedOnly,
-      worktree.index?.generation ?? -1
+      worktree.index?.generation ?? -1, filterGeneration
     )
     if let builtFrom, builtFrom == inputs, !isShowingResults {
       // Same inputs, same tree — but the button is repainted anyway, since this is also the path
@@ -663,6 +669,11 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     var changed: [String: ChangedFile] = [:]
     for file in worktree.changedFiles { changed[file.path] = file }
     if query.isEmpty, !isChangedOnly {
+      // Nothing is matching against the whole worktree any more, so the walk behind it stops and
+      // what it had is dropped. Typing again starts a new one: a checkout answers in the time a
+      // keystroke takes, and what is not worth holding between two questions is the whole set of
+      // paths of a directory nobody bounded.
+      dropFilter()
       // Browsing: the worktree as it is on disk, git's answer laid over it. The tree outlives
       // the answer, so what a new answer does is renumber the rows already listed.
       let tree =
@@ -676,16 +687,21 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       // Listed once; after that git's answer renumbers what is listed and the disk is read only
       // when FSEvents names something (`pathsMoved`).
       roots = tree.roots.isEmpty ? tree.relistRoots() : tree.roots
-    } else {
-      // Narrowed: a list of the paths git produced — the ± scope's changed set, or everything
-      // matching what was typed — built into a tree. An ignored file is not in git's list and
-      // cannot be filtered to, which is the price of a filter that does not walk the checkout.
+    } else if isChangedOnly {
+      // The ± scope: git's changed set, which git has already answered for, narrowed here by
+      // whatever is typed. Small by construction, so it is matched where it is drawn.
       var paths = scopedPaths()
-      if !query.isEmpty {
-        let needle = FoldedText(query)
-        paths = zip(paths, foldedPaths()).compactMap { needle.occurs(in: $1) ? $0 : nil }
-      }
+      if !query.isEmpty { paths = paths.filter { Self.matches($0, query) } }
       roots = FileTree(paths: paths, changed: changed).rootChildren
+    } else {
+      // A filter over the whole worktree, which is rg's answer: it walks, it matches, and what
+      // arrives here is the narrowed list already. Until the first batch lands there is nothing
+      // to draw and the note says it is reading — there is no cheaper list to stand in with,
+      // git's own being the answer to a different question (it knows nothing of what it has not
+      // been told about).
+      ensureFilter(query: query)
+      roots = FileTree(paths: filterSnapshot?.matches ?? [], changed: changed).rootChildren
+      if filterSnapshot?.isComplete == true { endWait() } else { beginWait(.read) }
     }
     isShowingResults = false
     redraw(openDirs: openDirs, selectedPath: selectedPath, query: query)
@@ -897,52 +913,66 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       refresh()
       return
     }
-    let paths = scopedPaths()
     let root = worktree.url
     let selectedPath = selectedRowPath()
     let selectedLine = (outline.item(atRow: outline.selectedRow) as? ResultLine)?.line
     // Switch to the result list at the moment the search is asked for, not when it answers: the
-    // gesture has to visibly take, and the reading below happens on `queue` either way.
+    // gesture has to visibly take, and the reading below happens in another process either way.
     cancelScan()
     beginWait(.scan)
-    let cancellation = Cancellation()
-    runningScan = cancellation
     isShowingResults = true
     results = []
-    truncated = false
+    resultsByPath = [:]
     builtFrom = nil
     outline.reloadData()
     updateEmptyLabel()
-    queue.async { [weak self] in
-      let scanned = FileSearch.scan(
-        query: query, paths: paths, root: root, isCancelled: { cancellation.isCancelled })
-      guard !cancellation.isCancelled else { return }
-      var byPath: [String: ResultFile] = [:]
-      var ordered: [ResultFile] = []
-      for hit in scanned.hits {
-        let file: ResultFile
-        if let existing = byPath[hit.path] {
-          file = existing
-        } else {
-          file = ResultFile(path: hit.path)
-          byPath[hit.path] = file
-          ordered.append(file)
-        }
-        file.lines.append(ResultLine(hit))
-      }
-      DispatchQueue.main.async {
+    // ± scopes the search to the changed set, which git has already answered for and which rg is
+    // handed as the paths to read; otherwise it is the worktree, which rg walks itself.
+    let paths = isChangedOnly ? scopedPaths() : []
+    searchRun = Ripgrep.search(
+      in: root, for: query, in: paths,
+      batch: { [weak self] hits in
         guard let self, current == self.generation else { return }
-        self.results = ordered
-        self.truncated = scanned.truncated
+        self.took(hits, selectedPath: selectedPath, selectedLine: selectedLine)
+      },
+      completion: { [weak self] _ in
+        guard let self, current == self.generation else { return }
+        self.searchRun = nil
         self.endWait()
-        self.isShowingResults = true
-        self.builtFrom = nil
-        self.outline.reloadData()
-        for file in ordered { self.outline.expandItem(file) }
         self.updateEmptyLabel()
         self.restoreSelection(path: selectedPath, line: selectedLine)
+      })
+  }
+
+  /// Put a batch of hits on the list as rg finds them.
+  ///
+  /// Kept in path order as they arrive rather than sorted at the end: rg walks in parallel, so
+  /// the files finish in whatever order they finish, and a list that reordered itself under the
+  /// reader every time a batch landed would be unreadable while it filled. A file's own lines do
+  /// arrive together and in order, which is why only the files need placing.
+  private func took(
+    _ hits: [Ripgrep.Hit], selectedPath: String?, selectedLine: Int?
+  ) {
+    var arrived = false
+    for hit in hits {
+      let file: ResultFile
+      if let existing = resultsByPath[hit.path] {
+        file = existing
+      } else {
+        file = ResultFile(path: hit.path)
+        resultsByPath[hit.path] = file
+        let index =
+          results.firstIndex { FileTree.precedesBytewise(hit.path, $0.path) } ?? results.count
+        results.insert(file, at: index)
+        arrived = true
       }
+      file.lines.append(ResultLine(path: hit.path, line: hit.line, text: hit.text))
     }
+    guard arrived || !hits.isEmpty else { return }
+    outline.reloadData()
+    for file in results { outline.expandItem(file) }
+    updateEmptyLabel()
+    if selectedRowPath() == nil { restoreSelection(path: selectedPath, line: selectedLine) }
   }
 
   private func restoreSelection(path: String?, line: Int?) {
@@ -973,8 +1003,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       emptyLabel.isHidden = !results.isEmpty
       emptyLabel.stringValue = "No matches"
       // The count belongs on screen while a search is showing, so the list reads as a worklist.
-      filterField.toolTip =
-        truncated ? "\(FileSearch.limit)+ matching lines" : "\(hits) matching lines"
+      filterField.toolTip = "\(hits) matching lines"
     } else {
       emptyLabel.isHidden = !roots.isEmpty
       emptyLabel.stringValue = filterField.stringValue.isEmpty ? "No files" : "No matching files"
@@ -993,13 +1022,18 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     let preview = isQuickLookShowing ? (selectedRowPath() ?? "—") : "—"
     if isShowingResults {
       let lines = results.reduce(0) { $0 + $1.lines.count }
-      return "results files:\(results.count) lines:\(lines)\(truncated ? "+" : "") "
+      return "results files:\(results.count) lines:\(lines) "
         + "query:\(filterField.stringValue) scope:\(scope) waiting:\(waiting) preview:\(preview)"
     }
-    let index = worktree?.index.map { $0.isBuilt ? "built" : "walking" } ?? "—"
+    // The walk behind the filter, if one is out — "—" while the panel is only being browsed,
+    // which is the state worth being able to check: nothing walks a worktree that nobody is
+    // matching against.
+    let walk =
+      filterSnapshot.map { "\($0.isComplete ? "walked" : "walking"):\($0.matches.count)" }
+      ?? (fileFilter == nil ? "—" : "starting")
     return "tree rows:\(outline.numberOfRows) query:\(filterField.stringValue) "
       + "scope:\(scope) waiting:\(waiting) naming:\(editingPath ?? "—") field:\(hasFieldEditor) "
-      + "index:\(index) preview:\(preview)"
+      + "walk:\(walk) preview:\(preview)"
   }
 
   /// Whether the row being named really has the field editor — which is the half `editingPath`
@@ -1154,11 +1188,11 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     updateEmptyLabel()
   }
 
-  /// Drop the scan that is out, if any: the reader has moved on, and it must neither land on
-  /// screen nor hold the next one behind it.
+  /// Drop the search that is out, if any: the reader has moved on, and what it is finding must
+  /// neither land on screen nor go on costing a process.
   private func cancelScan() {
-    runningScan?.cancel()
-    runningScan = nil
+    searchRun?.cancel()
+    searchRun = nil
     if wait == .scan { endWait() }
   }
 

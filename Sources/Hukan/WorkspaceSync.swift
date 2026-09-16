@@ -258,16 +258,12 @@ extension Workspace {
     let stamp = readSequence
     let url = worktree.url
     let limit = worktree.historyLimit
-    // The disk, walked once on its own queue and kept in step from then on (the watcher). The
-    // panel draws before it is done — the tree lists a directory itself where the index has no
-    // answer yet — so nothing here waits on it; when it lands, the panel is told the whole tree
-    // may read differently, which is what a nil batch means.
+    // Nothing is walked because a worktree was opened. The tree lists the directories it shows
+    // and hands those listings to the index, which is what lets a later batch be answered by
+    // comparison; the whole set of paths — the filter's and the content search's — is produced
+    // per gesture by `Ripgrep` and dropped again. See `WorktreeIndex`.
     if worktree.index == nil {
-      let index = WorktreeIndex(root: url) { directories in
-        Git.ignored(at: url, directories: directories)
-      }
-      worktree.index = index
-      index.build { [weak self] in self?.onWorktreePathsMoved?(worktreeID, nil) }
+      worktree.index = WorktreeIndex(root: url)
     }
     DispatchQueue.global(qos: .userInitiated).async {
       let tracked = Git.trackedFiles(at: url)

@@ -26,7 +26,8 @@ here instead is an editable, syntax-highlighted source viewer: fixing the file a
 wrote should not mean leaving the window.
 
 Swift 5, AppKit; macOS 15 and up on Apple Silicon, built against the current SDK. git and tree-sitter are
-vendored static libraries; SwiftTerm and SwiftTreeSitter are the only package dependencies.
+vendored static libraries and ripgrep is a bundled binary; SwiftTerm and SwiftTreeSitter are the
+only package dependencies.
 
 ---
 
@@ -114,15 +115,20 @@ through them.
 **The desk.** The selected worktree's tabs, with the files panel as the trailing column, hidden
 by the toggle at the toolbar's far end. Each worktree's strip keeps its own showing tab, so
 switching away on the rail and back — or relaunching — lands on what was being read there. The tree is the worktree as it is on disk — every file and
-directory, including the ones git ignores, which are drawn dimmed — walked once in the background
-when the worktree is first selected and kept in step with what moves, so a file a build or an
-agent just wrote is there as it lands. git's diffstats are laid over it. One field over the tree runs two jobs, told apart by
+directory, including the ones git ignores, which are drawn dimmed — listed a directory at a time
+as it is opened and kept in step with what moves, so a file a build or an agent just wrote is
+there as it lands. Nothing is walked because a worktree was opened, which is what lets a
+directory of any size — a home directory, say — be opened for nothing. git's diffstats are laid
+over it. One field over the tree runs two jobs, told apart by
 gesture: typing filters by path, Return searches contents and the panel becomes a result list
-until Escape. Both work over what the tree shows, with one exception: a directory git ignores is
-on the tree, dimmed, but neither filtered into nor searched — a dependency directory is a hundred
-thousand files nobody wants either done to. An ignored file in an ordinary directory is. Either can be walked away from: the scan says it is searching, and a query typed
-over it drops the one still reading rather than queueing behind it. The ± scopes both to the
-changed files, and every row carries its own diffstat.
+until Escape. Both are ripgrep, bundled: the filter matches a path component that contains what
+you typed and everything under a directory whose name does, so `Tests` narrows to that
+directory's contents; the search matches a literal line, case-insensitively, and the rows stream
+in as they are found. A directory git ignores is on the tree, dimmed, and neither filtered into
+nor searched — that is rg's own reading of the ignore rules, which it applies for every
+`.gitignore` it passes, including ones no `git init` stands behind. Either gesture can be walked
+away from: it says it is reading, and typing again kills the one still out rather than queueing
+behind it. The ± scopes both to the changed files, and every row carries its own diffstat.
 
 Space previews the selected row — the Finder's key and the Finder's own Quick Look panel, so a
 PDF, a video, a font or an archive is looked at without leaving the window and without becoming a

@@ -429,6 +429,10 @@ final class DiskTree {
       let entries = indexed
         ?? WorktreeIndex.list(parent.isEmpty ? root : root.appendingPathComponent(parent))
     else { return [] }
+    // Listed here rather than remembered from a walk, so the index is told: a directory it holds
+    // a listing for is one a later FSEvents batch can be answered about by comparison, and one it
+    // does not is a directory nobody has opened.
+    if indexed == nil { index?.note(parent, entries: entries) }
     // Reused by path, and only where the node is the same kind of thing: a leaf is a leaf
     // whatever listed it, but a directory node from a path-list tree would go on drawing its
     // children from that list.
@@ -463,20 +467,14 @@ final class DiskTree {
       result.append(node)
     }
     // Under an ignored directory everything is ignored and nothing is asked. Under a plain one
-    // the index already knows which directories git ignores, having asked as it walked; git is
-    // asked here about the directories only where the listing was this tree's own, and about
-    // the files it did not produce — which are the ignored ones and the brand-new ones, and the
-    // ask is what tells those apart.
+    // git is asked about the directories this listing holds and about the files git does not know
+    // — which are the ignored ones and the brand-new ones, and the ask is what tells those apart.
+    // Asked per listing rather than remembered: the walk that used to answer for whole subtrees
+    // at once is gone, and one open directory is one question about the names in it.
     if known != nil, !parentIgnored, !(directories.isEmpty && unknownFiles.isEmpty) {
-      let askAbout = indexed == nil ? directories : []
-      if let index, indexed != nil {
-        for node in directories { node.isIgnored = index.isIgnoredDirectory(node.relativePath) }
-      }
-      if !(askAbout.isEmpty && unknownFiles.isEmpty) {
-        let answer = ignored(askAbout.map(\.relativePath), unknownFiles.map(\.relativePath))
-        for node in askAbout + unknownFiles {
-          node.isIgnored = answer.contains(node.relativePath)
-        }
+      let answer = ignored(directories.map(\.relativePath), unknownFiles.map(\.relativePath))
+      for node in directories + unknownFiles {
+        node.isIgnored = answer.contains(node.relativePath)
       }
     }
     result.sort(by: FileNode.byKindThenName)

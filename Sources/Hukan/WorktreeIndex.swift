@@ -1,33 +1,25 @@
 import Foundation
 
-/// The worktree's directories as they are on disk, held in memory and kept there: one entry list
-/// per directory, read by a walk on a background queue and re-read a directory at a time as
-/// FSEvents names something in it. The files panel's tree reads its rows off this rather than
-/// off the disk, so opening a row costs nothing on the main thread once the walk has been past
-/// it — and the filter and the content search read their universe off it too, which is what
-/// makes them the same set of files the tree shows.
+/// The directories the files panel's tree has actually listed, kept so that a change on disk can
+/// be turned into "these rows read differently" without asking the disk about rows nobody is
+/// looking at.
 ///
-/// The walk does not go into a directory git ignores. Those are on the tree, dimmed, and open on
-/// demand (the tree lists one itself when the index has no answer), but they are not walked:
-/// a dependency directory is a hundred thousand files nobody wants filtered or searched, and
-/// walking it would cost more than the rest of the checkout together — measured at 566ms for the
-/// whole disk of a 14,500-file checkout, ignore rules applied from outside libgit2, against the
-/// 107ms the working-tree diff spends applying them inside. An ignored *file* in a plain directory
-/// is walked with its neighbours — it is one file, and a plain directory is where a person's own
-/// `.env` or a stray log lives. Which directories git ignores is asked once
-/// per listing, for the directories that listing holds; it is the one thing about the index git
-/// is asked at all.
+/// It used to be the whole worktree, walked once when a repository opened and held from then on:
+/// every directory's entries, plus a flattened list of every path for the filter and the content
+/// search to match against. The walk's only bound was git's ignore rules, and git answers nothing
+/// at all outside a repository — so a plain directory was walked to the bottom however large it
+/// was, and the plain directory people actually open is the home directory. 4.56M entries here,
+/// about 174 bytes each held: three quarters of a gigabyte spent because a window was opened. A
+/// budget was the obvious answer and the wrong one — it is a number nobody can defend, and it
+/// makes the filter quietly partial in a way the person then has to be told about.
 ///
-/// A batch after that costs the directories it touched and the names that actually moved: the
-/// flattening the filter and the search read is spliced, not rebuilt (20.5ms per batch against
-/// 1.1ms on the same worktree, and the 1.1 is the relisting rather than the list).
-///
-/// The walk runs once per worktree, and both halves of it are read on every core: the listing of
-/// a level (see `walk`) and git's ignore answers about it (`Git.ignored`). Measured on a
-/// synthesized 48,000-file worktree with 11,000 directories and a few hundred ignore patterns:
-/// 645ms serial and off `contentsOfDirectory`, 168ms as it stands, of which about 50ms is git's
-/// answers. After the walk a batch costs the directories it touched, plus the flattening the
-/// filter reads (`filePaths`), which is spliced rather than rebuilt — see `reflatten`.
+/// What replaced it is not a smaller walk but no walk. The whole set of paths is wanted by
+/// exactly two readers, the filter and the content search, and `Ripgrep` produces it per gesture:
+/// streamed while it runs, dropped when the gesture ends. What is left here is the other half of
+/// the old job, which nothing else does — the tree lists a directory as it opens it and hands the
+/// listing back through `note`, so a later FSEvents batch is answered by re-listing exactly those
+/// directories and saying which of them moved. It is bounded by what someone opened, which is a
+/// bound nobody had to choose.
 final class WorktreeIndex {
   struct Entry: Equatable {
     let name: String
@@ -37,22 +29,14 @@ final class WorktreeIndex {
   let root: URL
   private let queue = DispatchQueue(label: "dev.tnayuki.hukan.worktree-index", qos: .userInitiated)
   private let lock = NSLock()
-  /// Directory path (`""` for the root) → what is directly in it.
+  /// Directory path (`""` for the root) → what was in it when it was last listed.
   private var directories: [String: [Entry]] = [:]
-  private var ignoredDirectories: Set<String> = []
-  /// Bumped on every change, so a reader holding a flattened copy knows when it is stale.
+  /// Bumped on every change, so a reader holding rows built from a listing knows when it is
+  /// stale.
   private var generationValue = 0
-  private var isBuiltValue = false
-  /// The flattening, kept until the next change: the filter asks per keystroke, and 25,000
-  /// entries walked per keystroke is what the git-list cache existed to avoid.
-  private var filePathsCache: (generation: Int, paths: [String])?
-  /// Which directories git ignores, asked per listing. Given rather than called directly so a
-  /// test can index a plain directory with no git behind it.
-  private let ignored: (_ directories: [String]) -> Set<String>
 
-  init(root: URL, ignored: @escaping (_ directories: [String]) -> Set<String>) {
+  init(root: URL) {
     self.root = root
-    self.ignored = ignored
   }
 
   var generation: Int {
@@ -61,243 +45,67 @@ final class WorktreeIndex {
     return generationValue
   }
 
-  /// The walk has been to the bottom at least once.
-  var isBuilt: Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return isBuiltValue
-  }
-
-  /// What is directly in `directory`, or nil if the walk has not been there — which is the tree's
-  /// cue to list it itself.
+  /// What was in `directory` when it was last listed, or nil for one nobody has opened — which is
+  /// the tree's cue to list it itself, and then to say so through `note`.
   func entries(of directory: String) -> [Entry]? {
     lock.lock()
     defer { lock.unlock() }
     return directories[directory]
   }
 
-  func isIgnoredDirectory(_ path: String) -> Bool {
+  /// The tree listed this directory; keep it, so a batch naming something inside it has something
+  /// to be compared against. No generation bump: nothing reads differently for this, it is the
+  /// reader telling the index what it has already drawn.
+  func note(_ directory: String, entries: [Entry]) {
     lock.lock()
-    defer { lock.unlock() }
-    return ignoredDirectories.contains(path)
-  }
-
-  /// Every file the walk found, byte-sorted the way `FileTree` wants its input. Flattened on the
-  /// queue after every change (39ms for 14,500 files, which is not a cost for the main thread to
-  /// pay per batch while an agent writes) and kept; a reader ahead of that flattening — the first
-  /// ask, in practice — does it here.
-  var filePaths: [String] {
-    lock.lock()
-    if let cache = filePathsCache, cache.generation == generationValue {
-      lock.unlock()
-      return cache.paths
-    }
-    let snapshot = (directories, ignoredDirectories, generationValue)
+    directories[directory] = entries
     lock.unlock()
-    return flatten(snapshot.0, ignored: snapshot.1, generation: snapshot.2)
   }
 
-  /// Flatten a snapshot, off the lock, and keep the result if the index has not moved since.
-  @discardableResult
-  private func flatten(
-    _ directories: [String: [Entry]], ignored: Set<String>, generation: Int
-  ) -> [String] {
-    var paths: [String] = []
-    func walk(_ directory: String) {
-      for entry in directories[directory] ?? [] {
-        let path = directory.isEmpty ? entry.name : "\(directory)/\(entry.name)"
-        if entry.isDirectory {
-          if !ignored.contains(path) { walk(path) }
-        } else {
-          paths.append(path)
-        }
-      }
-    }
-    walk("")
-    paths.sort(by: FileTree.precedesBytewise)
-    lock.lock()
-    if generation == generationValue { filePathsCache = (generation, paths) }
-    lock.unlock()
-    return paths
-  }
-
-  /// Every file under `directory`, as the index currently holds it. Called with the lock held,
-  /// and only for a subtree that is about to leave or has just arrived — so it costs the size of
-  /// the change, never the size of the worktree.
-  private func filesUnderLocked(_ directory: String, in listings: [String: [Entry]]) -> [String] {
-    var found: [String] = []
-    func walk(_ parent: String) {
-      for entry in listings[parent] ?? [] {
-        let path = parent.isEmpty ? entry.name : "\(parent)/\(entry.name)"
-        if entry.isDirectory {
-          if !ignoredDirectories.contains(path) { walk(path) }
-        } else {
-          found.append(path)
-        }
-      }
-    }
-    walk(directory)
-    return found
-  }
-
-  /// The flattening a batch does: the names it took out dropped, the names it brought in merged
-  /// back in order, and the sort never run again.
+  /// FSEvents named `moved`; list again the directories those paths sit in, on the queue, and
+  /// hand back on the main queue which of them now read differently.
   ///
-  /// The list is what the filter and the content search read, and it used to be rebuilt whole
-  /// after every change — a walk of every directory and a sort of every path, 37ms per batch on
-  /// a 48,000-file worktree, on the queue those two readers wait behind, and paid while an agent
-  /// writes whether anyone is filtering or not. Almost always for nothing: this index holds
-  /// *names*, so a file being edited moves none of them and there is nothing at all to do.
-  ///
-  /// `base` is the flattening as it stood before the batch, with the generation it was taken at.
-  /// If anything else has moved the index since, it is not a base to splice onto and the whole
-  /// flattening is run instead.
-  private func reflatten(
-    base: (generation: Int, paths: [String])?, adding: Set<String>, removing: Set<String>
-  ) {
-    guard let base else { return flattenLatest() }
-    lock.lock()
-    let generation = generationValue
-    lock.unlock()
-
-    var paths = removing.isEmpty ? base.paths : base.paths.filter { !removing.contains($0) }
-    if !adding.isEmpty {
-      // One merge pass over two sorted runs, rather than an append and a sort.
-      let fresh = adding.sorted(by: FileTree.precedesBytewise)
-      var merged: [String] = []
-      merged.reserveCapacity(paths.count + fresh.count)
-      var left = 0
-      var right = 0
-      while left < paths.count && right < fresh.count {
-        if FileTree.precedesBytewise(fresh[right], paths[left]) {
-          merged.append(fresh[right])
-          right += 1
-        } else {
-          merged.append(paths[left])
-          left += 1
-        }
-      }
-      merged.append(contentsOf: paths[left...])
-      merged.append(contentsOf: fresh[right...])
-      paths = merged
-    }
-
-    lock.lock()
-    if generation == generationValue { filePathsCache = (generation, paths) }
-    lock.unlock()
-  }
-
-  /// The flattening the queue does after each change, from a snapshot so the lock is not held
-  /// for it.
-  private func flattenLatest() {
-    lock.lock()
-    let snapshot = (directories, ignoredDirectories, generationValue)
-    lock.unlock()
-    flatten(snapshot.0, ignored: snapshot.1, generation: snapshot.2)
-  }
-
-  /// Walk the whole worktree, on the queue. `completion` lands on the main queue.
-  func build(completion: @escaping () -> Void) {
-    queue.async { [self] in
-      var fresh: [String: [Entry]] = [:]
-      var freshIgnored: Set<String> = []
-      walk("", into: &fresh, ignored: &freshIgnored)
-      lock.lock()
-      directories = fresh
-      ignoredDirectories = freshIgnored
-      generationValue += 1
-      isBuiltValue = true
-      lock.unlock()
-      flattenLatest()
-      DispatchQueue.main.async(execute: completion)
-    }
-  }
-
-  /// FSEvents named `moved`; list again the directories they sit in, on the queue, and hand back
-  /// on the main queue which directories the index now reads differently for — nil for all of
-  /// them, which is what a batch that could not be placed (one that reached into `.git`) costs.
-  /// A directory that appeared is walked; one that went takes its subtree out of the index.
+  /// nil is the wholesale question — a batch that could not be placed. There is nothing to
+  /// compare against then, so the listings are dropped rather than re-read: the tree is told that
+  /// everything may have moved, and lists again whatever it draws next. Keeping a listing that
+  /// may be wrong is worse than keeping none, because the tree asks here first.
   func update(moved: Set<String>?, completion: @escaping (Set<String>?) -> Void) {
     guard let moved else {
-      build { completion(nil) }
+      lock.lock()
+      directories.removeAll()
+      generationValue += 1
+      lock.unlock()
+      DispatchQueue.main.async { completion(nil) }
       return
     }
     let parents = Set(moved.map { ($0 as NSString).deletingLastPathComponent })
     queue.async { [self] in
       var changed: Set<String> = []
-      // What the flattening has to lose and gain, gathered as the listings move so the list is
-      // spliced rather than rebuilt — see `reflatten`. The base is taken before anything moves.
-      lock.lock()
-      let base = filePathsCache.flatMap { $0.generation == generationValue ? $0 : nil }
-      lock.unlock()
-      var added: Set<String> = []
-      var removed: Set<String> = []
       for parent in parents {
         lock.lock()
         let before = directories[parent]
-        let parentKnown = before != nil
-        let parentIgnored = ignoredDirectories.contains(parent)
         lock.unlock()
-        // Not yet walked — inside an ignored directory, or not there when the walk went past —
-        // and not the tree's business to have indexed; it lists such a directory itself.
-        guard parentKnown, !parentIgnored else { continue }
+        // Not a directory the tree has opened, so nothing was ever drawn from it.
+        guard let before else { continue }
         guard let after = list(parent) else {
           // The directory itself is gone; its parent's relisting is what says so.
-          lock.lock()
-          removed.formUnion(filesUnderLocked(parent, in: directories))
-          lock.unlock()
           remove(parent)
           changed.insert(parent)
           continue
         }
-        // The files directly in it, which is what an ordinary batch moves.
-        let namesBefore = Set((before ?? []).filter { !$0.isDirectory }.map(\.name))
-        let namesAfter = Set(after.filter { !$0.isDirectory }.map(\.name))
-        let full = { (name: String) in parent.isEmpty ? name : "\(parent)/\(name)" }
-        added.formUnion(namesAfter.subtracting(namesBefore).map(full))
-        removed.formUnion(namesBefore.subtracting(namesAfter).map(full))
-        var fresh: [String: [Entry]] = [:]
-        var freshIgnored: Set<String> = []
-        let ignoredHere = ignored(
-          after.filter(\.isDirectory).map { parent.isEmpty ? $0.name : "\(parent)/\($0.name)" })
-        // A directory that is new to the listing is walked in; one that stayed keeps its subtree.
-        // New means new *as a directory*: a name that was a file and is now a directory is as
-        // unwalked as one that was not there at all, and taking the names regardless of kind
-        // left everything under it out of the index for as long as it stood.
-        let known = Set((before ?? []).filter(\.isDirectory).map(\.name))
-        for entry in after where entry.isDirectory && !known.contains(entry.name) {
-          let path = parent.isEmpty ? entry.name : "\(parent)/\(entry.name)"
-          if ignoredHere.contains(path) {
-            freshIgnored.insert(path)
-          } else {
-            walk(path, into: &fresh, ignored: &freshIgnored)
-          }
-        }
+        guard after != before else { continue }
         lock.lock()
-        for entry in before ?? [] where entry.isDirectory && !after.contains(entry) {
-          let path = parent.isEmpty ? entry.name : "\(parent)/\(entry.name)"
-          removed.formUnion(filesUnderLocked(path, in: directories))
-          removeLocked(path)
-        }
-        // What the walk above brought in, which is a directory that has just appeared.
-        for directory in fresh.keys { added.formUnion(filesUnderLocked(directory, in: fresh)) }
         directories[parent] = after
-        directories.merge(fresh) { _, new in new }
-        ignoredDirectories.formUnion(freshIgnored)
-        for path in ignoredHere { ignoredDirectories.insert(path) }
         generationValue += 1
         lock.unlock()
         changed.insert(parent)
       }
-      if !changed.isEmpty { reflatten(base: base, adding: added, removing: removed) }
       DispatchQueue.main.async { completion(changed) }
     }
   }
 
-  /// List `directory` again now, on the calling thread — for the panel's own write, whose row
-  /// has to be there before the next line of code names it. One directory, no subtree: what a
-  /// New File or a rename adds to a directory is the entry itself, and a directory that moved is
-  /// walked by `update`, which the caller also runs.
+  /// List `directory` again now, on the calling thread — for the panel's own write, whose row has
+  /// to be there before the next line of code names it.
   func refreshNow(_ directory: String) {
     lock.lock()
     let known = directories[directory] != nil
@@ -309,53 +117,15 @@ final class WorktreeIndex {
     lock.unlock()
   }
 
-  /// List `directory` and everything under it that git does not ignore, into `into`. Breadth
-  /// first, so git is asked once per level about every directory found on it rather than once
-  /// per directory: an ask opens the repository, and 3,300 opens were 330ms of a walk that is
-  /// otherwise 75ms.
-  ///
-  /// A level is listed on every core at once. The directories of one level have nothing to say
-  /// to each other — each is a `readdir` and nothing more — and the levels below the first
-  /// carry thousands of them, so this is the walk's one parallel seam and it needs no
-  /// bookkeeping to be safe: each listing writes its own slot, and the level is folded in
-  /// afterwards, in the order the frontier had. Measured on a synthesized 11,000-directory,
-  /// 48,000-file worktree: the whole build 645ms before, 168ms after, of which the listing is
-  /// the half this halves and `readdir` (see `list`) is the other.
-  private func walk(
-    _ directory: String, into: inout [String: [Entry]], ignored ignoredOut: inout Set<String>
-  ) {
-    var frontier = [directory]
-    while !frontier.isEmpty {
-      var listed = [[Entry]?](repeating: nil, count: frontier.count)
-      listed.withUnsafeMutableBufferPointer { buffer in
-        DispatchQueue.concurrentPerform(iterations: buffer.count) { index in
-          buffer[index] = list(frontier[index])
-        }
-      }
-      var subdirectories: [String] = []
-      for (parent, listing) in zip(frontier, listed) {
-        guard let entries = listing else { continue }
-        into[parent] = entries
-        for entry in entries where entry.isDirectory {
-          subdirectories.append(parent.isEmpty ? entry.name : "\(parent)/\(entry.name)")
-        }
-      }
-      guard !subdirectories.isEmpty else { return }
-      let ignoredHere = ignored(subdirectories)
-      ignoredOut.formUnion(ignoredHere)
-      frontier = subdirectories.filter { !ignoredHere.contains($0) }
-    }
-  }
-
   /// One directory, off the disk. Everything under `.git` is the one thing left out, being the
   /// repository and not the worktree — and in a linked worktree a file, not a directory.
   ///
   /// `readdir` rather than `contentsOfDirectory`, for the one thing the directory entry already
-  /// carries: whether the name is a directory. Foundation's answer to that is a `stat` per
-  /// entry — a syscall per *file* in the checkout, where the listing itself is one per
-  /// directory — and it was near half the walk: 475ms against 257ms for the same 48,000 files.
-  /// A link is still stat'd, because what matters about one is what it points at, and so is an
-  /// entry on a filesystem that does not fill `d_type` in.
+  /// carries: whether the name is a directory. Foundation's answer to that is a `stat` per entry —
+  /// a syscall per *file* in the directory, where the listing itself is one — and it was near half
+  /// of what listing cost: 475ms against 257ms over 48,000 files. A link is still stat'd, because
+  /// what matters about one is what it points at, and so is an entry on a filesystem that does not
+  /// fill `d_type` in.
   static func list(_ url: URL) -> [Entry]? {
     guard let handle = opendir(url.path) else { return nil }
     defer { closedir(handle) }
@@ -383,18 +153,14 @@ final class WorktreeIndex {
     Self.list(directory.isEmpty ? root : root.appendingPathComponent(directory))
   }
 
+  /// Forget `directory` and everything under it — it has left the disk.
   private func remove(_ directory: String) {
     lock.lock()
-    removeLocked(directory)
-    generationValue += 1
-    lock.unlock()
-  }
-
-  private func removeLocked(_ directory: String) {
     let prefix = directory + "/"
     for key in directories.keys where key == directory || key.hasPrefix(prefix) {
-      directories[key] = nil
+      directories.removeValue(forKey: key)
     }
-    ignoredDirectories = ignoredDirectories.filter { $0 != directory && !$0.hasPrefix(prefix) }
+    generationValue += 1
+    lock.unlock()
   }
 }

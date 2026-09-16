@@ -920,17 +920,23 @@ Workspace (one window)
   disagreement was two fields in one window answering one string two ways. Both readings now come
   off one parse of one file, which is the only arrangement in which they cannot drift; the second
   walk of the transcript that used to produce the narrow one is gone with it.
-- **One field over the tree, two operations, told apart by gesture.** Typing filters the tree by
-  path — live, in memory, and the tree stays a tree. Return searches contents — off the main
-  thread, over every file, and the panel becomes a result list until Escape. Running both off the
-  same keystroke was built and removed: it greps the worktree on every character, and it has to
-  flatten the tree to show what it found, so the filter stops being a filter. Both are plain
-  case-insensitive substring, so what matched is always explicable, and there is still one field
-  and no prefix syntax. **Case-insensitive means ASCII case folding** — one rule, shared by the
-  two gestures, and the reason is that the general one was unaffordable: Foundation's
-  `.caseInsensitive` is most of what made a whole-worktree scan take ten seconds. What it gives
-  up is accented Latin (`CAFÉ` no longer answers to `café`); a query with no case of its own,
-  Japanese included, is matched exactly as before.
+- **One field over the tree, two operations, told apart by gesture — and both of them are one
+  `rg`.** Typing filters the tree by path; Return searches contents, and the panel becomes a
+  result list until Escape. Running both off the same keystroke was built and removed: it greps
+  the worktree on every character, and it has to flatten the tree to show what it found, so the
+  filter stops being a filter. There is still one field and no prefix syntax, and what matched is
+  always explicable: a filter matches a path component that contains what was typed, and
+  everything under a directory whose name does, so `Tests` narrows to that directory's contents
+  and `Hukan/Files` narrows by two components at once; a search matches a literal line,
+  case-insensitively. Neither is a regular expression — someone filtering for `*.swift` means
+  those characters, and the query's own glob characters are escaped on the way to rg.
+  **Both readings used to be hukan's own**, matching a list it had walked and held: a plain
+  case-insensitive substring, ASCII-folded because Foundation's `.caseInsensitive` was most of
+  what made a whole-worktree scan take ten seconds. rg answers the same questions without the
+  list — which is the point, since the list was the memory — and its case folding is Unicode's,
+  so `CAFÉ` answers to `café` again. The one thing the old rule did that this one does not is
+  straddle a separator inside a component: a `/` in the query now has to line up with one in the
+  path, which is what a raw substring over the whole path never required.
 - **The expensive gesture has to visibly take.** ⏎ empties the list it is asked from — the files
   panel's, and now the rail's — before anything is read. Leaving the rows up through the scan is
   showing the answer to the *other* question while this one is being read, and on the rail it also
@@ -993,27 +999,45 @@ Workspace (one window)
   dimmed** — it is in the worktree whether git wants it or not, and the dimming is what keeps a
   build directory from reading as the work. **The listing is lazy and off the main thread**, so a
   checkout of any size costs what is on screen and a file a build or an agent just wrote appears
-  when its batch lands, without waiting on git and whether git will ever see it or not. **The one
-  refusal is that ignored directories are not walked into.** They are rows, and they open, but a
-  dependency directory is a hundred thousand files nobody wants filtered or searched, and walking
-  it with git's ignore rules applied from outside libgit2 was measured at 566ms against the 107ms
-  the working-tree diff spends applying them inside. So **the filter and the content search cover
-  what the walk covers**, which is the tree less those directories; an ignored file in an ordinary
-  directory is covered like any other. The ± scope is git's changed set, as before, and everything
-  under `.git` is left out of all of it, being the repository and not the worktree.
-- **The panel's own costs were measured, against a 25,000-file checkout.** git was never the slow
-  half there — the working-tree diff and the index read are tens of milliseconds — so all three
-  of the numbers that mattered were hukan's own. A content search took 10.5s, nearly all of it
-  Foundation's case-insensitive matching, and the read is now split over the cores a round at a
-  time: 1.4–1.8s, abandonable, and in path order regardless of which read finishes first, because
-  the cap has to cut the same hits a serial scan would have cut. A keystroke in the filter cost
-  272ms of the main thread — 33ms matching every path, 239ms opening every row of what survived —
-  and is now ~34ms: the paths are folded once when the file list moves rather than per keystroke,
-  the opening is budgeted, and the rows are inserted in one batch, since `expandItem` reloads the
-  view around every row it inserts and that alone was 58ms of the 239. And the held-elsewhere
-  rescan re-listed Claude Code's process registry once *per session on the rail* — 42ms of the
-  main thread for 121 of them, on every FSEvents batch under that directory — where one read of
-  it answers for every session at once.
+  when its batch lands, without waiting on git and whether git will ever see it or not. **Nothing is walked because a
+  worktree was opened.** The tree lists the directory it is showing and hands that listing to
+  `WorktreeIndex`, which keeps it only so that a later FSEvents batch can be answered by
+  comparison — so what is held is what someone opened, a bound nobody had to choose. It used to be
+  the whole worktree, walked once when a repository opened and kept: every directory's entries
+  plus a flattened list of every path, which is what the filter and the search matched against.
+  The walk's only bound was git's ignore rules, and **git answers nothing at all outside a
+  repository**, so a plain directory was walked to the bottom however large it was — and the plain
+  directory people actually open is the home directory. 4.56M entries here, about 174 bytes each
+  held: three quarters of a gigabyte spent because a window was opened. A budget was the obvious
+  answer and the wrong one: it is a number nobody can defend, and it makes the filter quietly
+  partial in a way the person then has to be told about. What replaced it is not a smaller walk
+  but no walk — the two gestures produce their own answers and drop them (see the bullet above),
+  and the ± scope is git's changed set, as before. Everything under `.git` stays out of all of it,
+  being the repository and not the worktree.
+- **The panel's own costs were measured, and what was left after rg is the drawing.** git was
+  never the slow half — the working-tree diff and the index read are tens of milliseconds — and
+  the reading half is not hukan's any more: a content search it used to do itself took 10.5s over
+  a 25,000-file checkout, nearly all of it Foundation's case-insensitive matching, where rg
+  answers the same query over a 60,000-file one in 0.03s. What stayed hukan's is what happens to
+  the rows. A keystroke in the filter cost 272ms of the main thread — 33ms matching every path,
+  239ms opening every row of what survived — and the second of those is still paid: the opening
+  is budgeted, and the rows are inserted in one batch, since `expandItem` reloads the view around
+  every row it inserts and that alone was 58ms of the 239. The matching is gone from that number
+  because it happens in the other process. And the held-elsewhere rescan re-listed Claude Code's
+  process registry once *per session on the rail* — 42ms of the main thread for 121 of them, on
+  every FSEvents batch under that directory — where one read of it answers for every session at
+  once.
+- **What a gesture costs, it costs again — nothing is kept between two of them.** A filter is one
+  rg per keystroke, the one before it killed as the next starts: 0.03s on this checkout, and on a
+  home directory 10s, which is what a question about 1.56M files costs anywhere. Holding the walk
+  instead was built and measured — the second keystroke free, the first one 170MB of resident
+  memory for as long as the field had text in it — and dropped, because a bound that only exists
+  while nobody looks at a large directory is not a bound. The rows stream in as rg finds them, in
+  path order, so a filter fills rather than waiting; a search does the same, with no cap on the
+  hits and no size at which a file stops being read. The old scan had both, a 2000-hit limit and a
+  2MB file, because it was reading every file on this machine's own cores and a query like `e`
+  would otherwise have cost ten thousand rows of work nobody asked for. What still does not get
+  read is a binary file, which is rg's default and was the old rule too.
 - **Master data lives where it already is.** git owns worktrees, Claude Code owns sessions and
   transcripts; hukan stores only open repositories plus UI state — plus the one session-side
   exception, the composer choices the engine forgets across `--resume`. The rail's order is UI
@@ -1514,9 +1538,23 @@ build was not.
 
 The project is hand-authored and tracked — edit `project.pbxproj` directly. Folder groups are
 file-system-synchronized, so a new file under `Sources/` just appears. `Resources/hukan.icns`,
-`Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework` and the query files
-under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
+`Resources/rg`, `Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework` and the
+query files under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
 step, not part of the build.
+
+`Resources/rg` is ripgrep, and it is the one program hukan runs. The files panel's filter and its
+content search are a process each, per gesture, started by someone typing and killed by the next
+keystroke — which is a different shape from the thing libgit2 is here to prevent below, a spawn
+per FSEvents batch per worktree. What it buys is the walk: rg prunes by every `.gitignore` it
+passes, nested repositories included and — with `--no-require-git` — directories that are no
+repository at all, which is the only reason a directory with no git above it can be opened at
+all. It is bundled rather than depended on, because the cask is one of three ways hukan arrives
+and a formula the user could remove, at a prefix that moves with the architecture, is a
+dependency that fails silently. Built from a pinned source release by `Vendor/build-ripgrep.sh`
+rather than taken from ripgrep's own macOS download, which is the same call the two xcframeworks
+make: the bytes hukan ships are bytes built here. 31s, or 1m13s with the whole-program LTO the
+script asks for — which buys size and nothing else (4,239,088 bytes against 3,464,480; both jobs
+are bound by syscalls and the disk, so the walk and the search are unmoved).
 
 `Clibgit2.xcframework` is the git engine: libgit2, linked in-process so hukan spawns no `git`
 at all — the point being that a large repository under a storm of FSEvents used to fork two
