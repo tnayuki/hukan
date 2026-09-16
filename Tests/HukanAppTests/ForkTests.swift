@@ -158,6 +158,7 @@ final class ForkTests: XCTestCase {
       switch record.kind {
       case .userText(let text): return text
       case .assistantText(let text): return text
+      case .apiError(let text): return text
       case .toolUse: return nil
       }
     }

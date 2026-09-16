@@ -17,10 +17,11 @@ enum RunState: String {
   /// (no turn is running), but it is not a state the agent can leave on its own — the fix is
   /// `/login`, which the composer intercepts and runs in a real terminal.
   case signedOut
-  /// The turn ended on an error result (`result` with a non-`success` subtype — hit the max
-  /// turns, a tool errored out, the engine gave up). Terminal like `.idle`, but a failure is
-  /// not a "done", so it must not read as the green check: the whole point of the rail is to
-  /// tell a turn that succeeded from one that did not at a glance.
+  /// The turn ended on an error result (`result` with `is_error`, or a non-`success` subtype —
+  /// hit the max turns, a tool errored out, the request never reached the API, the engine gave
+  /// up). Terminal like `.idle`, but a failure is not a "done", so it must not read as the
+  /// green check: the whole point of the rail is to tell a turn that succeeded from one that
+  /// did not at a glance.
   case failed
 
   var badge: String {

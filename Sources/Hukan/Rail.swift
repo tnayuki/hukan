@@ -857,7 +857,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     var parts: [String] = []
     for record in records {
       switch record.kind {
-      case .userText(let body), .assistantText(let body):
+      case .userText(let body), .assistantText(let body), .apiError(let body):
         parts.append(body)
       case .toolUse(let name, let input):
         parts.append(name)

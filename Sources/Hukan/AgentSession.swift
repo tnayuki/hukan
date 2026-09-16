@@ -321,6 +321,16 @@ final class AgentSession {
   /// the engine ends the cut turn with reads as "we stopped it", not "it crashed".
   private var interruptedTurn = false
 
+  /// Set when this turn has already put its own failure in the transcript — an API error, which
+  /// the engine reports as a message before it reports it as a result. The result then marks the
+  /// session without saying it a second time: two red lines for one failure is the reason said
+  /// twice, and the engine's own sentence is the better of them.
+  private var turnReportedFailure = false
+
+  /// Set once this turn has said that a request is being retried. The engine retries ten times
+  /// with a growing delay, so the nine after the first would only say it again.
+  private var turnReportedRetry = false
+
   /// Set by a stop-button interrupt and read once, by the `flushQueue` that the cut turn's
   /// `result` runs: type-ahead survives the stop, but the stop must not send it. A redirecting
   /// send leaves this false, since there the queued line is precisely what has to go out next.
@@ -1836,7 +1846,21 @@ final class AgentSession {
         .filter { $0["type"] as? String == "text" }
         .compactMap { $0["text"] as? String }
         .joined()
-      if let start = streamStart, transcript.length > start, !text.isEmpty {
+      // Flagged rather than worded, so the flag is what is read: matching the sentence would be
+      // matching the engine's own phrasing, which moves on an upgrade.
+      let apiError = event.payload["is_api_error_message"] as? Bool == true
+
+      // A failed request is the exception: the engine reports it as a message of its own
+      // (`is_api_error_message`, `model: "<synthetic>"`), which is the agent's turn ending
+      // badly rather than the agent speaking, so it is drawn as an error — and appended, never
+      // replacing the run above it. That run is the partial answer the error is *about* ("the
+      // response above may be incomplete"), so replacing it would delete the very thing being
+      // reported.
+      if apiError, !text.isEmpty {
+        markTime()
+        append(Transcript.error(text))
+        turnReportedFailure = true
+      } else if let start = streamStart, transcript.length > start, !text.isEmpty {
         let range = NSRange(location: start, length: transcript.length - start)
         let formatted = Transcript.markdown(text)
         transcript.replaceCharacters(in: range, with: formatted)
@@ -1844,10 +1868,10 @@ final class AgentSession {
       } else if !text.isEmpty {
         // Nothing streamed, so there is no span to replace and this event is the only place the
         // text exists: append it. That is how the engine delivers a message it synthesized itself
-        // rather than received (`model: "<synthetic>"`) — an API error, a usage-limit notice —
-        // which has no `content_block_delta` to have opened a run. Dropping it is why such a
-        // line used to appear only after a restart re-read the jsonl, where the parse appends
-        // every assistant text block unconditionally (`ClaudeSessionStore.history`).
+        // rather than received (`model: "<synthetic>"`) — a usage-limit notice — which has no
+        // `content_block_delta` to have opened a run. Dropping it is why such a line used to
+        // appear only after a restart re-read the jsonl, where the parse appends every assistant
+        // text block unconditionally (`ClaudeSessionStore.history`).
         markTime()
         append(Transcript.markdown(text))
       }
@@ -1980,21 +2004,38 @@ final class AgentSession {
       // cut short, a shape the stream did not spell the usual way) still leaves the store right,
       // and the end of the turn is when a stale card would start to mislead.
       refreshTasks()
+      // Whether the turn failed is `is_error`, not the subtype: a request that never reached
+      // the API ends the turn with `subtype: "success"` and `is_error: true`, so a session
+      // whose engine could not resolve a hostname wore the green check of a turn that went
+      // fine. The subtype stays in the test because it is the older of the two spellings and
+      // `error_max_turns` is a failure the flag agrees about anyway.
+      let failed = event.subtype != "success" || event.payload["is_error"] as? Bool == true
+      // Why the loop stopped, which the subtype cannot say: `api_error`, `prompt_too_long`,
+      // `blocking_limit` and the rest all arrive under one subtype. Absent on an engine that
+      // predates the field and on a turn the loop never ran (a local slash command), so the
+      // subtype is what it falls back to.
+      let reason = event.payload["terminal_reason"] as? String
       if interruptedTurn {
         // We asked for this: the engine ends the turn it cut with an error result. That is
         // not a failure to report — a redirect's next turn (if any) follows immediately.
         interruptedTurn = false
         append(Transcript.note("Interrupted"))
-      } else if event.subtype != "success" {
+      } else if failed {
         // Not a redirect we asked for: the turn genuinely failed. Mark the session so the rail
         // shows it, rather than leaving the green check `.idle` set just above. `flushQueue`
         // below reopens `.running` if type-ahead is waiting, so this stands only when the turn
         // truly stopped here.
         state = .failed
-        append(Transcript.error("Stopped (\(event.subtype ?? "unknown"))"))
+        // Said once: an API error already put the engine's own sentence in the transcript, and
+        // this line is the backstop for a failure nothing narrated.
+        if !turnReportedFailure {
+          append(Transcript.error("Stopped (\(reason ?? event.subtype ?? "unknown"))"))
+        }
       } else {
         append(Transcript.text("\n"))
       }
+      turnReportedFailure = false
+      turnReportedRetry = false
       // Delivers the next type-ahead line, if any, which reopens `state`/`isTurnActive`.
       flushQueue()
       onStateChange?()
@@ -2024,6 +2065,27 @@ final class AgentSession {
         permissionMode = mode
       }
       onStateChange?()
+
+    case "system" where event.subtype == "api_retry":
+      // The engine retries a failed request up to ten times with a delay that grows to half a
+      // minute — three minutes in which a window that says nothing reads as one that has hung.
+      // One note per turn is what that gap needs: the nine retries after the first would only
+      // say the same thing again, and if the retry succeeds the note stands as the record of
+      // why the answer was late.
+      //
+      // Only while nothing is arriving. A request dropped mid-response is retried under an open
+      // run, and there the transcript is not silent — a note there would also sit inside the
+      // span the buffered message replaces, so it would be taken back out again.
+      guard !turnReportedRetry, streamStart == nil else { break }
+      turnReportedRetry = true
+      markTime()
+      // `error_status` is null for a connection error that never got an HTTP response, which is
+      // exactly the case this note exists for, so the number is added only when there is one.
+      let status = (event.payload["error_status"] as? NSNumber)?.intValue
+      append(
+        Transcript.note(
+          status.map { "The request failed (HTTP \($0)) — retrying…" }
+            ?? "The request failed to reach the API — retrying…"))
 
     case "system" where event.subtype == "bridge_state":
       // Where Remote Control stands, pushed by the engine rather than polled — the same stance

@@ -48,6 +48,12 @@ waiting for you rather than opening the next turn. A session's rail row starts, 
 and deletes it, or archives it out of the way; a stopped session resumes on the next send. The
 rail takes several rows at once, and one act reaches all of them.
 
+**A turn that failed.** The rail says so rather than showing the green check of a turn that
+went fine — an unreachable API, a prompt too long, an engine that gave up — and the transcript
+carries the engine's own sentence about it, drawn as an error rather than as something the agent
+said. A request being retried says so too, once: the engine retries up to ten times with a
+growing delay, and the note is what keeps three minutes of silence from reading as a hang.
+
 **Approvals.** A tool call the agent is not already allowed to make becomes a card above the
 composer. Allow, Deny, or Escape answers it. Never modal.
 

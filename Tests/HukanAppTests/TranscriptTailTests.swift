@@ -52,6 +52,7 @@ final class TranscriptTailTests: XCTestCase {
       switch $0.kind {
       case .userText(let text): return text
       case .assistantText(let text): return text
+      case .apiError(let text): return text
       case .toolUse(let name, _): return name
       }
     }

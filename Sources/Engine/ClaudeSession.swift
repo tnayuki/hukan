@@ -1465,11 +1465,16 @@ enum ClaudeSessionStore {
       out.unpriced = priced.unpriced
       out.tokens = tokens(of: record)
       out.model = model(of: record)
+      // The engine files a failed request as an assistant record of its own, flagged rather
+      // than worded — so the flag is what is read. Matching the text would be matching the
+      // engine's own phrasing, which moves on an upgrade.
+      let apiError = record["isApiErrorMessage"] as? Bool == true
       for block in blocks {
         switch block["type"] as? String {
         case "text":
           guard let text = block["text"] as? String else { continue }
-          out.records.append(HistoryRecord(kind: .assistantText(text), stamp: at))
+          out.records.append(
+            HistoryRecord(kind: apiError ? .apiError(text) : .assistantText(text), stamp: at))
         case "tool_use":
           out.records.append(
             HistoryRecord(

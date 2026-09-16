@@ -7,6 +7,11 @@ struct HistoryRecord {
   enum Kind {
     case userText(String)
     case assistantText(String)
+    /// An assistant message the engine synthesized to report a failed request rather than
+    /// received from a model (`isApiErrorMessage`, `model: "<synthetic>"`). It is the agent's
+    /// turn ending badly, not the agent speaking, so it is kept apart from `assistantText`:
+    /// rendered as the engine's own words it is indistinguishable from an answer.
+    case apiError(String)
     case toolUse(name: String, input: [String: Any])
   }
   let kind: Kind
@@ -60,6 +65,11 @@ extension Transcript {
         result.append(userMessage(body, forkAnchor: record.forkAnchor))
       case .assistantText(let body):
         result.append(markdown(body))
+        result.append(text("\n"))
+      case .apiError(let body):
+        // Never markdown: the engine's wording is a sentence about the request, and the point
+        // of the line is that it is not prose the agent wrote.
+        result.append(error(body))
         result.append(text("\n"))
       case .toolUse(let name, let input):
         result.append(toolUse(name: name, input: input))

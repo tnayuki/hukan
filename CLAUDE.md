@@ -1065,6 +1065,35 @@ Workspace (one window)
   picker read "Fable 5 5" — while the name it was actually being asked for, "Fable 5", was sitting
   in the reply. Which of the two Fables an account needs spelled out is the engine's to know, not
   something to be re-derived from a model id here.
+- **A turn that failed is `is_error`, not the subtype — and the two disagree exactly where it
+  matters.** A request that never reached the API ends the turn with `subtype: "success"` and
+  `is_error: true`, so a session whose engine could not resolve a hostname wore the green check
+  of a turn that went fine, and the `API Error: …` sentence the engine wrote about it was drawn
+  as prose the agent had written. Both halves are read now. **What it failed of is
+  `terminal_reason`**, which is the only field that tells the ways a loop can stop apart —
+  `api_error`, `prompt_too_long`, `blocking_limit`, `max_turns`, `completed` — where one subtype
+  covers all of them; absent on an engine that predates it and on a turn the loop never ran, so
+  the subtype is what it falls back to.
+  **The failure is said once.** The engine reports an API failure twice, as a message it
+  synthesized (`is_api_error_message`, `model: "<synthetic>"`) and then as the result, and the
+  message is the better sentence of the two, so the result only marks the session. It is a *kind*
+  of transcript record rather than a colour applied on the way past, because the same line has to
+  read the same way when the jsonl is re-read after a restart — where the flag is spelt
+  `isApiErrorMessage` — and because a line that is on screen has to be findable, which a colour is
+  not. Flagged rather than worded, so the flag is what is matched: the sentence is the engine's
+  phrasing and moves on an upgrade.
+  **And it is appended, never laid over the run above it.** The buffered `assistant` message
+  normally replaces the streamed span with its formatted self, which is right for every message
+  the agent sends and wrong for this one: a request dropped mid-response is reported by a message
+  that says the response above may be incomplete, so replacing there deletes exactly the thing
+  being reported.
+  **The retries are the other half, and they are the part that reads as a hang.** The engine
+  retries up to ten times with a delay that grows to half a minute — three minutes in which
+  nothing arrives and nothing is said. One note per turn: the nine after the first would only say
+  it again, and a retry that succeeds leaves the note standing as the record of why the answer was
+  late. Only while nothing is arriving, though — a drop mid-response is retried under an open run,
+  where the transcript is not silent and where a note would sit inside the span the buffered
+  message replaces, so it would be taken straight back out.
 - **Remote Control is a control request on the open stream, and the engine does the bridging.**
   It puts one session on claude.ai/code and the Claude app while the process goes on running here,
   and hukan reaches it exactly as the VS Code extension does — `{subtype: "remote_control",
