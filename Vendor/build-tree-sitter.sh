@@ -47,7 +47,10 @@ markdown|markdown|v0.5.3|https://github.com/tree-sitter-grammars/tree-sitter-mar
 markdown-inline|markdown_inline|v0.5.3|https://github.com/tree-sitter-grammars/tree-sitter-markdown/archive/refs/tags/v0.5.3.tar.gz|tree-sitter-markdown-inline
 "
 
-ARCHS="arm64 x86_64"
+# arm64 alone, the architecture the app is built for: a second slice in a static archive
+# is never linked, so it was repository size and nothing else — and this is the archive
+# where that size is 44 MB.
+ARCH="arm64"
 DEPLOYMENT_TARGET="15.0"
 # Only the definitions SwiftTreeSitter's loader knows by name; it compiles every .scm it
 # finds, so an exotic query file (textobjects, outline) would only be a way to fail launch.
@@ -95,13 +98,11 @@ echo "$GRAMMARS" | while IFS='|' read -r name symbol version url subdir; do
   SRC="$ROOT/src"
   [ -f "$SRC/parser.c" ] || { echo "no generated parser.c in $SRC" >&2; exit 1; }
 
-  for arch in $ARCHS; do
-    echo "==> Compiling tree-sitter-$name ($arch)"
-    mkdir -p "$WORK/obj/$arch"
-    for c in "$SRC"/*.c; do
-      clang -c -O2 -arch "$arch" -mmacosx-version-min="$DEPLOYMENT_TARGET" \
-        -I "$SRC" "$c" -o "$WORK/obj/$arch/$name-$(basename "$c" .c).o"
-    done
+  echo "==> Compiling tree-sitter-$name"
+  mkdir -p "$WORK/obj"
+  for c in "$SRC"/*.c; do
+    clang -c -O2 -arch "$ARCH" -mmacosx-version-min="$DEPLOYMENT_TARGET" \
+      -I "$SRC" "$c" -o "$WORK/obj/$name-$(basename "$c" .c).o"
   done
 
   echo "const TSLanguage *tree_sitter_$symbol(void);" >> "$HEADER"
@@ -157,13 +158,7 @@ module CtreesitterParsers {
 MODULEMAP
 
 echo "==> Archiving"
-LIBS=""
-for arch in $ARCHS; do
-  libtool -static -o "$WORK/obj/$arch.a" "$WORK/obj/$arch"/*.o
-  LIBS="$LIBS $WORK/obj/$arch.a"
-done
-# shellcheck disable=SC2086
-lipo -create $LIBS -output "$WORK/libtree-sitter-parsers.a"
+libtool -static -o "$WORK/libtree-sitter-parsers.a" "$WORK/obj"/*.o
 
 echo "==> Packaging CtreesitterParsers.xcframework"
 rm -rf "$HERE/CtreesitterParsers.xcframework"

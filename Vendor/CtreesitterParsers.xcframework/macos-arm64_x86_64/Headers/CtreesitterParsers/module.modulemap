@@ -1,4 +1,0 @@
-module CtreesitterParsers {
-    header "parsers.h"
-    export *
-}

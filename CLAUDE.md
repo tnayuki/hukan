@@ -1585,7 +1585,7 @@ ships in a *release* rather than in the repository. Nobody's set is all from one
 pulls eight of its twenty-two from outside the official one, two of them its own forks — so
 the script takes a source per grammar rather than a rule.
 
-**The committed archive is 44 MB.** C# and C++ are the two largest grammars, bigger even than
+**The committed archive is 22 MB.** C# and C++ are the two largest grammars, bigger even than
 Swift, and those three are half of it; JSON is 8 KB. That is the price of the decision, paid
 once: a grammar is a table, so it never changes between version bumps.
 
@@ -1594,10 +1594,13 @@ who can install it rather than a build setting. Homebrew stopped building bottle
 macOS — its own diagnostic says so for every version up to Tahoe, where a formula builds from
 source instead — so the machine a universal hukan was for is one that can no longer install the
 CLI half of what it needs. Until now it shipped both slices: 62 MB of binary, half of it for
-nobody, in an app whose whole argument is being small enough to hold in one head. The vendored
-xcframeworks stay universal, because they are static archives and only the slice that links
-reaches the app: regenerating them buys repository size, not product size, and a grammar table
-is the one thing here that never changes.
+nobody, in an app whose whole argument is being small enough to hold in one head. **The vendored
+xcframeworks are arm64 too**, which is the same decision spent in the other pocket: they are
+static archives, so the second slice never reached the app and cost repository size instead —
+and that was 25 MB of it, the grammar tables going from 44 MB to 22 and libgit2 from 5.2 to 2.6.
+Carrying a slice for a machine that cannot install the app is not a cheaper thing to do because
+the linker drops it, and the archives are built by hand from pinned sources, so the arch they
+are built for is a line in each script rather than a build setting anyone has to remember.
 
 **The Debug build is a separate app from the one CI ships.** Debug carries its own bundle id,
 name and icon (`Hukan Dev.app`, amber DEV ribbon); Release keeps the identity the cask installs.

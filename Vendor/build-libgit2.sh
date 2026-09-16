@@ -9,7 +9,9 @@
 set -eu
 
 LIBGIT2_VERSION="1.9.7"
-ARCHS="arm64;x86_64"
+# arm64 alone, the architecture the app is built for: a second slice in a static archive
+# is never linked, so it was repository size and nothing else.
+ARCHS="arm64"
 DEPLOYMENT_TARGET="15.0"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
