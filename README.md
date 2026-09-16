@@ -25,7 +25,7 @@ leaving them out is what keeps hukan small enough for one person to hold in thei
 here instead is an editable, syntax-highlighted source viewer: fixing the file an agent just
 wrote should not mean leaving the window.
 
-Swift 5, AppKit; macOS 15 and up, built against the current SDK. git and tree-sitter are
+Swift 5, AppKit; macOS 15 and up on Apple Silicon, built against the current SDK. git and tree-sitter are
 vendored static libraries; SwiftTerm and SwiftTreeSitter are the only package dependencies.
 
 ---

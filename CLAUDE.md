@@ -1551,6 +1551,16 @@ the script takes a source per grammar rather than a rule.
 Swift, and those three are half of it; JSON is 8 KB. That is the price of the decision, paid
 once: a grammar is a table, so it never changes between version bumps.
 
+**The build is arm64 only** (`ARCHS` pinned in both configurations), which is a decision about
+who can install it rather than a build setting. Homebrew stopped building bottles for Intel
+macOS — its own diagnostic says so for every version up to Tahoe, where a formula builds from
+source instead — so the machine a universal hukan was for is one that can no longer install the
+CLI half of what it needs. Until now it shipped both slices: 62 MB of binary, half of it for
+nobody, in an app whose whole argument is being small enough to hold in one head. The vendored
+xcframeworks stay universal, because they are static archives and only the slice that links
+reaches the app: regenerating them buys repository size, not product size, and a grammar table
+is the one thing here that never changes.
+
 **The Debug build is a separate app from the one CI ships.** Debug carries its own bundle id,
 name and icon (`Hukan Dev.app`, amber DEV ribbon); Release keeps the identity the cask installs.
 Sharing one identity meant the two builds shared everything macOS keys on it — saved window
