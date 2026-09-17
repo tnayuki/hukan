@@ -1500,9 +1500,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// the traffic lights into the middle of the bar.) Hidden via `isHidden`, not removed:
   /// removal indexes into `toolbar.items`, which is empty until the toolbar lazily builds —
   /// an early reload() missed and left an empty capsule behind.
+  ///
+  /// A hidden item keeps the width it was last measured at, and showing it again does not
+  /// measure it: a window born with the item up and its label still empty (the label is only
+  /// filled once a worktree is selected) hid it at the empty capsule's width, and the name that
+  /// arrived later sat clipped inside a bare circle. So showing it asks for the size again.
   private func setStatusToolbarItemVisible(_ visible: Bool) {
     isStatusToolbarItemVisible = visible
     statusToolbarItem?.isHidden = !visible
+    if visible { statusView.invalidateIntrinsicContentSize() }
   }
 
   // MARK: - Actions
