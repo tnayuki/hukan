@@ -610,13 +610,16 @@ Workspace (one window)
   the question and not the parse.
   **What is on screen is coloured first, and the rest follows without being asked.** Stopping at
   the viewport would mean every scroll starts a query and waits for it, and there is nothing to
-  wait for once the tree is built. So the coloured front grows outward from the viewport a step
-  at a time until it reaches both ends, and then stops for good, leaving the file coloured
-  exactly as a whole-file read would have left it. Only the first step clears — the later ones
-  are adding to a file that is already on screen, and clearing there would take the colour off
-  the lines being read for as long as the next slice takes. A scroll faster than the front is
-  the one thing this shows: text arrives plain and fills a beat later, which is the trade every
-  editor that does this makes.
+  wait for once the tree is built. So the rest of the file is read the moment the viewport has
+  been drawn, in one read, leaving the file coloured exactly as a whole-file read would have
+  left it. It walked outward a step at a time once, with a beat between steps to keep the main
+  thread for the reader, and that staircase was most of the wait — the colour arrived in five
+  goes on a long file and reached its end at twice the time one read takes. The viewport is
+  what the beat was protecting, and it is already on screen by then. Only the first read
+  clears — the second adds to a file that is already on screen, and clearing there would take
+  the colour off the lines being read for as long as the rest takes. A scroll before that has
+  landed is the one thing this shows: text arrives plain and fills a beat later, which is the
+  trade every editor that does this makes.
 - **The history a worktree shows is its branch's log, read a page at a time.** The History section
   at the foot of the files panel walks first-parent from HEAD, newest first, one page of 50; going
   past the last row read asks for the next page, and the limit lives on the worktree so every

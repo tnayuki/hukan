@@ -772,13 +772,19 @@ final class SyntaxHighlighter {
   /// soon the reader sees colour and nothing else: the rest of the file follows on its own.
   private static let windowMargin = 4_000
 
-  /// How much further each background step reaches. Larger than the first window because
-  /// nobody is waiting on these — what they are racing is a scroll, not the eye.
-  private static let fillStep = 40_000
+  /// How much further each background step reaches — the rest of the file, whatever is left of
+  /// it, since `sizeLimit` is what a highlighted file can be at most. It was 40,000, walked out
+  /// a step at a time with a beat in between, and the staircase was most of the wait: measured
+  /// in the running app on a 164,000-unit Markdown file, colour reached the far end in five
+  /// arrivals at 380ms, and in two at 150 once it was one step; a 64,000-unit Swift file went
+  /// from 162 to 74. One step pays the query once and nothing for the waiting, and what the beat
+  /// was protecting — the first screenful, drawn and on screen before the rest arrives — is the
+  /// window that has already been painted by the time this runs.
+  private static let fillStep = SyntaxHighlighting.sizeLimit
 
-  /// A beat between steps, so the first screenful is drawn and the reader has the main thread
-  /// before the rest of the file starts arriving.
-  private static let fillDelay = 0.05
+  /// A frame, so the window that has just been coloured is drawn before the rest of the file is
+  /// read. Not a pacing device any more: there is only one step behind it.
+  private static let fillDelay = 1.0 / 60
 
   /// Does not parse: a highlighter is made when the file is opened, which is *before* its text
   /// has been read off disk, so what is in the buffer at this point is the file being left. A
@@ -871,7 +877,8 @@ final class SyntaxHighlighter {
       generation: generation)
   }
 
-  /// The rest of the file, a step at a time, without being asked. What is on screen is coloured
+  /// The rest of the file, without being asked — in one step now (see `fillStep`), though the
+  /// code still reads it as a front that could take several. What is on screen is coloured
   /// first because that is what the reader is waiting for, but stopping there would mean every
   /// scroll runs a query and waits for it — and there is nothing to wait for: the tree is
   /// already built, so the rest is a search of it that can happen while nobody is looking. The
