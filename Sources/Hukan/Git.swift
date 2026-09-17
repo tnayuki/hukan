@@ -1210,11 +1210,25 @@ enum Git {
     if git_repository_head_detached(repo) == 1, let branch = operation(in: repo)?.branch {
       return branch
     }
+    // A repository with no commits yet has a HEAD naming a branch that does not exist, which
+    // `git_repository_head` refuses — and the rail and the top bar then fell back to the
+    // directory's name, reading `repo/repo`. The branch HEAD points at is still the answer.
+    if git_repository_head_unborn(repo) == 1 { return unbornBranch(in: repo) }
     var head: OpaquePointer?
     guard git_repository_head(&head, repo) == 0, let head else { return nil }
     defer { git_reference_free(head) }
     guard let name = git_reference_shorthand(head) else { return nil }
     return String(cString: name)
+  }
+
+  private static func unbornBranch(in repo: OpaquePointer) -> String? {
+    var head: OpaquePointer?
+    guard git_reference_lookup(&head, repo, "HEAD") == 0, let head else { return nil }
+    defer { git_reference_free(head) }
+    guard let target = git_reference_symbolic_target(head) else { return nil }
+    let name = String(cString: target)
+    let prefix = "refs/heads/"
+    return name.hasPrefix(prefix) ? String(name.dropFirst(prefix.count)) : name
   }
 
   /// Where this worktree's own git information actually lives — `rev-parse --git-dir`. For the

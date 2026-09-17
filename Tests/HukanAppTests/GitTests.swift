@@ -65,6 +65,15 @@ final class GitTests: XCTestCase {
     XCTAssertEqual(Git.currentBranch(at: root), "main")
   }
 
+  /// A repository with no commits yet still names its branch — the one HEAD points at.
+  func testABranchWithNoCommitsYetIsStillNamed() throws {
+    makeRepository()
+    git(["checkout", "-q", "-b", "task"])
+
+    XCTAssertEqual(git(["branch", "--show-current"]), "task")
+    XCTAssertEqual(Git.currentBranch(at: root), "task")
+  }
+
   func testTrackedFilesMatchesLsFiles() throws {
     makeRepository()
     try write("a\n", to: "a.txt")
