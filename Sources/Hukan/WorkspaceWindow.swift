@@ -1286,13 +1286,23 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     stack.spacing = 8
     // A right inset too: without it the diffstat sits flush against the trailing edge and,
     // inside Tahoe's toolbar-item capsule, its last digits are clipped by the rounded end.
-    stack.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+    // Uneven because the capsule does not honour them evenly: 8/8 put the text 10pt from the
+    // capsule's left end and 14pt from its right, which reads as off-centre. 10/6 is 12 and 12.
+    stack.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 6)
     stack.setCustomSpacing(12, after: worktreeLabel)
     return stack
   }()
 
   private func setDiffStat(added: Int?, removed: Int?) {
-    guard let added, let removed, added + removed > 0 else {
+    // Hidden rather than emptied: an empty label still takes its width and the spacing before
+    // it, which left the capsule's name sitting well left of centre on a clean worktree.
+    let stat = added.flatMap { added in removed.map { (added, $0) } }
+    let hidden = stat.map { $0.0 + $0.1 == 0 } ?? true
+    if diffLabel.isHidden != hidden {
+      diffLabel.isHidden = hidden
+      statusView.invalidateIntrinsicContentSize()
+    }
+    guard let (added, removed) = stat, !hidden else {
       diffLabel.stringValue = ""
       return
     }
