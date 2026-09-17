@@ -5,12 +5,12 @@ import XCTest
 
 /// The transcript's scroll position has to mean a place in the conversation, not a number of
 /// points. These pin the difference: the same width change that walks a point offset thousands
-/// of points backwards leaves a character anchor on its own line.
+/// of points backwards leaves a reader anchor on its own line.
 final class ScrollAnchorTests: XCTestCase {
   /// A transcript tall enough that a re-wrap moves the reader visibly — the "long session" the
-  /// bug needed. Laid out in full, the way opening a session lays it out.
-  private func longTranscript(width: CGFloat = 600) -> (NSScrollView, NSTextView) {
-    let (scrollView, textView) = makeTranscriptTextView()
+  /// bug needed.
+  private func longTranscript(width: CGFloat = 600) -> (NSScrollView, TranscriptDocumentView) {
+    let (scrollView, textView) = makeTranscriptDocumentView()
     scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
     scrollView.layoutSubtreeIfNeeded()
     let body = NSMutableAttributedString()
@@ -20,21 +20,20 @@ final class ScrollAnchorTests: XCTestCase {
           string: "line \(line) — a transcript line long enough to wrap in a narrower column\n",
           attributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)]))
     }
-    textView.textStorage?.setAttributedString(body)
-    textView.textLayoutManager?.ensureLayout(for: textView.textLayoutManager!.documentRange)
+    textView.setContent(body)
     scrollView.layoutSubtreeIfNeeded()
     return (scrollView, textView)
   }
 
   /// The line the reader has at the top of the viewport, read back off the view.
-  private func topLine(of scrollView: NSScrollView, _ textView: NSTextView) -> String {
-    let index = textView.characterIndexForInsertion(at: scrollView.documentVisibleRect.origin)
+  private func topLine(of scrollView: NSScrollView, _ textView: TranscriptDocumentView) -> String {
+    let index = textView.insertionOffset(at: scrollView.documentVisibleRect.origin)
     let text = textView.string as NSString
     return text.substring(with: text.lineRange(for: NSRange(location: index, length: 0)))
       .trimmingCharacters(in: .newlines)
   }
 
-  private func scrollToMiddle(_ scrollView: NSScrollView, _ textView: NSTextView) {
+  private func scrollToMiddle(_ scrollView: NSScrollView, _ textView: TranscriptDocumentView) {
     scrollView.contentView.scroll(to: NSPoint(x: 0, y: textView.frame.height / 2))
     scrollView.reflectScrolledClipView(scrollView.contentView)
     textView.display()
@@ -61,43 +60,56 @@ final class ScrollAnchorTests: XCTestCase {
   }
 
   /// The fix: the same width change, with the reader's place recorded as a character offset.
-  func testAnchorHoldsTheReadersLineAcrossAWidthChange() {
+  func testAnchorHoldsTheReadersLineAcrossAWidthChange() throws {
     let (scrollView, textView) = longTranscript()
     scrollToMiddle(scrollView, textView)
     let before = topLine(of: scrollView, textView)
-    let anchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView)
-    XCTAssertNotNil(anchor)
+    let anchor = try XCTUnwrap(textView.readerAnchor())
 
     scrollView.frame = NSRect(x: 0, y: 0, width: 480, height: 400)
     scrollView.layoutSubtreeIfNeeded()
     textView.display()
-    anchor?.restore(in: scrollView, of: textView)
+    textView.scroll(to: anchor)
     textView.display()
 
     XCTAssertEqual(topLine(of: scrollView, textView), before)
   }
 
   /// Widening again is the other half of a divider drag, and lands on the same line.
-  func testAnchorHoldsWhenTheColumnWidens() {
+  func testAnchorHoldsWhenTheColumnWidens() throws {
     let (scrollView, textView) = longTranscript(width: 480)
     scrollToMiddle(scrollView, textView)
     let before = topLine(of: scrollView, textView)
-    let anchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView)
+    let anchor = try XCTUnwrap(textView.readerAnchor())
 
     scrollView.frame = NSRect(x: 0, y: 0, width: 700, height: 400)
     scrollView.layoutSubtreeIfNeeded()
     textView.display()
-    anchor?.restore(in: scrollView, of: textView)
+    textView.scroll(to: anchor)
     textView.display()
 
     XCTAssertEqual(topLine(of: scrollView, textView), before)
   }
 
+  /// The document's height is the segments' and never an estimate: laying a long transcript out
+  /// and scrolling through it leaves the height exactly where it was.
+  func testTheHeightIsExactAndNeverReestimated() {
+    let (scrollView, textView) = longTranscript()
+    let height = textView.frame.height
+    XCTAssertEqual(height, textView.documentHeight)
+    for y in stride(from: 0, to: height, by: 1500) {
+      scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+      scrollView.reflectScrolledClipView(scrollView.contentView)
+      textView.display()
+      XCTAssertEqual(textView.frame.height, height, "at \(y)")
+    }
+  }
+
   /// An empty transcript has no layout to anchor to, and must not be made to invent one.
   func testEmptyTranscriptHasNoAnchor() {
-    let (scrollView, textView) = makeTranscriptTextView()
+    let (scrollView, textView) = makeTranscriptDocumentView()
     scrollView.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
     scrollView.layoutSubtreeIfNeeded()
-    XCTAssertNil(TranscriptScrollAnchor.capture(in: scrollView, of: textView))
+    XCTAssertNil(textView.readerAnchor())
   }
 }

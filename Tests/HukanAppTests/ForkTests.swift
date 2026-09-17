@@ -222,30 +222,22 @@ final class ForkTests: XCTestCase {
   /// view what is under the block's trailing centre, and under everywhere else.
   func testTheMarkIsHitWhereItIsDrawn() throws {
     _ = NSApplication.shared
-    let (scrollView, textView) = makeTranscriptTextView()
+    let (scrollView, view) = makeTranscriptDocumentView()
     scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
-    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    view.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
     let rendered = Transcript.render([
       HistoryRecord(kind: .userText("first"), stamp: nil),
       HistoryRecord(kind: .assistantText("one"), stamp: nil),
       HistoryRecord(
         kind: .userText("second\nthird line\nfourth line"), stamp: nil, forkAnchor: "a1"),
     ])
-    textView.textStorage!.setAttributedString(rendered)
-    let view = try XCTUnwrap(textView as? TranscriptTextView)
-    let layout = try XCTUnwrap(view.textLayoutManager)
-    layout.ensureLayout(for: layout.documentRange)
+    view.setContent(rendered)
 
     // The marked block's extent: from where its attribute starts to where it ends.
     let point = try XCTUnwrap(Transcript.forkPoints(in: rendered).first)
-    let content = try XCTUnwrap(layout.textContentManager)
-    let top = try XCTUnwrap(
-      content.location(content.documentRange.location, offsetBy: point.range.location + 1))
-    let bottom = try XCTUnwrap(
-      content.location(content.documentRange.location, offsetBy: NSMaxRange(point.range) - 2))
-    let topFrame = try XCTUnwrap(layout.textLayoutFragment(for: top)).layoutFragmentFrame
-    let bottomFrame = try XCTUnwrap(layout.textLayoutFragment(for: bottom)).layoutFragmentFrame
-    let middle = (topFrame.minY + bottomFrame.maxY) / 2 + view.textContainerOrigin.y
+    let block = try XCTUnwrap(view.blockFrame(of: point.range))
+    let topFrame = block
+    let middle = block.midY
     let right = view.bounds.width - view.textContainerInset.width
 
     XCTAssertEqual(

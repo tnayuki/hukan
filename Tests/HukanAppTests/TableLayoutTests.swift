@@ -72,11 +72,10 @@ final class TableLayoutTests: XCTestCase {
   /// was laid out at the full width and then drawn from the indent — running out past the tint on
   /// its right, which is what a table fitted to its pane exists not to do.
   func testATableInATypedMessageStaysInsideTheBlock() throws {
-    let (scrollView, textView) = makeTranscriptTextView()
+    let (scrollView, textView) = makeTranscriptDocumentView()
     let width: CGFloat = 600
     scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
     textView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
-    let storage = try XCTUnwrap(textView.textStorage)
     // Wide enough that the table wants more room than the block has: what the bug produced is a
     // table the width of the pane, so a fixture that fits either way says nothing.
     let message = Transcript.userMessage(
@@ -87,24 +86,21 @@ final class TableLayoutTests: XCTestCase {
       |---|---|
       | https://github.com/tnayuki/hukan/pull/12 | \(String(repeating: "wide ", count: 40)) |
       """)
-    storage.setAttributedString(message)
-    let layoutManager = try XCTUnwrap(textView.textLayoutManager)
-    layoutManager.ensureLayout(for: layoutManager.documentRange)
+    textView.setContent(message)
 
     var table: TableAttachment?
     var indent: CGFloat = 0
-    storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
-      value, range, stop in
+    textView.enumerateAttribute(.attachment) { value, range, stop in
       guard let found = value as? TableAttachment else { return }
       table = found
       indent =
-        (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
-        as? NSParagraphStyle)?.firstLineHeadIndent ?? 0
+        (textView.attribute(.paragraphStyle, at: range.location) as? NSParagraphStyle)?
+        .firstLineHeadIndent ?? 0
       stop.pointee = true
     }
     let layout = try XCTUnwrap(try XCTUnwrap(table).layout, "the table never laid out")
-    let container = try XCTUnwrap(textView.textContainer)
-    let column = container.size.width - container.lineFragmentPadding * 2
+    // The container's width less the line-fragment padding on each side.
+    let column = textView.wrapWidth - 5 * 2
     XCTAssertGreaterThan(indent, 0, "a message you typed indents what is in it")
     XCTAssertLessThanOrEqual(
       indent + layout.size.width, column - indent + 0.5,

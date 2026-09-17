@@ -145,6 +145,29 @@ Workspace (one window)
   not got). A cancelled navigation is not a failure and never reaches it: cancelling in
   `decidePolicyFor` is *how* a `kolide://` handoff is handed over, so reporting one would put an
   error page in the middle of the device-trust flow this browser exists to get through.
+- **The conversation is drawn by a view that owns its height; the text is still TextKit 2's, in
+  slices.** It was one `NSTextView` over the whole conversation, and everything it fought was
+  the view's rather than the engine's: it sized itself to TextKit's estimate of the text outside
+  the viewport and wrote that estimate over a height that had just been laid out exactly, so the
+  reader's line moved under them and every placement had to be re-derived from an anchor; a
+  history slice landing above the reader cost a layout of everything already loaded, which over a
+  climb is quadratic; and a stray call touching a `layoutManager` converted it to TextKit 1
+  without a word, taking the washes, the marks and every table with it. Measured against the
+  snapshot references, the engine matched them paragraph for paragraph, so the engine stays and
+  the view goes. The transcript is written at its two ends and nowhere else — a reply appends, a
+  slice is put in front, and the one edit inside is a tool call folding — so each slice is a
+  segment with a TextKit 2 stack of its own, whose geometry is the truth inside it; the document
+  adds only where each segment starts, its height is a sum of a few dozen exact numbers, a slice
+  landing above the reader shifts the scroll origin by exactly what it added, and a fold re-lays
+  out the segment it is in. What the view carries itself is what a text view owned: the
+  selection and its copy, the cells of a table, the find bar's client, the cursor. What it gives
+  up is what a text view gave for nothing — VoiceOver reading the conversation, Look Up and the
+  services on a selection — which is the bill, and it was paid knowingly. **It scrolls on the
+  main thread, the way an `NSTextView` does**: a plain view is scrolled concurrently by AppKit,
+  and a session switch landing while a fling was still running left the overlay scroller
+  refusing to show for the gestures that followed, until a click or a focus change reset it —
+  found by logging the private knob alpha in the running app, since a synthetic gesture never
+  reaches a scroll view without an accessibility grant.
 - **A link in the transcript opens on the desk, not in the default browser.** The address an agent
   writes is the task's — the PR it just opened, the issue it is working from — which is what a web
   tab is for; ⌘ sends it out instead. Never automatic: hukan following an address out of the
@@ -198,14 +221,11 @@ Workspace (one window)
   rather than offered. The glyph turns to a tick for a beat, which is the whole of the report
   available: nothing else moves, and the pasteboard is somewhere else. **The pointer over it is an
   arrow**, since the I-beam the rest of the column shows is the one thing that would say the mark
-  is text to be selected. It is said on both of the calls the text view sets its own cursor on,
-  which is not a choice: the view's one tracking area covers the whole column, so a pointer
-  entering it is answered once and the step from the code onto the mark is never an entry at all
-  — that one belongs to the move, after the call that decides the I-beam and a link's hand. The
-  other way round would have been a cursor rect, and there is none to add to: NSTextView keeps no
-  cursor rects at all, measured — and a rect is in document coordinates besides, so covering the
-  marks would mean asking every code slab in the transcript for a corner known only once it is
-  laid out, which is the walk a lazily laid out conversation exists to avoid. **A fence inside a message
+  is text to be selected. The view decides its cursor in one place, asked both when the pointer
+  enters the column and on every move within it — the step from the code onto the mark is never
+  an entry — and it is a decision rather than a cursor rect, since a rect is in document
+  coordinates and covering the marks would mean asking every code slab in the transcript for a
+  corner known only once it is laid out. **A fence inside a message
   you typed is not one of these** — a message's own block styling writes over the code block within
   it, so there is no slab there to have a corner, and that corner is where its `…` already is.
 - **A double-click selects the whole token, and a token is what an agent hands you.** A commit
@@ -543,8 +563,9 @@ Workspace (one window)
   line was added, this line says `func` — and only one of them can be the foreground. The commit
   tab settled that already, so a patch opened as a file takes the same reading and the same
   colours, or one window would read a diff two ways. It costs a rendering surface that reaches
-  past the row's own text, which is what the transcript's fragment does to every paragraph and
-  what this editor was built not to; so it is asked for only in a file whose grammar bands rows
+  past the row's own text, which is what a fragment subclass would charge every paragraph — the
+  transcript draws its washes under the fragments instead — and what this editor was built not
+  to; so it is asked for only in a file whose grammar bands rows
   at all, and every other file keeps the stock surface. The band never enters the storage — the
   buffer is exactly what `⌘S` writes, which is the line the colours already hold to — so unlike
   the commit tab's, which reads a fill off an attribute in text hukan itself built, this one is

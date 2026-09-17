@@ -28,22 +28,13 @@ final class CodeCopyTests: XCTestCase {
     XCTAssertEqual(blocks(in: fenced).count, 1, "only the fence is a slab, not the prose")
 
     let command = "echo one\necho two"
-    let (_, textView) = makeTranscriptTextView()
-    let storage = try XCTUnwrap(textView.textStorage)
-    storage.setAttributedString(Transcript.toolUse(name: "Bash", input: ["command": command]))
-    let delegate = try XCTUnwrap(transcriptClickDelegate(of: textView))
-    var header = NSRange(location: 0, length: 0)
-    storage.enumerateAttribute(
-      Transcript.toolTokenKey, in: NSRange(location: 0, length: storage.length)
-    ) { value, range, stop in
-      if value is ToolCallToken {
-        header = range
-        stop.pointee = true
-      }
-    }
-    _ = delegate.textView(
-      textView, clickedOnLink: Transcript.toolCallLinkURL, at: header.location)
-    XCTAssertEqual(blocks(in: storage), [command], "the opened tool call's body is a slab too")
+    let (_, textView) = makeTranscriptDocumentView()
+    textView.setContent(Transcript.toolUse(name: "Bash", input: ["command": command]))
+    let header = try XCTUnwrap(textView.foldStates().folded.first)
+    XCTAssertTrue(textView.toggleFold(at: header))
+    XCTAssertEqual(
+      blocks(in: textView.attributedSubstring(NSRange(location: 0, length: textView.length))),
+      [command], "the opened tool call's body is a slab too")
   }
 
   /// A fence you typed is not a slab: the message's own block styling has written over it.
@@ -63,11 +54,10 @@ final class CodeCopyTests: XCTestCase {
 
   /// The mark is hit exactly where it is drawn: the trailing room of the slab's first line.
   func testTheMarkIsHitWhereItIsDrawn() throws {
-    let (scrollView, textView) = makeTranscriptTextView()
+    let (scrollView, textView) = makeTranscriptDocumentView()
     scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
     textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
-    let storage = try XCTUnwrap(textView.textStorage)
-    storage.setAttributedString(
+    textView.setContent(
       Transcript.markdown(
         """
         ```
@@ -76,16 +66,11 @@ final class CodeCopyTests: XCTestCase {
         third line
         ```
         """))
-    let layout = try XCTUnwrap(textView.textLayoutManager)
-    layout.ensureLayout(for: layout.documentRange)
 
     var range = NSRange(location: 0, length: 0)
-    _ = storage.attribute(Transcript.copyableCodeKey, at: 2, effectiveRange: &range)
-    let content = try XCTUnwrap(layout.textContentManager)
-    let first = try XCTUnwrap(
-      content.location(content.documentRange.location, offsetBy: range.location + 2))
-    let line = try XCTUnwrap(layout.textLayoutFragment(for: first)).layoutFragmentFrame
-    let middle = line.midY + textView.textContainerOrigin.y
+    _ = textView.attribute(Transcript.copyableCodeKey, at: 2, longestEffectiveRange: &range)
+    let line = try XCTUnwrap(textView.blockFirstLineFrame(of: range))
+    let middle = line.midY
     let right = textView.bounds.width - textView.textContainerInset.width
 
     let hit = try XCTUnwrap(textView.copyMark(at: NSPoint(x: right - 15, y: middle)))
@@ -105,34 +90,28 @@ final class CodeCopyTests: XCTestCase {
   /// paragraph, so taking its middle put the mark halfway down the block, which is where the
   /// message's `…` lives and the whole thing the corner was chosen against.
   func testTheMarkStaysOnTheFirstLineOfAWrappedCommand() throws {
-    let (scrollView, textView) = makeTranscriptTextView()
+    let (scrollView, textView) = makeTranscriptDocumentView()
     scrollView.frame = NSRect(x: 0, y: 0, width: 300, height: 300)
     textView.frame = NSRect(x: 0, y: 0, width: 300, height: 300)
-    let storage = try XCTUnwrap(textView.textStorage)
     let command =
       "nohup cloudflared tunnel --url http://127.0.0.1:8791 >/tmp/cf-tunnel.log 2>&1 & sleep 12"
-    storage.setAttributedString(Transcript.markdown("```\n\(command)\n```"))
-    let layout = try XCTUnwrap(textView.textLayoutManager)
-    layout.ensureLayout(for: layout.documentRange)
+    textView.setContent(Transcript.markdown("```\n\(command)\n```"))
 
     var range = NSRange(location: 0, length: 0)
-    _ = storage.attribute(Transcript.copyableCodeKey, at: 2, effectiveRange: &range)
-    let content = try XCTUnwrap(layout.textContentManager)
-    let first = try XCTUnwrap(
-      content.location(content.documentRange.location, offsetBy: range.location + 2))
-    let paragraph = try XCTUnwrap(layout.textLayoutFragment(for: first))
-    XCTAssertGreaterThan(
-      paragraph.textLineFragments.count, 1, "the fixture has to wrap for this to say anything")
-    let box = paragraph.layoutFragmentFrame
-    let line = try XCTUnwrap(paragraph.textLineFragments.first).typographicBounds
+    _ = textView.attribute(Transcript.copyableCodeKey, at: 2, longestEffectiveRange: &range)
+    // The command's own paragraph: the slab opens with its margin and pad lines.
+    let paragraph = NSRange(location: range.location + 2, length: command.utf16.count)
+    let rows = Set(textView.rects(for: paragraph).map { $0.minY.rounded() })
+    XCTAssertGreaterThan(rows.count, 1, "the fixture has to wrap for this to say anything")
+    let line = try XCTUnwrap(textView.blockFirstLineFrame(of: range))
+    let block = try XCTUnwrap(textView.blockFrame(of: range))
     let right = textView.bounds.width - textView.textContainerInset.width - 15
-    let origin = textView.textContainerOrigin.y
 
     XCTAssertNotNil(
-      textView.copyMark(at: NSPoint(x: right, y: origin + box.minY + line.midY)),
+      textView.copyMark(at: NSPoint(x: right, y: line.midY)),
       "the mark is beside the command's first line")
     XCTAssertNil(
-      textView.copyMark(at: NSPoint(x: right, y: origin + box.midY)),
+      textView.copyMark(at: NSPoint(x: right, y: block.midY)),
       "and not at the middle of the paragraph it wrapped into")
   }
 
@@ -142,7 +121,7 @@ final class CodeCopyTests: XCTestCase {
   /// anywhere but its own rectangle. Pinned with the tracking area that makes the call reachable
   /// at all: one, over the whole view, carrying `.cursorUpdate`.
   func testThePointerIsAnArrowOnTheMarkAndAnIBeamOffIt() throws {
-    let (scrollView, textView) = makeTranscriptTextView()
+    let (scrollView, textView) = makeTranscriptDocumentView()
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
       styleMask: [.titled], backing: .buffered, defer: false)
@@ -157,16 +136,13 @@ final class CodeCopyTests: XCTestCase {
       window.close()
     }
     scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
-    let storage = try XCTUnwrap(textView.textStorage)
-    storage.setAttributedString(Transcript.markdown("```\nfirst line\nsecond line\n```"))
+    textView.setContent(Transcript.markdown("```\nfirst line\nsecond line\n```"))
     // In a window and laid out, but never ordered on screen: the tracking areas are built here,
     // and showing the window takes key away from whatever else the parallel run has up — which
     // is enough to move the reader tests' own windows out from under them.
     textView.layoutSubtreeIfNeeded()
     window.displayIfNeeded()
     textView.updateTrackingAreas()
-    let layout = try XCTUnwrap(textView.textLayoutManager)
-    layout.ensureLayout(for: layout.documentRange)
 
     let area = try XCTUnwrap(textView.trackingAreas.first)
     XCTAssertTrue(
@@ -174,14 +150,10 @@ final class CodeCopyTests: XCTestCase {
       "the whole view asks for cursor updates, which is what reaches the override")
 
     var range = NSRange(location: 0, length: 0)
-    _ = storage.attribute(Transcript.copyableCodeKey, at: 2, effectiveRange: &range)
-    let content = try XCTUnwrap(layout.textContentManager)
-    let first = try XCTUnwrap(
-      content.location(content.documentRange.location, offsetBy: range.location + 2))
-    let line = try XCTUnwrap(layout.textLayoutFragment(for: first)).layoutFragmentFrame
+    _ = textView.attribute(Transcript.copyableCodeKey, at: 2, longestEffectiveRange: &range)
+    let line = try XCTUnwrap(textView.blockFirstLineFrame(of: range))
     let onMark = NSPoint(
-      x: textView.bounds.width - textView.textContainerInset.width - 15,
-      y: line.midY + textView.textContainerOrigin.y)
+      x: textView.bounds.width - textView.textContainerInset.width - 15, y: line.midY)
 
     func cursorUpdate(at point: NSPoint) -> NSEvent {
       NSEvent.enterExitEvent(

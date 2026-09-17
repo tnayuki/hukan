@@ -65,24 +65,19 @@ final class AutolinkTests: XCTestCase {
   /// them apart: a fold toggles and never leaves the transcript, a real URL goes to whoever asked
   /// for it, and with nobody asking it falls through to AppKit and the default browser.
   func testTheClickDelegateSendsRealLinksOutAndFoldsFolds() {
-    let (_, textView) = makeTranscriptTextView()
-    textView.textStorage?.setAttributedString(
-      Transcript.markdown("Opened https://example.com/pr/1\n"))
-    guard let delegate = transcriptClickDelegate(of: textView) else {
-      return XCTFail("the transcript's text view has no click delegate")
-    }
+    let (_, textView) = makeTranscriptDocumentView()
+    textView.setContent(Transcript.markdown("Opened https://example.com/pr/1\n"))
     var opened: [URL] = []
-    delegate.onOpenURL = { url in
+    textView.onOpenURL = { url in
       opened.append(url)
       return true
     }
 
-    XCTAssertTrue(
-      delegate.textView(textView, clickedOnLink: URL(string: "https://example.com/pr/1")!, at: 7))
+    XCTAssertTrue(textView.follow(URL(string: "https://example.com/pr/1")!, at: 7, event: nil))
     XCTAssertEqual(opened, [URL(string: "https://example.com/pr/1")!])
 
     // The fold link is not a hyperlink and must never reach the desk.
-    _ = delegate.textView(textView, clickedOnLink: Transcript.toolCallLinkURL, at: 0)
+    _ = textView.follow(Transcript.toolCallLinkURL, at: 0, event: nil)
     XCTAssertEqual(opened.count, 1, "the fold link stayed in the transcript")
   }
 

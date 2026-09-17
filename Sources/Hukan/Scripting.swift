@@ -142,33 +142,15 @@ final class FoldCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {
     let action = (directParameter as? String) ?? "status"
     guard let contentView = frontController()?.window?.contentView,
-      let textView = Self.transcriptTextView(in: contentView),
-      let storage = textView.textStorage
+      let textView = Self.transcriptView(in: contentView)
     else { return fail("no transcript view") }
-    let whole = NSRange(location: 0, length: storage.length)
 
-    func states() -> (folded: [Int], expanded: [Int]) {
-      var folded: [Int] = []
-      var expanded: [Int] = []
-      storage.enumerateAttribute(Transcript.toolTokenKey, in: whole) { value, range, _ in
-        guard value is ToolCallToken else { return }
-        if storage.attribute(Transcript.toolExpandedKey, at: range.location, effectiveRange: nil)
-          != nil
-        {
-          expanded.append(range.location)
-        } else {
-          folded.append(range.location)
-        }
-      }
-      return (folded, expanded)
-    }
+    func states() -> (folded: [Int], expanded: [Int]) { textView.foldStates() }
 
     func click(at index: Int) -> Any? {
       textView.scrollRangeToVisible(NSRange(location: index, length: 1))
-      let handled =
-        (textView.delegate as? TranscriptClickDelegate)?
-        .textView(textView, clickedOnLink: Transcript.toolCallLinkURL, at: index) ?? false
-      return handled ? "toggled at \(index)" : fail("click not handled at \(index)")
+      return textView.toggleFold(at: index)
+        ? "toggled at \(index)" : fail("click not handled at \(index)")
     }
 
     switch action {
@@ -184,12 +166,10 @@ final class FoldCommand: NSScriptCommand {
     }
   }
 
-  private static func transcriptTextView(in view: NSView) -> NSTextView? {
-    if let textView = view as? NSTextView, textView.delegate is TranscriptClickDelegate {
-      return textView
-    }
+  private static func transcriptView(in view: NSView) -> TranscriptDocumentView? {
+    if let found = view as? TranscriptDocumentView { return found }
     for subview in view.subviews {
-      if let found = transcriptTextView(in: subview) { return found }
+      if let found = transcriptView(in: subview) { return found }
     }
     return nil
   }

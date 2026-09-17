@@ -1,8 +1,8 @@
 import AppKit
 
 extension NSAttributedString.Key {
-  /// A paragraph tinted across the full column width, drawn by `BlockBackgroundFragment`.
-  /// `.backgroundColor` cannot do this — it stops where the glyphs stop.
+  /// A paragraph tinted across the full column width, drawn by `TranscriptDocumentView` under
+  /// the paragraph's fragment. `.backgroundColor` cannot do this — it stops where the glyphs stop.
   static let blockBackground = NSAttributedString.Key("hukanBlockBackground")
   /// A bar down the left edge of the block.
   static let blockAccent = NSAttributedString.Key("hukanBlockAccent")
@@ -535,7 +535,7 @@ public enum Transcript {
       // The table draws itself to the pane's width (see `TableAttachment`) rather than laying out
       // as tab-stopped rows that fall apart once wider than the pane. It rides as an attachment on
       // its own line, with a blank line of breathing room on each side. Its markdown rides along so
-      // a copied selection expands back to text (see `TranscriptTextView.writeSelection`).
+      // a copied selection expands back to text (see `TranscriptDocumentView.selectedText`).
       let attachment = TableAttachment(
         header: headerCells, rows: bodyCells,
         markdown: Self.markdownSource(header: header, rows: rows))
@@ -973,7 +973,7 @@ public enum Transcript {
   /// The mark is the message's own menu and it is drawn, never typed — as text it would either sit
   /// inline, wrapping wherever the line happened to end, or take a line of its own to reach the
   /// edge, and it would be copied out with the message, which is furniture no one said. See
-  /// `TranscriptTextView.drawMarks`.
+  /// `TranscriptDocumentView.drawMarks`.
   public static let messageMarkWidth: CGFloat = 30
 
   /// The uuid a fork started from this block would truncate at. Present across the whole of a

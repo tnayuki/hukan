@@ -25,7 +25,7 @@ final class TranscriptReaderTests: XCTestCase {
   /// thousands of points, and wide enough that the maximize doubles its width.
   @MainActor
   private func openWindow(lines: Int = 2000) throws -> (
-    WorkspaceWindowController, NSWindow, NSScrollView, NSTextView
+    WorkspaceWindowController, NSWindow, NSScrollView, TranscriptDocumentView
   ) {
     let workspace = RailPreviewTests.sampleWorkspace()
     let session = try XCTUnwrap(workspace.sessions.first)
@@ -70,10 +70,8 @@ final class TranscriptReaderTests: XCTestCase {
       ])
   }
 
-  private func transcriptTextView(in view: NSView) -> NSTextView? {
-    if let textView = view as? NSTextView, textView.delegate is TranscriptClickDelegate {
-      return textView
-    }
+  private func transcriptTextView(in view: NSView) -> TranscriptDocumentView? {
+    if let found = view as? TranscriptDocumentView { return found }
     for subview in view.subviews {
       if let found = transcriptTextView(in: subview) { return found }
     }
@@ -81,28 +79,22 @@ final class TranscriptReaderTests: XCTestCase {
   }
 
   /// The line the reader has at the top of the viewport, read back off the view.
-  private func topLine(of scrollView: NSScrollView, _ textView: NSTextView) -> String {
-    let index = textView.characterIndexForInsertion(at: scrollView.documentVisibleRect.origin)
+  private func topLine(of scrollView: NSScrollView, _ textView: TranscriptDocumentView) -> String {
+    let index = textView.insertionOffset(at: scrollView.documentVisibleRect.origin)
     let text = textView.string as NSString
     return text.substring(with: text.lineRange(for: NSRange(location: index, length: 0)))
       .trimmingCharacters(in: .newlines)
   }
 
-  private func isAtBottom(_ scrollView: NSScrollView, _ textView: NSTextView) -> Bool {
+  private func isAtBottom(_ scrollView: NSScrollView, _ textView: TranscriptDocumentView) -> Bool {
     scrollView.documentVisibleRect.maxY >= textView.frame.height - 1
   }
 
-  /// The number of the first line the view is actually drawing, read off the viewport rather
-  /// than the clip: `characterIndexForInsertion` answers for the layout, and once the view has
-  /// re-estimated its height most of the layout is gone and it answers with the document's end.
-  private func drawnTopLine(_ textView: NSTextView) -> Int? {
-    guard let layout = textView.textLayoutManager, let content = layout.textContentManager,
-      let range = layout.textViewportLayoutController.viewportRange
-    else { return nil }
-    let offset = content.offset(from: content.documentRange.location, to: range.location)
-    let text = textView.string as NSString
-    let line = text.substring(with: text.lineRange(for: NSRange(location: offset, length: 0)))
-    return Int(line.split(separator: " ").dropFirst().first ?? "")
+  /// The number of the line at the top of the viewport.
+  private func drawnTopLine(_ scrollView: NSScrollView, _ textView: TranscriptDocumentView)
+    -> Int?
+  {
+    Int(topLine(of: scrollView, textView).split(separator: " ").dropFirst().first ?? "")
   }
 
   /// A scroll under the reader's hand, as `NSScrollView` reports one for a real gesture.
@@ -117,7 +109,7 @@ final class TranscriptReaderTests: XCTestCase {
       name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
   }
 
-  private func scrollToMiddle(_ scrollView: NSScrollView, _ textView: NSTextView) {
+  private func scrollToMiddle(_ scrollView: NSScrollView, _ textView: TranscriptDocumentView) {
     scrollView.contentView.scroll(to: NSPoint(x: 0, y: textView.frame.height / 2))
     scrollView.reflectScrolledClipView(scrollView.contentView)
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
@@ -137,7 +129,7 @@ final class TranscriptReaderTests: XCTestCase {
   /// started moving as one that has finished.
   @MainActor
   private func settle(
-    _ scrollView: NSScrollView, _ textView: NSTextView, still: TimeInterval = 0.25,
+    _ scrollView: NSScrollView, _ textView: TranscriptDocumentView, still: TimeInterval = 0.25,
     timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line
   ) {
     var last: [CGFloat] = []
@@ -264,20 +256,16 @@ final class TranscriptReaderTests: XCTestCase {
         type: "assistant", subtype: nil,
         payload: ["message": ["content": [["type": "text", "text": reply]]]]))
     settle(scrollView, textView)
-    let before = textView.frame.height
-    TranscriptScrollAnchor.layOutWholeDocument(of: textView)
     XCTAssertTrue(
       isAtBottom(scrollView, textView),
-      "the reply landed: \(scrollView.documentVisibleRect) in \(textView.frame.height) (was \(before))"
-    )
+      "the reply landed: \(scrollView.documentVisibleRect) in \(textView.frame.height)")
   }
 
-  /// On a long transcript the view answers the first downward scroll by dropping the layout
-  /// outside the viewport and sizing itself to an estimate of the rest — a height change with
-  /// nothing having moved. A reader who had scrolled up a little and was nudging back toward
-  /// the end used to be read as having rejoined it once inside `pinTolerance`, and that height
-  /// change then took them the rest of the way: the last twenty points of the scroll happening
-  /// by themselves. Rejoining is reaching the end, not nearing it.
+  /// On a long transcript `NSTextView` answered the first downward scroll by dropping the
+  /// layout outside the viewport and sizing itself to an estimate of the rest — a height change
+  /// with nothing having moved, which took a reader nudging back toward the end the rest of the
+  /// way. The view owns its height now, so a scroll changes nothing but the origin: twenty
+  /// points short of the end stays twenty points short of it.
   @MainActor
   func testComingBackTowardTheEndByHandDoesNotSnapToIt() throws {
     let (_, window, scrollView, textView) = try openWindow(lines: 4000)
@@ -287,27 +275,27 @@ final class TranscriptReaderTests: XCTestCase {
     settle(scrollView, textView)
     XCTAssertTrue(isAtBottom(scrollView, textView), "a session opens at the bottom")
     let exact = textView.frame.height
+    let end = scrollView.documentVisibleRect.maxY
 
     liveScroll(scrollView, by: 40)
     settle(scrollView, textView)
     liveScroll(scrollView, by: -20)
     settle(scrollView, textView)
 
-    try XCTSkipIf(
-      textView.frame.height == exact,
-      "the view did not re-estimate its height, so there is nothing here to snap on")
+    XCTAssertEqual(textView.frame.height, exact, "a scroll never changes the document's height")
     XCTAssertFalse(
       isAtBottom(scrollView, textView),
       "twenty points short of the end is not the end: \(scrollView.documentVisibleRect) in "
         + "\(textView.frame.height)")
-    XCTAssertLessThan(
-      textView.frame.height - scrollView.documentVisibleRect.maxY, 200,
-      "and it is still within a few lines of it")
+    XCTAssertEqual(
+      end - scrollView.documentVisibleRect.maxY, 20, accuracy: 1,
+      "and it is exactly the twenty points the reader left")
   }
 
-  /// The same re-estimate leaves the clip's origin where it was, and in the re-estimated
-  /// document that origin names text screens away from the line being read — the next scroll
-  /// drew a line 74 lines earlier. The reader keeps their line, not their origin.
+  /// The same re-estimate left the clip's origin where it was, and in the re-estimated document
+  /// that origin named text screens away from the line being read. The reader keeps their line
+  /// because nothing under them is ever re-measured: a scroll of less than a line leaves the
+  /// same line on top.
   @MainActor
   func testTheReadersLineHoldsWhenTheViewReestimatesItsHeight() throws {
     let (_, window, scrollView, textView) = try openWindow(lines: 4000)
@@ -319,15 +307,13 @@ final class TranscriptReaderTests: XCTestCase {
     settle(scrollView, textView)
     liveScroll(scrollView, by: -20)
     settle(scrollView, textView)
-    try XCTSkipIf(
-      textView.frame.height == exact,
-      "the view did not re-estimate its height, so there is nothing here to hold across")
-    let line = try XCTUnwrap(drawnTopLine(textView))
+    let line = try XCTUnwrap(drawnTopLine(scrollView, textView))
 
     liveScroll(scrollView, by: -20)
     settle(scrollView, textView)
 
-    let after = try XCTUnwrap(drawnTopLine(textView))
+    XCTAssertEqual(textView.frame.height, exact, "the height is the segments', never an estimate")
+    let after = try XCTUnwrap(drawnTopLine(scrollView, textView))
     XCTAssertEqual(
       after, line, accuracy: 1, "twenty points is less than a line, and the line stays on top")
   }
@@ -359,7 +345,7 @@ final class TranscriptReaderTests: XCTestCase {
   /// scrolling up pulls a slice in above the reader — the transcript hukan actually opens.
   @MainActor
   private func openWindowOnALazyConversation() throws -> (
-    NSWindow, NSScrollView, NSTextView, URL
+    NSWindow, NSScrollView, TranscriptDocumentView, URL
   ) {
     let worktree = URL(fileURLWithPath: "/repo/hukan")
     let workspace = RailPreviewTests.sampleWorkspace()

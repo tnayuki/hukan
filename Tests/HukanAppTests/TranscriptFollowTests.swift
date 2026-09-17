@@ -15,7 +15,9 @@ import XCTest
 /// these post them by hand, so what is pinned here is what the column does with them.
 final class TranscriptFollowTests: XCTestCase {
   @MainActor
-  private func openWindow() throws -> (NSWindow, NSScrollView, NSTextView, AgentSession) {
+  private func openWindow() throws -> (
+    NSWindow, NSScrollView, TranscriptDocumentView, AgentSession
+  ) {
     let workspace = RailPreviewTests.sampleWorkspace()
     let session = try XCTUnwrap(workspace.sessions.first)
     for line in 0..<800 {
@@ -38,10 +40,8 @@ final class TranscriptFollowTests: XCTestCase {
     return (window, try XCTUnwrap(textView.enclosingScrollView), textView, session)
   }
 
-  private func transcriptTextView(in view: NSView) -> NSTextView? {
-    if let textView = view as? NSTextView, textView.delegate is TranscriptClickDelegate {
-      return textView
-    }
+  private func transcriptTextView(in view: NSView) -> TranscriptDocumentView? {
+    if let found = view as? TranscriptDocumentView { return found }
     for subview in view.subviews {
       if let found = transcriptTextView(in: subview) { return found }
     }

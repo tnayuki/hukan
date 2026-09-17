@@ -24,7 +24,7 @@ final class ScrollBox: LayerSurface {
     self.maxHeight = maxHeight
     self.inset = inset
     self.bordered = bordered
-    let (scrollView, textView) = makeTranscriptTextView()
+    let (scrollView, textView) = makeTranscriptDocumentView()
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     wantsLayer = true
@@ -36,7 +36,7 @@ final class ScrollBox: LayerSurface {
       paintLayer = { $0.borderColor = NSColor.separatorColor.cgColor }
     }
     textView.textContainerInset = inset
-    textView.textStorage?.setAttributedString(content)
+    textView.setContent(content)
     scrollView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(scrollView)
     _ = scrollView.pin(to: self)

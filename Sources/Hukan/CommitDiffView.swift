@@ -61,11 +61,12 @@ enum CommitTheme {
 
 /// Paints one row's band across the whole document width.
 ///
-/// The transcript has a fragment for this too (`BlockBackgroundFragment`) and this is not it: a
-/// diff band is flat, full-bleed and per-row, where that one is an inset slab with rounded outer
-/// corners spanning a run of paragraphs. The reason to keep them apart is cost, though, not
-/// looks. Widening a fragment's rendering surface to the document width is what that class does
-/// to *every* paragraph, and in a pane where nothing wraps the document is as wide as its
+/// The transcript draws a wash for this too (`TranscriptDocumentView`, under each paragraph's
+/// fragment) and this is not it: a diff band is flat, full-bleed and per-row, where that one is an
+/// inset slab with rounded outer corners spanning a run of paragraphs. The reason to keep them
+/// apart is cost, though, not looks. Widening a fragment's rendering surface to the document width
+/// is what a fragment subclass costs *every* paragraph, and in a pane where nothing wraps the
+/// document is as wide as its
 /// longest line; here only a banded row pays for it, and every other row gets a plain fragment.
 final class DiffBandFragment: NSTextLayoutFragment {
   var fill: NSColor?

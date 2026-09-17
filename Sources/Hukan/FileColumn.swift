@@ -1,13 +1,11 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// The editor's text view. Deliberately not `makeTranscriptTextView`'s, though the wiring below
-/// is nearly the same boilerplate: that factory also installs the transcript's own machinery —
-/// a layout delegate that lays every paragraph out as a `BlockBackgroundFragment`, a click
-/// delegate that owns the `NSTextViewDelegate` slot to fold tool calls, and an `NSTextView`
-/// subclass that reads every double-click as a possible fold re-toggle. None of that means
-/// anything to a source file — only `WordSelectingTextView` underneath it does, which is what
-/// `EditorTextView` is built on — and the fragment widens every line's rendering surface to the
+/// The editor's text view. An `NSTextView`, where the transcript is `TranscriptDocumentView` — a
+/// view of its own over TextKit 2 stacks, with a selection, a find client and a fold toggle of
+/// its own. None of that means anything to a source file, which is edited, and so wants exactly
+/// what `NSTextView` is; only `WordSelectingTextView` is shared, which is what `EditorTextView`
+/// is built on. A fragment subclass widening every line's rendering surface to the
 /// column's full width — which here, where nothing wraps, is the width of the longest line in
 /// the file. Ten lines of duplicated AppKit boilerplate is the cheaper side of the trade.
 ///

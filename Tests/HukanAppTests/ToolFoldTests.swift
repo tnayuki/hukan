@@ -15,26 +15,14 @@ final class ToolFoldTests: XCTestCase {
   }
 
   func testFoldRoundTripThroughClickDelegate() throws {
-    let (_, textView) = makeTranscriptTextView()
-    let storage = textView.textStorage!
+    let (_, textView) = makeTranscriptDocumentView()
     let command = "echo one\necho two\necho three"
-    storage.setAttributedString(Transcript.toolUse(name: "Bash", input: ["command": command]))
+    textView.setContent(Transcript.toolUse(name: "Bash", input: ["command": command]))
+    let storage = TranscriptDocumentText(textView)
 
-    let delegate = try XCTUnwrap(transcriptClickDelegate(of: textView))
     func headerIndex(expanded: Bool) -> Int? {
-      var found: Int?
-      storage.enumerateAttribute(
-        Transcript.toolTokenKey,
-        in: NSRange(location: 0, length: storage.length)
-      ) { value, range, _ in
-        guard value is ToolCallToken else { return }
-        let isExpanded =
-          storage.attribute(
-            Transcript.toolExpandedKey, at: range.location,
-            effectiveRange: nil) != nil
-        if isExpanded == expanded { found = range.location }
-      }
-      return found
+      let states = textView.foldStates()
+      return expanded ? states.expanded.last : states.folded.last
     }
 
     // Folded by default: the ▸ line shows the summary, not the whole command.
@@ -43,21 +31,21 @@ final class ToolFoldTests: XCTestCase {
 
     // Expand through the click delegate, exactly as clickedOnLink does.
     let folded = try XCTUnwrap(headerIndex(expanded: false), "folded header found")
-    _ = delegate.textView(textView, clickedOnLink: Transcript.toolCallLinkURL, at: folded)
+    _ = textView.toggleFold(at: folded)
     XCTAssertTrue(storage.string.contains("▾ Bash"), "expands to an open header")
     XCTAssertTrue(storage.string.contains("echo three"), "expanded block shows the whole command")
     XCTAssertFalse(storage.string.contains("▸ Bash"), "folded line is gone while open")
 
     // Collapse from the open header, same path.
     let expanded = try XCTUnwrap(headerIndex(expanded: true), "expanded header found")
-    _ = delegate.textView(textView, clickedOnLink: Transcript.toolCallLinkURL, at: expanded)
+    _ = textView.toggleFold(at: expanded)
     XCTAssertTrue(storage.string.contains("▸ Bash"), "folds back to the ▸ line")
     XCTAssertFalse(storage.string.contains("echo three"), "body hidden again")
     XCTAssertNil(headerIndex(expanded: true), "no stray expanded marker remains")
 
     // A fast second click arrives as clickCount 2. Right after a toggle it must be read as
     // another toggle (the collapse above just recorded one), not a word selection.
-    let transcriptView = try XCTUnwrap(textView as? TranscriptTextView)
+    let transcriptView = textView
     let doubleClick = try XCTUnwrap(
       NSEvent.mouseEvent(
         with: .leftMouseDown, location: .zero, modifierFlags: [],
@@ -80,26 +68,14 @@ final class ToolFoldTests: XCTestCase {
   /// An ExitPlanMode plan is a compact foldable record: a "Here is Claude's plan:" one-liner (no
   /// mechanical tool name, no preview) that opens to the whole plan and folds back.
   func testPlanFoldsToOneLinerAndRoundTrips() throws {
-    let (_, textView) = makeTranscriptTextView()
-    let storage = textView.textStorage!
+    let (_, textView) = makeTranscriptDocumentView()
     let plan = (1...12).map { "- item \($0)" }.joined(separator: "\n")
-    storage.setAttributedString(Transcript.toolUse(name: "ExitPlanMode", input: ["plan": plan]))
+    textView.setContent(Transcript.toolUse(name: "ExitPlanMode", input: ["plan": plan]))
+    let storage = TranscriptDocumentText(textView)
 
-    let delegate = try XCTUnwrap(transcriptClickDelegate(of: textView))
     func headerIndex(expanded: Bool) -> Int? {
-      var found: Int?
-      storage.enumerateAttribute(
-        Transcript.toolTokenKey,
-        in: NSRange(location: 0, length: storage.length)
-      ) { value, range, _ in
-        guard value is ToolCallToken else { return }
-        let isExpanded =
-          storage.attribute(
-            Transcript.toolExpandedKey, at: range.location,
-            effectiveRange: nil) != nil
-        if isExpanded == expanded { found = range.location }
-      }
-      return found
+      let states = textView.foldStates()
+      return expanded ? states.expanded.last : states.folded.last
     }
 
     // Folded: just the header, no plan body and no mechanical "ExitPlanMode".
@@ -109,15 +85,23 @@ final class ToolFoldTests: XCTestCase {
 
     // Open it: the whole plan shows.
     let folded = try XCTUnwrap(headerIndex(expanded: false), "folded header found")
-    _ = delegate.textView(textView, clickedOnLink: Transcript.toolCallLinkURL, at: folded)
+    _ = textView.toggleFold(at: folded)
     XCTAssertTrue(storage.string.contains("▾ Here is Claude's plan:"), "opens to a ▾ header")
     XCTAssertTrue(storage.string.contains("item 12"), "the whole plan shows when opened")
 
     // Collapse back to the one-liner.
     let expanded = try XCTUnwrap(headerIndex(expanded: true), "expanded header found")
-    _ = delegate.textView(textView, clickedOnLink: Transcript.toolCallLinkURL, at: expanded)
+    _ = textView.toggleFold(at: expanded)
     XCTAssertTrue(
       storage.string.contains("▸ Here is Claude's plan:"), "folds back to the one-liner")
     XCTAssertFalse(storage.string.contains("item 12"), "the plan is hidden again")
   }
+}
+
+/// What the tests read the view's text through: `string` re-read on every use, since the view
+/// rewrites its segments on a fold.
+private struct TranscriptDocumentText {
+  let view: TranscriptDocumentView
+  init(_ view: TranscriptDocumentView) { self.view = view }
+  var string: String { view.string }
 }

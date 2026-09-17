@@ -2,15 +2,14 @@ import XCTest
 
 @testable import Hukan
 
-/// A width change has to invalidate the whole transcript view. It draws no background of its own
-/// but is layer-backed anyway, so TextKit 2's fragment-by-fragment redraw leaves the previous
-/// wrapping on the layer underneath the new one unless the view is marked dirty outright.
+/// A width change has to invalidate the whole transcript view: every line re-wraps, so nothing
+/// drawn at the old width may survive.
 final class TranscriptRewrapTests: XCTestCase {
   /// In a real (never shown) window: AppKit drops an invalidation on a view with no window, so
   /// `needsDisplay` would read back false however it was set.
   @MainActor
-  private func makeHostedTextView() -> NSTextView {
-    let (scrollView, textView) = makeTranscriptTextView()
+  private func makeHostedTextView() -> TranscriptDocumentView {
+    let (scrollView, textView) = makeTranscriptDocumentView()
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: .borderless,
       backing: .buffered, defer: false)

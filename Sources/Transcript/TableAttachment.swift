@@ -12,13 +12,13 @@ import AppKit
 /// the whole table is one attachment character, so a range in the storage cannot name a cell. Two
 /// things stand in for that. A selection that covers the attachment copies as the table's
 /// `markdown` rather than as the `￼` an attachment character copies as (see
-/// `TranscriptTextView.writeSelection`), and the table carries a selection of its own — see
+/// `TranscriptDocumentView.selectedText`), and the table carries a selection of its own — see
 /// `TableSelection` and the geometry below, which is what the view drags against.
 final class TableAttachment: NSTextAttachment {
   private let header: [NSAttributedString]
   private let rows: [[NSAttributedString]]
   /// The table's own markdown, so a copied selection expands the attachment back to text rather
-  /// than the `￼` an attachment character copies as. `TranscriptTextView.writeSelection` reads it.
+  /// than the `￼` an attachment character copies as. `TranscriptDocumentView.selectedText` reads it.
   let markdown: String
   /// The width the current `image` was drawn for, so a relayout at the same width reuses it
   /// instead of re-rasterising (`attachmentBounds` fires more than once per width).

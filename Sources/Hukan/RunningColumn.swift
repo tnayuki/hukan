@@ -15,7 +15,7 @@ final class RunningColumnViewController: NSViewController {
   /// once — a session that has never connected has no window to be a fraction of.
   private let contextLabel = NSTextField(labelWithString: "")
   private let scrollView: NSScrollView
-  private let textView: TranscriptTextView
+  private let textView: TranscriptDocumentView
   private let input = ComposerInput()
   var inputField: NSView { input.focusTarget }
   /// The composer itself, for the `completions` scripting verb.
@@ -119,20 +119,20 @@ final class RunningColumnViewController: NSViewController {
   var isMaximized = false
 
   init() {
-    (scrollView, textView) = makeTranscriptTextView()
+    (scrollView, textView) = makeTranscriptDocumentView()
     super.init(nibName: nil, bundle: nil)
     // Set once, not per attached session: where a link goes does not depend on which
     // conversation is on screen (the mirror, set in `attach`, is the thing that does).
-    transcriptClickDelegate(of: textView)?.onOpenURL = { [weak self] url in
+    textView.onOpenURL = { [weak self] url in
       self?.onOpenURL?(url) ?? false
     }
-    (textView as? TranscriptTextView)?.messageActions = [
-      TranscriptTextView.MessageAction(title: "Fork Before This Message") {
+    textView.messageActions = [
+      TranscriptDocumentView.MessageAction(title: "Fork Before This Message") {
         [weak self] anchor, range in
         guard let self, let session = self.attached else { return }
         self.onForkSession?(session, anchor, range)
       },
-      TranscriptTextView.MessageAction(
+      TranscriptDocumentView.MessageAction(
         title: "Roll Back to Before This Message",
         isEnabled: { [weak self] in self?.attached?.canRollBack ?? false },
         perform: { [weak self] anchor, range in
@@ -347,12 +347,9 @@ final class RunningColumnViewController: NSViewController {
     NotificationCenter.default.addObserver(
       self, selector: #selector(liveScrollEnded),
       name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
-    // The view says when it has re-wrapped — from its own layout, not a frame notification, which
-    // `NSTextView` stops posting at the first live resize (see `onRewrap`).
+    // The view says when it has re-wrapped — from its own layout, which is the one moment the
+    // reader's text actually moves (see `onRewrap`).
     textView.onRewrap = { [weak self] in self?.putReaderBack() }
-    // And when it has changed height — the document growing under a reader at the end, or the
-    // view writing its own estimate over a height that was exact (see `onHeightChange`).
-    textView.onHeightChange = { [weak self] in self?.documentHeightChanged() }
 
     titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
     titleLabel.textColor = .labelColor
@@ -454,16 +451,14 @@ final class RunningColumnViewController: NSViewController {
   /// above them move their offset, which is what `expandAllFolds` hands back. The rail's
   /// highlight is repainted because the wash sits in the storage the unfold just rewrote.
   private func expandFolds() {
-    guard let delegate = transcriptClickDelegate(of: textView) else { return }
-    let anchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView)
+    let anchor = textView.readerAnchor()
     isRestoringAnchor = true
-    let moved = delegate.expandAllFolds(in: textView, preserving: anchor?.offset ?? 0)
+    let moved = textView.expandAllFolds(preserving: anchor?.offset ?? 0)
     if let anchor {
-      TranscriptScrollAnchor(offset: moved, within: anchor.within)
-        .restore(in: scrollView, of: textView)
+      textView.scroll(to: TranscriptDocumentView.ReaderAnchor(offset: moved, within: anchor.within))
     }
     isRestoringAnchor = false
-    scrollAnchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView)
+    scrollAnchor = textView.readerAnchor()
     applyTranscriptHighlight(scrollToFirst: false)
   }
 
@@ -486,7 +481,7 @@ final class RunningColumnViewController: NSViewController {
   /// points names a different part of the text once the column has been re-wrapped, so this is
   /// what a width change has to leave alone — and the only way to assert that without pixels.
   var transcriptReaderOffset: Int {
-    TranscriptScrollAnchor.capture(in: scrollView, of: textView)?.offset ?? 0
+    textView.readerAnchor()?.offset ?? 0
   }
 
   func jumpToOffset(_ offset: Int, length: Int) {
@@ -500,7 +495,7 @@ final class RunningColumnViewController: NSViewController {
   /// offset is past the current text — the history has not landed — so `onReload` can retry.
   @discardableResult
   private func applyPendingScroll() -> Bool {
-    guard let offset = pendingScrollOffset, let storage = textView.textStorage else { return false }
+    guard let offset = pendingScrollOffset else { return false }
     // The offset was measured against a full render (the rail searches the file, not the view),
     // so with history still unrendered above, the same number names a different character. Pull
     // the rest in — the jump retries from `onPrepend` when it lands.
@@ -509,10 +504,9 @@ final class RunningColumnViewController: NSViewController {
       return false
     }
     let length = max(1, pendingScrollLength)
-    guard offset >= 0, offset + length <= storage.length else { return false }
+    guard offset >= 0, offset + length <= textView.length else { return false }
     pendingScrollOffset = nil
     let range = NSRange(location: offset, length: length)
-    TranscriptScrollAnchor.layOutWholeDocument(of: textView)
     textView.setSelectedRange(range)
     textView.scrollRangeToVisible(range)
     recordReader(pinned: isTranscriptPinnedToBottom)
@@ -534,34 +528,35 @@ final class RunningColumnViewController: NSViewController {
   private func applyTranscriptHighlight(scrollToFirst: Bool) -> Bool {
     transcriptMatchCount = 0
     transcriptFirstMatchOffset = -1
-    guard let storage = textView.textStorage else { return false }
-    let whole = NSRange(location: 0, length: storage.length)
     if hasPaintedHighlight {
-      storage.removeAttribute(.backgroundColor, range: whole)
+      textView.clearAttribute(.backgroundColor)
       hasPaintedHighlight = false
     }
-    guard !highlightTerms.isEmpty, storage.length > 0 else { return false }
+    guard !highlightTerms.isEmpty, textView.length > 0 else { return false }
 
-    let text = storage.string as NSString
+    let text = textView.string as NSString
     var firstMatch: NSRange?
+    var found: [NSRange] = []
     for term in highlightTerms where !term.isEmpty {
       var scan = NSRange(location: 0, length: text.length)
       while scan.length > 0 {
-        let found = text.range(of: term, options: .caseInsensitive, range: scan)
-        guard found.location != NSNotFound else { break }
-        storage.addAttribute(.backgroundColor, value: Self.matchHighlight, range: found)
-        hasPaintedHighlight = true
-        transcriptMatchCount += 1
-        if firstMatch == nil || found.location < firstMatch!.location { firstMatch = found }
-        let next = found.location + max(found.length, 1)
+        let hit = text.range(of: term, options: .caseInsensitive, range: scan)
+        guard hit.location != NSNotFound else { break }
+        found.append(hit)
+        if firstMatch == nil || hit.location < firstMatch!.location { firstMatch = hit }
+        let next = hit.location + max(hit.length, 1)
         scan = NSRange(location: next, length: text.length - next)
       }
+    }
+    if !found.isEmpty {
+      textView.paint(.backgroundColor, value: Self.matchHighlight, ranges: found)
+      hasPaintedHighlight = true
+      transcriptMatchCount = found.count
     }
 
     guard let first = firstMatch else { return false }
     transcriptFirstMatchOffset = first.location
     if scrollToFirst {
-      TranscriptScrollAnchor.layOutWholeDocument(of: textView)
       textView.scrollRangeToVisible(first)
       jumpButton.isHidden = true
     }
@@ -582,15 +577,15 @@ final class RunningColumnViewController: NSViewController {
     // A different session invalidates any jump aimed at the previous one; a hit-click sets a
     // fresh one after this reload (see the window's onSelectMatch).
     pendingScrollOffset = nil
-    // Fold toggles route through the session so its transcript and this storage stay at
-    // identical offsets (see TranscriptClickDelegate).
-    transcriptClickDelegate(of: textView)?.mirror = session
+    // Fold toggles route through the session so its transcript and this view's text stay at
+    // identical offsets (see `TranscriptStorageMirror`).
+    textView.mirror = session
     input.stringValue = session?.draft ?? ""
     // Replacing the storage takes the wash with the text it rode on, so nothing is left to clear.
     hasPaintedHighlight = false
     // The replacement resizes the view; the placement below is what answers it.
     isRestoringAnchor = true
-    textView.textStorage?.setAttributedString(session?.transcript ?? NSAttributedString())
+    textView.setContent(session?.transcript ?? NSAttributedString())
     isRestoringAnchor = false
     // New content follows the reader only when they are already at the bottom. Scrolled up,
     // the view stays put and the "新着" pill appears instead.
@@ -605,58 +600,42 @@ final class RunningColumnViewController: NSViewController {
     session?.onAppend = { [weak self] fragment in
       guard let self else { return }
       let wasPinned = self.anchorWasPinned
-      let end = self.textView.textStorage?.length ?? 0
-      self.textView.textStorage?.append(fragment)
+      self.textView.append(fragment)
       if wasPinned {
-        self.scrollTranscriptToBottom(changedAt: end)
+        self.scrollTranscriptToBottom()
       } else {
         self.jumpButton.isHidden = false
       }
     }
     session?.onReplace = { [weak self] range, formatted in
-      guard let self, let storage = self.textView.textStorage,
-        NSMaxRange(range) <= storage.length
-      else { return }
+      guard let self, NSMaxRange(range) <= self.textView.length else { return }
       let wasPinned = self.anchorWasPinned
-      storage.replaceCharacters(in: range, with: formatted)
+      self.textView.replace(range, with: formatted)
       if wasPinned {
-        self.scrollTranscriptToBottom(changedAt: range.location)
+        self.scrollTranscriptToBottom()
       } else {
         self.jumpButton.isHidden = false
       }
     }
     session?.onEdit = { [weak self] range, replacement in
-      guard let self, let storage = self.textView.textStorage,
-        NSMaxRange(range) <= storage.length
-      else { return }
-      // Laid out here, under the flag, so the height the fold adds or takes lands now and not on
-      // the view's own turn — where `documentHeightChanged` would read a fold opened at the end
-      // as the end having moved and scroll the reader off the fold they just opened.
+      guard let self, NSMaxRange(range) <= self.textView.length else { return }
+      // Under the flag: the clip settling over the fold's new height is not the reader scrolling
+      // off the fold they just opened.
       self.isRestoringAnchor = true
-      storage.replaceCharacters(in: range, with: replacement)
-      TranscriptScrollAnchor.layOutTail(of: self.textView, from: range.location)
+      self.textView.replace(range, with: replacement)
       self.isRestoringAnchor = false
     }
-    // Earlier conversation arrived above the reader. Slide it in without moving them: capture
-    // where they are first (the last scroll's anchor may already describe a mutated document),
-    // insert, and put them back at the same character — now `inserted.length` further in. The
-    // highlight pass re-runs so matches inside the new text get their wash too; it never
-    // scrolls. The placement is the same `restore` a re-wrap takes, whole-document layout and
-    // all — a pass bounded to the text above the reader reads the geometry the document had
-    // before the insert, and leaves them standing exactly where they were (see
-    // `TranscriptScrollAnchor.restore`).
+    // Earlier conversation arrived above the reader. The view slides it in without moving them:
+    // the slice is laid out as a segment of its own and the scroll origin moves down by exactly
+    // what it added. The highlight pass re-runs so matches inside the new text get their wash
+    // too; it never scrolls.
     session?.onPrepend = { [weak self] inserted in
-      guard let self, let storage = self.textView.textStorage else { return }
-      let anchor = TranscriptScrollAnchor.capture(in: self.scrollView, of: self.textView)
+      guard let self else { return }
       self.isRestoringAnchor = true
-      storage.insert(inserted, at: 0)
+      self.textView.prepend(inserted)
       self.applyTranscriptHighlight(scrollToFirst: false)
-      if let anchor {
-        TranscriptScrollAnchor(offset: anchor.offset + inserted.length, within: anchor.within)
-          .restore(in: self.scrollView, of: self.textView)
-      }
       self.isRestoringAnchor = false
-      self.scrollAnchor = TranscriptScrollAnchor.capture(in: self.scrollView, of: self.textView)
+      self.scrollAnchor = self.textView.readerAnchor()
       // A hit-jump that was waiting for the text above it may be satisfied now.
       self.applyPendingScroll()
       // ⌘F asked for the whole conversation and this was the rest of it; open its folds.
@@ -672,7 +651,7 @@ final class RunningColumnViewController: NSViewController {
       guard let self, let session, self.attached === session else { return }
       self.hasPaintedHighlight = false
       self.isRestoringAnchor = true
-      self.textView.textStorage?.setAttributedString(session.transcript)
+      self.textView.setContent(session.transcript)
       self.isRestoringAnchor = false
       // A pending hit-jump wins over scroll-to-first-match, which wins over the bottom.
       let hasJump = self.pendingScrollOffset != nil
@@ -680,7 +659,7 @@ final class RunningColumnViewController: NSViewController {
       if hasJump {
         self.applyPendingScroll()
       } else if !matched {
-        self.scrollTranscriptToBottom(ensuringLayout: true)
+        self.scrollTranscriptToBottom()
       }
     }
     let hasJump = pendingScrollOffset != nil
@@ -688,7 +667,7 @@ final class RunningColumnViewController: NSViewController {
     if hasJump {
       applyPendingScroll()
     } else if !matched {
-      scrollTranscriptToBottom(ensuringLayout: true)
+      scrollTranscriptToBottom()
     }
 
     // Opening a session is what pulls its history off disk — and its task list, which is read
@@ -718,52 +697,18 @@ final class RunningColumnViewController: NSViewController {
     return clip.bounds.origin.y >= maxOriginY - tolerance
   }
 
-  /// Scroll so the latest content is visible. `ensuringLayout` forces the whole document to lay
-  /// out first: right after a bulk `setAttributedString` (opening a session, a reload) TextKit 2
-  /// has laid out almost nothing, so `scrollToEndOfDocument` would stop at the end of that little
-  /// — near the top of a long transcript, which is the "restart lands up high" bug. Streaming
-  /// appends lay out only the tail instead — from where the text changed (`changedAt`, or the
-  /// reader's own line when nothing did) to the end — since a full pass per token would be
-  /// O(n²), and skipping the pass altogether scrolled to an estimated end that a long reply then
-  /// overran by screens (see `TranscriptScrollAnchor.layOutTail`).
-  private func scrollTranscriptToBottom(ensuringLayout: Bool = false, changedAt: Int? = nil) {
-    // A placement is not the reader's scroll, and the layout it runs resizes the view: neither
-    // the scroll nor the resize may come back in as one (`transcriptScrolled`,
-    // `documentHeightChanged`) while this is under way.
+  /// Scroll so the latest content is visible. Every segment is laid out exactly, so the end is
+  /// where the view says it is: nothing to lay out first, and no estimate for a long reply to
+  /// overrun.
+  private func scrollTranscriptToBottom() {
+    // A placement is not the reader's scroll, so it must not come back in as one
+    // (`transcriptScrolled`) while it is under way.
     let wasRestoring = isRestoringAnchor
     isRestoringAnchor = true
     defer { isRestoringAnchor = wasRestoring }
-    if ensuringLayout {
-      TranscriptScrollAnchor.layOutWholeDocument(of: textView)
-    } else {
-      TranscriptScrollAnchor.layOutTail(
-        of: textView, from: min(changedAt ?? Int.max, scrollAnchor?.offset ?? 0))
-    }
-    textView.scrollToEndOfDocument(nil)
+    textView.scrollToBottom()
     recordReader(pinned: true)
     jumpButton.isHidden = true
-  }
-
-  /// The document changed height under the reader without anyone scrolling. One at the end is no
-  /// longer at it — a long reply landed, or the view wrote its own estimate over the exact height
-  /// the tail had just been laid out to and the exact one came back with the display — so they
-  /// go back to the end. One up in the text keeps their *line*, which is not the same as keeping
-  /// their origin: on a long transcript the view drops the layout outside the viewport and sizes
-  /// itself to an estimate of the rest, leaving the origin where it was — and the origin then
-  /// names text four screens from the line being read (see
-  /// `TranscriptScrollAnchor.restoreWithinCurrentLayout`). So the anchor is put back, in the
-  /// layout as the view now has it: a whole-document pass here would restore the exact height
-  /// and be handed the same estimate again on the next scroll.
-  private func documentHeightChanged() {
-    guard isReaderScroll else { return }
-    if anchorWasPinned {
-      scrollTranscriptToBottom()
-    } else if let anchor = scrollAnchor {
-      isRestoringAnchor = true
-      anchor.restoreWithinCurrentLayout(in: scrollView, of: textView)
-      isRestoringAnchor = false
-      recordReader(pinned: false)
-    }
   }
 
   @objc private func jumpToBottomTapped() {
@@ -773,10 +718,10 @@ final class RunningColumnViewController: NSViewController {
   @objc private func liveScrollStarted() { isLiveScrolling = true }
   @objc private func liveScrollEnded() { isLiveScrolling = false }
 
-  /// Where the reader is, as a character offset (see `TranscriptScrollAnchor`). Recorded on every
-  /// scroll so it is always the pre-relayout truth by the time a relayout needs it — reading it
-  /// afterwards would read a position the relayout has already moved.
-  private var scrollAnchor: TranscriptScrollAnchor?
+  /// Where the reader is, as a character offset (see `TranscriptDocumentView.ReaderAnchor`).
+  /// Recorded on every scroll so it is always the pre-relayout truth by the time a relayout needs
+  /// it — reading it afterwards would read a position the relayout has already moved.
+  private var scrollAnchor: TranscriptDocumentView.ReaderAnchor?
   /// Whether that scroll left the reader at the bottom. A relayout must send them back to the
   /// bottom, not to the line that happened to be at the top of the last viewport.
   private var anchorWasPinned = true
@@ -792,9 +737,9 @@ final class RunningColumnViewController: NSViewController {
   /// a direction and not only as a distance from the bottom.
   private var lastReaderOrigin: CGFloat = 0
   /// The widths the reader was last placed or recorded at — the text's wrap width and the
-  /// view's frame width, which under a live resize part company (see `TranscriptTextView`). Only
-  /// a width change re-wraps the document, and so only a width change moves the reader's own
-  /// text; an append grows the tail and leaves it alone.
+  /// view's frame width, which a live resize may move a turn apart. Only a width change re-wraps
+  /// the document, and so only a width change moves the reader's own text; an append grows the
+  /// tail and leaves it alone.
   private var placedWidth: CGFloat = 0
   private var placedFrameWidth: CGFloat = 0
   /// The clip's height when the reader was last placed or recorded. A card landing under the
@@ -871,16 +816,15 @@ final class RunningColumnViewController: NSViewController {
 
   /// The transcript has been re-wrapped, so the clip view's point offset now names a different
   /// part of the conversation — put the reader back on their own text (or at the bottom, if that
-  /// is where they were). Once per width the text is actually laid out at, which under a live
-  /// resize is fewer times than the frame changes (see `TranscriptTextView.onRewrap`) — and each
-  /// time the whole document is laid out and the view sized to it before the scroll, or the
-  /// clip view clamps the scroll to a height that is still the old width's.
+  /// is where they were). Once per width the text is actually laid out at (see
+  /// `TranscriptDocumentView.onRewrap`), by which time every segment is laid out and the view
+  /// sized to them, so the scroll lands where it is aimed.
   private func putReaderBack() {
     isRestoringAnchor = true
     if anchorWasPinned {
-      scrollTranscriptToBottom(ensuringLayout: true)
-    } else {
-      scrollAnchor?.restore(in: scrollView, of: textView)
+      scrollTranscriptToBottom()
+    } else if let scrollAnchor {
+      textView.scroll(to: scrollAnchor)
     }
     isRestoringAnchor = false
     placedWidth = textView.wrapWidth
@@ -894,7 +838,7 @@ final class RunningColumnViewController: NSViewController {
   private func recordReader(pinned: Bool) {
     anchorWasPinned = pinned
     lastReaderOrigin = scrollView.documentVisibleRect.minY
-    scrollAnchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView)
+    scrollAnchor = textView.readerAnchor()
     placedWidth = textView.wrapWidth
     placedFrameWidth = textView.frame.width
     placedClipHeight = scrollView.contentView.bounds.height
@@ -1218,7 +1162,6 @@ final class RunningColumnViewController: NSViewController {
     queuedCardTopInset.constant = queued.isEmpty ? 0 : queuedCardPadding
     queuedCardBottomInset.constant = queued.isEmpty ? 0 : -queuedCardPadding
 
-    settleAfterTurnIfNeeded(session)
   }
 
   /// Mirror the session's bridge into the header's antenna.
@@ -1260,35 +1203,6 @@ final class RunningColumnViewController: NSViewController {
   private func closeRemoteQR() {
     remoteQRPopover?.close()
     remoteQRPopover = nil
-  }
-
-  /// The attached session's id and whether its turn was under way at the last reload — the
-  /// falling edge `settleAfterTurnIfNeeded` watches for.
-  private var turnObserved: (session: UUID, active: Bool)?
-
-  /// A turn just ended: lay the whole document out once and firm its heights up.
-  ///
-  /// Streaming deliberately never runs a full layout pass (per token it would be O(n²) — see
-  /// `scrollTranscriptToBottom`), so a long turn leaves much of the transcript on TextKit 2's
-  /// estimates, and scrolling back up through those jumps as each one is corrected — which is
-  /// why the jerkiness used to clear only on a session switch, the one other act that runs
-  /// this pass. The reader is anchored across it, so the fix for a scroll problem is not
-  /// itself a scroll.
-  private func settleAfterTurnIfNeeded(_ session: AgentSession?) {
-    let active = session?.isTurnActive == true
-    defer { turnObserved = session.map { ($0.id, active) } }
-    guard let session, let observed = turnObserved, observed.session == session.id,
-      observed.active, !active
-    else { return }
-    isRestoringAnchor = true
-    if isTranscriptPinnedToBottom {
-      scrollTranscriptToBottom(ensuringLayout: true)
-    } else if let anchor = TranscriptScrollAnchor.capture(in: scrollView, of: textView) {
-      anchor.restore(in: scrollView, of: textView)
-    } else {
-      TranscriptScrollAnchor.layOutWholeDocument(of: textView)
-    }
-    isRestoringAnchor = false
   }
 
   /// One held type-ahead line: its text, then send-now / edit / delete. The buttons carry their

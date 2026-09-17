@@ -21,28 +21,25 @@ final class TranscriptFindTests: XCTestCase {
   // MARK: The fold is not a filter
 
   func testExpandingOpensEveryFoldAndKeepsTheReadersPlace() throws {
-    let (_, textView) = makeTranscriptTextView()
-    let storage = try XCTUnwrap(textView.textStorage)
-    storage.setAttributedString(
-      Transcript.toolUse(name: "Bash", input: ["command": Self.command]))
+    let (_, textView) = makeTranscriptDocumentView()
+    textView.setContent(Transcript.toolUse(name: "Bash", input: ["command": Self.command]))
     // The reader is standing on a word between the two calls, so opening the first moves them
     // and opening the second does not.
-    storage.append(NSAttributedString(string: "the reader is here\n"))
-    let offset = (storage.string as NSString).range(of: "here").location
-    storage.append(Transcript.toolUse(name: "Bash", input: ["command": Self.command]))
+    textView.append(NSAttributedString(string: "the reader is here\n"))
+    let offset = (textView.string as NSString).range(of: "here").location
+    textView.append(Transcript.toolUse(name: "Bash", input: ["command": Self.command]))
 
-    XCTAssertFalse(storage.string.contains(Self.tail), "folded, the tail is not text at all")
+    XCTAssertFalse(textView.string.contains(Self.tail), "folded, the tail is not text at all")
 
-    let delegate = try XCTUnwrap(transcriptClickDelegate(of: textView))
-    let moved = delegate.expandAllFolds(in: textView, preserving: offset)
+    let moved = textView.expandAllFolds(preserving: offset)
 
-    XCTAssertFalse(storage.string.contains("▸"), "no fold left shut")
+    XCTAssertFalse(textView.string.contains("▸"), "no fold left shut")
     XCTAssertEqual(
-      storage.string.components(separatedBy: Self.tail).count - 1, 2,
+      textView.string.components(separatedBy: Self.tail).count - 1, 2,
       "both calls open, each showing the whole command")
     XCTAssertGreaterThan(moved, offset, "the fold that opened above the reader moved them down")
     XCTAssertTrue(
-      (storage.string as NSString).substring(from: moved).hasPrefix("here"),
+      (textView.string as NSString).substring(from: moved).hasPrefix("here"),
       "and the offset handed back still names the character it named before")
   }
 
@@ -83,7 +80,7 @@ final class TranscriptFindTests: XCTestCase {
   }
 
   private func findScrollView(in view: NSView) -> NSScrollView? {
-    if let scrollView = view as? NSScrollView, scrollView.documentView is TranscriptTextView {
+    if let scrollView = view as? NSScrollView, scrollView.documentView is TranscriptDocumentView {
       return scrollView
     }
     for subview in view.subviews {
@@ -113,7 +110,7 @@ final class TranscriptFindTests: XCTestCase {
     defer { window.close() }
 
     let scrollView = try XCTUnwrap(findScrollView(in: try XCTUnwrap(window.contentView)))
-    let textView = try XCTUnwrap(scrollView.documentView as? TranscriptTextView)
+    let textView = try XCTUnwrap(scrollView.documentView as? TranscriptDocumentView)
     window.makeFirstResponder(textView)
 
     let item = NSMenuItem()

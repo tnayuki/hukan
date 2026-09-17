@@ -26,20 +26,16 @@ final class TableSelectionTests: XCTestCase {
   private func placedTable(
     _ markdown: String, width: CGFloat = 600, file: StaticString = #filePath, line: UInt = #line
   ) throws -> (
-    textView: TranscriptTextView, attachment: TableAttachment, layout: TableLayout, offset: Int
+    textView: TranscriptDocumentView, attachment: TableAttachment, layout: TableLayout,
+    offset: Int
   ) {
-    let (scrollView, textView) = makeTranscriptTextView()
+    let (scrollView, textView) = makeTranscriptDocumentView()
     scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
     textView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
-    let storage = try XCTUnwrap(textView.textStorage, file: file, line: line)
-    storage.setAttributedString(Transcript.markdown(markdown))
-    let layoutManager = try XCTUnwrap(textView.textLayoutManager, file: file, line: line)
-    layoutManager.ensureLayout(for: layoutManager.documentRange)
+    textView.setContent(Transcript.markdown(markdown))
 
     var found: (table: TableAttachment, offset: Int)?
-    storage.enumerateAttribute(
-      .attachment, in: NSRange(location: 0, length: storage.length)
-    ) { value, range, stop in
+    textView.enumerateAttribute(.attachment) { value, range, stop in
       if let table = value as? TableAttachment {
         found = (table, range.location)
         stop.pointee = true
@@ -119,9 +115,8 @@ final class TableSelectionTests: XCTestCase {
   /// through, so a web tab or Safari under ⌘ is one decision made in one place.
   func testAClickOnALinkInACellFollowsIt() throws {
     let placed = try placedTable(linked)
-    let delegate = try XCTUnwrap(placed.textView.delegate as? TranscriptClickDelegate)
     var opened: [URL] = []
-    delegate.onOpenURL = {
+    placed.textView.onOpenURL = {
       opened.append($0)
       return true
     }
@@ -136,9 +131,8 @@ final class TableSelectionTests: XCTestCase {
   /// question is asked after the tracking loop and not on the way in.
   func testADragThatStartedOnALinkSelectsInstead() throws {
     let placed = try placedTable(linked)
-    let delegate = try XCTUnwrap(placed.textView.delegate as? TranscriptClickDelegate)
     var opened: [URL] = []
-    delegate.onOpenURL = {
+    placed.textView.onOpenURL = {
       opened.append($0)
       return true
     }

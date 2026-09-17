@@ -43,24 +43,14 @@ public enum TranscriptPreview {
     let appearance = NSAppearance(named: .darkAqua)!
     NSApplication.shared.appearance = appearance
 
-    let (scrollView, textView) = makeTranscriptTextView()
-    textView.appearance = appearance
-    textView.textStorage?.setAttributedString(content)
-
-    // A tall container first, so layout is never the thing that truncates.
+    let (scrollView, view) = makeTranscriptDocumentView()
+    view.appearance = appearance
+    // The width first, so the content is laid out at it once.
     scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 20_000)
-    textView.frame = scrollView.bounds
-    textView.layoutSubtreeIfNeeded()
-    guard let layout = textView.textLayoutManager else {
-      FileHandle.standardError.write(Data("no TextKit 2 layout manager\n".utf8))
-      exit(1)
-    }
-    layout.ensureLayout(for: layout.documentRange)
-
-    let inset = textView.textContainerInset
-    let height = layout.usageBoundsForTextContainer.height + inset.height * 2
-    textView.frame = NSRect(x: 0, y: 0, width: width, height: height)
-    textView.layoutSubtreeIfNeeded()
+    view.frame = NSRect(x: 0, y: 0, width: width, height: 0)
+    view.setContent(content)
+    let height = view.documentHeight
+    view.frame = NSRect(x: 0, y: 0, width: width, height: height)
 
     // Drawn fragment by fragment rather than snapshotted with `cacheDisplay`, which comes
     // back empty for a view that was never in a window — and into a bitmap of our own rather
@@ -87,17 +77,9 @@ public enum TranscriptPreview {
       guard let context = NSGraphicsContext.current?.cgContext else { return }
       context.saveGState()
       // Text lays out downward from the top; the image context counts up from the bottom.
-      context.translateBy(x: inset.width, y: height - inset.height)
+      context.translateBy(x: 0, y: height)
       context.scaleBy(x: 1, y: -1)
-      layout.enumerateTextLayoutFragments(from: nil, options: [.ensuresLayout]) { fragment in
-        fragment.draw(at: fragment.layoutFragmentFrame.origin, in: context)
-        return true
-      }
-      // What the view draws over its fragments — a message's `…`, a code slab's copy mark — in
-      // the view's coordinates, which sit one inset out from the container's the fragments were
-      // drawn in.
-      context.translateBy(x: -inset.width, y: -inset.height)
-      (textView as? TranscriptTextView)?.drawMarks(in: textView.bounds)
+      view.render(in: context, dirtyRect: view.bounds)
       context.restoreGState()
     }
     NSGraphicsContext.restoreGraphicsState()
