@@ -22,7 +22,7 @@ struct AgentQuestion {
 
   /// The ticked options' labels, in the order the agent offered them rather than the order they
   /// were ticked, so the answer reads the way the question did. Shared by the card's own Done
-  /// and by a composer line answering as "Other", which carries the ticks along with it.
+  /// and by its Other row, whose line goes out after the ticks rather than instead of them.
   func labels(ticked: Set<Int>) -> [String] {
     options.indices.filter(ticked.contains).map { options[$0].label }
   }
@@ -44,6 +44,11 @@ struct PendingQuestion {
   /// advances (see `answerQuestion`).
   var ticked: Set<Int> = []
   var previewsOpen: Set<Int> = []
+  /// Your own words, typed into the card's last row — the answer no option offered. It is here
+  /// for the reason the ticks are: the card is rebuilt under you. It resets with them as the
+  /// set advances, and it is not an index but a text, which is why the card writes it back on
+  /// every keystroke without asking for a redraw (see `setQuestionOther`).
+  var other: String = ""
   var current: AgentQuestion { questions[index] }
 }
 
@@ -1053,17 +1058,12 @@ final class AgentSession {
       // the queue — which is the whole point of the queue; interrupting there would mean it
       // never fills. A queued line keeps its attachments as attachments, so whenever it does
       // go out it takes the same route an immediate send does — an image as an image.
-      // A question is the one thing a typed line can answer outright — it is a choice, and your
-      // own words in place of an offered option are exactly the CLI's "Other", which is why the
-      // card carries no field of its own: the composer directly below it is already one, and two
-      // stacked would be the same box twice. An approval has no such third answer, so a send
-      // there is still the dismissal below. Neither can an attachment ride an answer — it goes
-      // back as one line of text — so a line carrying one takes the dismissal too, where an
-      // image stays an image.
-      if let question = pendingQuestion, attachments.isEmpty {
-        answerQuestion(question.current.labels(ticked: question.ticked) + [command])
-        return
-      }
+      // A question is answered on its own card, in the Other row that carries the focus while
+      // the card is up — so a line typed down here is the other thing you might mean, and it
+      // means what it means for an approval and a grant: the decision is dropped, the turn is
+      // cut, and this line opens the next one. It answered the question once, and the two boxes
+      // were then one act apart with nothing saying which was which; now the box holding the
+      // focus answers and the one you have to move to interrupts.
       if pendingApproval != nil || pendingQuestion != nil || pendingGrant != nil {
         queuedMessages.insert(QueuedMessage(text: text, attachments: attachments), at: 0)
         interrupt(resending: true)
@@ -1535,6 +1535,7 @@ final class AgentSession {
       question.index = next
       question.ticked = []
       question.previewsOpen = []
+      question.other = ""
       pendingQuestion = question
       onStateChange?()
       return
@@ -1561,6 +1562,16 @@ final class AgentSession {
     }
     pendingQuestion = question
     onStateChange?()
+  }
+
+  /// Hold what is being typed into the card's Other row. Unlike the ticks this reports no
+  /// change: the field on screen is already showing the text, so a redraw per keystroke would
+  /// rebuild the card — and the focus and the caret with it — under someone who is typing. What
+  /// it is for is the rebuild somebody *else* causes, which finds the draft here.
+  func setQuestionOther(_ text: String) {
+    guard var question = pendingQuestion else { return }
+    question.other = text
+    pendingQuestion = question
   }
 
   /// Open or fold one option's preview. Same reasoning as the ticks, and the same round trip.

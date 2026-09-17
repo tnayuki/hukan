@@ -18,6 +18,26 @@ final class RunningColumnViewController: NSViewController {
   private let textView: TranscriptDocumentView
   private let input = ComposerInput()
   var inputField: NSView { input.focusTarget }
+
+  /// Where the keyboard goes when a session is dived into: whatever is asking. A question's own
+  /// Other row while its card is up, the composer otherwise — the two mean different things now,
+  /// the card answering the question and the composer cutting the turn short.
+  func focusInput() {
+    if focusPendingQuestion() { return }
+    view.window?.makeFirstResponder(input.focusTarget)
+  }
+
+  /// Land the keyboard on a question that is already waiting, and only that. The key that walks
+  /// the blocked sessions and a tapped banner both mean "go and clear this", so what is asking
+  /// should be what answers a keystroke — but with nothing asking they leave the focus where it
+  /// was, being navigation rather than a dive into the conversation. Says whether it took.
+  @discardableResult
+  func focusPendingQuestion() -> Bool {
+    guard let card = cards.compactMap({ $0 as? QuestionCard }).first else { return false }
+    focusedQuestionID = attached?.pendingQuestion?.requestID
+    card.focusOther()
+    return true
+  }
   /// The composer itself, for the `completions` scripting verb.
   var composerForScripting: ComposerInput { input }
   private let bottomArea = NSView()
@@ -28,6 +48,10 @@ final class RunningColumnViewController: NSViewController {
   /// up (an approval or an AskUserQuestion). The decision sits nearest the field because it is
   /// the one stopped on you; the task list is state, and stays out of the way above it.
   private var cards: [NSView] = []
+  /// The question whose Other row has already been handed the focus. The card claims the
+  /// keyboard once, when the question lands — never again, or a rebuild would take it back from
+  /// the composer you deliberately moved to (which is how you interrupt a question now).
+  private var focusedQuestionID: String?
   private var emptyState: EmptyStateView?
 
   /// A "Thinking" indicator floating at the foot of the transcript, centred — the conversation
@@ -584,6 +608,11 @@ final class RunningColumnViewController: NSViewController {
 
   private func attach(_ session: AgentSession?) {
     guard attached !== session else { return }
+    // A question already up on the session arriving is marked as claimed without being focused:
+    // arrowing down the rail is surveying, and it must not keep pulling the keyboard out of the
+    // list. What lands in the card is a question that *arrives* — and the dive, which aims at
+    // whatever is asking (`focusInput`).
+    focusedQuestionID = session?.pendingQuestion?.requestID
     // The draft belongs to the session being left, not the one arriving — snapshot it before
     // the field is repointed, then load the incoming session's own. So does the reader's place.
     attached?.draft = input.stringValue
@@ -995,6 +1024,10 @@ final class RunningColumnViewController: NSViewController {
   func reload() {
     loadViewIfNeeded()
 
+    // Where the question's Other row stood: whether it held the keyboard, and where its caret
+    // was. The card about to be built is a different object showing the same question, so this
+    // is what lets a rebuild land under someone mid-word without them noticing.
+    let questionFocus = cards.compactMap { ($0 as? QuestionCard)?.otherFocus }.first
     for card in cards { card.removeFromSuperview() }
     cards = []
     emptyState?.removeFromSuperview()
@@ -1072,7 +1105,11 @@ final class RunningColumnViewController: NSViewController {
           question: question,
           onAnswer: { [weak session] answer in session?.answerQuestion(answer) },
           onToggleOption: { [weak session] index in session?.toggleQuestionOption(index) },
-          onTogglePreview: { [weak session] index in session?.toggleQuestionPreview(index) }))
+          onTogglePreview: { [weak session] index in session?.toggleQuestionPreview(index) },
+          onOther: { [weak session] text in session?.setQuestionOther(text) },
+          onEscape: { [weak self] in
+            self?.view.window?.makeFirstResponder(self?.input.focusTarget)
+          }))
     } else if let approval = session.pendingApproval {
       cards.append(
         ApprovalCard(approval: approval) { [weak session] allow in
@@ -1098,6 +1135,20 @@ final class RunningColumnViewController: NSViewController {
       gap = 8
     }
     queuedCard.topAnchor.constraint(equalTo: above, constant: 8).isActive = true
+
+    // The keyboard goes to the question, and it goes there once: a card that has just landed
+    // claims it, and every rebuild after that only puts back what the card it replaced had. A
+    // question answered leaves the id behind it, so the next one claims the focus afresh.
+    if let card = cards.compactMap({ $0 as? QuestionCard }).first,
+      let question = session.pendingQuestion
+    {
+      if focusedQuestionID != question.requestID {
+        focusedQuestionID = question.requestID
+        card.focusOther()
+      } else if let selection = questionFocus {
+        card.focusOther(selecting: selection)
+      }
+    }
   }
 
   /// Mirror the attached session's model, mode and queue into the composer controls. Called

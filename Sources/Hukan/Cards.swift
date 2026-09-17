@@ -237,16 +237,35 @@ final class GrantCard: LayerSurface {
 /// its own act. An option's `preview` — the sketch of what choosing it would look like — folds
 /// under it, because a card standing over the composer must not open at the height of every
 /// option's mockup at once; opened, several stay open, which is what makes two of them comparable.
-/// The third answer, your own words, has no control here at all: the composer directly below is
-/// already a field, and typing into it answers the question (see `AgentSession.send`).
+///
+/// The third answer, your own words, is the last row of the options — a field, the way the CLI
+/// makes Other a row of its own list rather than a box somewhere else. It was the composer
+/// below for a while, on the grounds that two stacked fields are the same box twice; what that
+/// missed is that the two boxes mean different things now. This one answers the question, and
+/// the composer interrupts it — so the card takes the focus while it is up, and moving down to
+/// the composer by hand is how you say you meant the other thing.
+///
+/// Typing into it fires no redraw (`AgentSession.setQuestionOther`), and what is typed lives in
+/// `PendingQuestion` for the same reason the ticks do: a rebuild landing mid-answer must not
+/// take the text — nor, since the running column hands it back afterwards, the caret.
 ///
 /// The card is redrawn from the session on every state change, so what is ticked and what is
 /// open live in `PendingQuestion` rather than in this view — a view holding them would lose them
 /// to any refresh that landed mid-answer.
-final class QuestionCard: LayerSurface {
+final class QuestionCard: LayerSurface, NSTextFieldDelegate {
   private let onAnswer: ([String]) -> Void
   private let onToggleOption: (Int) -> Void
   private let onTogglePreview: (Int) -> Void
+  /// Every keystroke in the Other row, so the draft is somewhere the next rebuild can find it.
+  private let onOther: (String) -> Void
+  /// Escape in that row: the card is done holding the keyboard, and the composer takes it back.
+  private let onEscape: () -> Void
+  private let otherField = NSTextField()
+  /// The multi-select Done, kept so that typing can turn it on. Nothing else about the card
+  /// moves on a keystroke — the ticks are a picture of the session's state and the field draws
+  /// itself — so this is the one thing a redraw would have been for, and it is cheaper to say it
+  /// where it happens than to rebuild the card under the caret.
+  private weak var doneButton: NSButton?
   private let optionLabels: [String]
   /// What Done sends: the ticks as they stood when the card was drawn. Held here because the
   /// checkboxes are only a picture of `PendingQuestion.ticked` — the click that changes one goes
@@ -255,11 +274,14 @@ final class QuestionCard: LayerSurface {
 
   init(
     question: PendingQuestion, onAnswer: @escaping ([String]) -> Void,
-    onToggleOption: @escaping (Int) -> Void, onTogglePreview: @escaping (Int) -> Void
+    onToggleOption: @escaping (Int) -> Void, onTogglePreview: @escaping (Int) -> Void,
+    onOther: @escaping (String) -> Void = { _ in }, onEscape: @escaping () -> Void = {}
   ) {
     self.onAnswer = onAnswer
     self.onToggleOption = onToggleOption
     self.onTogglePreview = onTogglePreview
+    self.onOther = onOther
+    self.onEscape = onEscape
     let current = question.current
     self.optionLabels = current.options.map(\.label)
     self.tickedLabels = current.labels(ticked: question.ticked)
@@ -293,15 +315,21 @@ final class QuestionCard: LayerSurface {
           ticked: question.ticked.contains(index),
           previewOpen: question.previewsOpen.contains(index)))
     }
-    // The one line of instruction on the card, and it earns its place: nothing else says that
-    // the field below answers this too, and an option nobody offered is exactly the answer that
-    // needs saying out loud.
-    let other = NSTextField(labelWithString: "Other — type your own answer below")
-    other.font = .systemFont(ofSize: 11)
-    other.textColor = .tertiaryLabelColor
-    other.lineBreakMode = .byTruncatingTail
-    other.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    rows.append(other)
+    // The last option, and the only one the agent did not write. Its placeholder is the whole
+    // of the instruction: a field standing under the options says what it is for by being one.
+    // Every other answer on this card is a click, so the one that is sent with a key has to say
+    // which key — and the placeholder is where it says it, because that is the state the reader
+    // is in when the question is still "how do I answer this in my own words". A mark at the
+    // field's trailing edge was built first and is the wrong way round: it can only appear once
+    // there is something to send, which is after the moment it was needed. The CLI says the same
+    // thing in a line of key hints under its list, a row of text a window of buttons has no
+    // place for.
+    otherField.placeholderString = "Other — type your own answer, ⏎ to send"
+    otherField.stringValue = question.other
+    otherField.delegate = self
+    otherField.font = .systemFont(ofSize: 12)
+    otherField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    rows.append(otherField)
 
     let skip = NSButton(title: "Skip", target: self, action: #selector(skipClicked))
     skip.bezelStyle = .rounded
@@ -309,17 +337,20 @@ final class QuestionCard: LayerSurface {
 
     var actions: [NSView] = [skip]
     if current.multiSelect {
-      // Nothing ticked is what Skip already says, so the button that sends stays off until
-      // there is something to send and the two never mean the same thing.
+      // Nothing to send is what Skip already says, so the button that sends stays off until
+      // there is something to send and the two never mean the same thing. A line in the Other
+      // row is something to send: it is an answer on its own, ticks or no ticks.
       let done = NSButton(title: "Done", target: self, action: #selector(doneClicked))
       done.bezelStyle = .rounded
       done.controlSize = .small
-      done.isEnabled = !question.ticked.isEmpty
+      doneButton = done
       actions.insert(done, at: 0)
     }
     let actionRow = NSStackView(views: actions)
     actionRow.orientation = .horizontal
     actionRow.spacing = 6
+
+    refreshDone()
 
     let stack = NSStackView(views: rows + [actionRow])
     stack.orientation = .vertical
@@ -419,8 +450,68 @@ final class QuestionCard: LayerSurface {
   }
   @objc private func optionToggled(_ sender: NSButton) { onToggleOption(sender.tag) }
   @objc private func previewToggled(_ sender: NSButton) { onTogglePreview(sender.tag) }
-  @objc private func doneClicked() { onAnswer(tickedLabels) }
+  /// Done, and Return in the Other row, are one act: the ticks as the card drew them plus
+  /// whatever is in the field. Text present is what puts it in the answer — there is no tick of
+  /// its own to set, since a line typed into a box nobody could mistake for anything else is
+  /// already the decision a checkbox beside it would be asking for twice.
+  @objc private func doneClicked() { onAnswer(tickedLabels + otherLines) }
   @objc private func skipClicked() { onAnswer([]) }
+
+  private var otherLines: [String] {
+    let typed = otherField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    return typed.isEmpty ? [] : [typed]
+  }
+
+  // MARK: - The Other row
+
+  func controlTextDidChange(_ notification: Notification) {
+    onOther(otherField.stringValue)
+    refreshDone()
+  }
+
+  /// Done is on while there is an answer to send — which is the same thing Return here refuses
+  /// to send without, so the button and the key can never disagree about whether this card has
+  /// anything to say.
+  private func refreshDone() {
+    doneButton?.isEnabled = !(tickedLabels + otherLines).isEmpty
+  }
+
+  func control(
+    _ control: NSControl, textView: NSTextView, doCommandBy selector: Selector
+  ) -> Bool {
+    switch selector {
+    case #selector(NSResponder.insertNewline(_:)):
+      // Nothing typed is what Skip says, and Skip is a button: a bare Return here answers with
+      // the ticks if there are any and otherwise does nothing, rather than skipping a question
+      // because the field had the focus and the key was pressed.
+      let answer = tickedLabels + otherLines
+      if answer.isEmpty { return true }
+      onAnswer(answer)
+      return true
+    case #selector(NSResponder.cancelOperation(_:)):
+      onEscape()
+      return true
+    default:
+      return false
+    }
+  }
+
+  /// Whether the field is the one being typed in, and where its caret is — read by the running
+  /// column just before it throws this card away, so the card that replaces it can stand in the
+  /// same place. The field editor is shared, so both answers are nil once the focus has left.
+  var otherFocus: NSRange? {
+    guard otherField.currentEditor() != nil else { return nil }
+    return otherField.currentEditor()?.selectedRange
+  }
+
+  /// Put the focus in the Other row, with the caret where it was (or at the end, for a card
+  /// that has just landed).
+  func focusOther(selecting range: NSRange? = nil) {
+    guard let window else { return }
+    window.makeFirstResponder(otherField)
+    let end = NSRange(location: (otherField.stringValue as NSString).length, length: 0)
+    otherField.currentEditor()?.selectedRange = range ?? end
+  }
 }
 
 /// The agent's own task list, read from the engine's own store (see `AgentTask`) rather than

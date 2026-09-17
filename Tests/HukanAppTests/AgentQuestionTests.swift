@@ -29,7 +29,7 @@ final class AgentQuestionTests: XCTestCase {
     XCTAssertFalse(questions[0].multiSelect)
   }
 
-  /// What Done sends, and what a composer line answering as "Other" carries with it.
+  /// What Done sends, and what the card's Other row carries out with your own line.
   func testTickedLabelsFollowTheOfferedOrder() {
     let questions = AgentSession.parseQuestions([
       "questions": [

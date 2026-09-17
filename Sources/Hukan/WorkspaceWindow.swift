@@ -2281,7 +2281,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// double-click, and what says "the focus is in this column" to anything that reads it
   /// (⌃⌘M does).
   func focusComposer() {
-    window?.makeFirstResponder(running.inputField)
+    running.focusInput()
   }
 
   /// View ▸ Maximize Tab / Maximize Session (⌃⌘M), the tab menu's item, and the double-click
@@ -2460,6 +2460,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       controller.workspace.selectedSessionID = id
       controller.reload()
       controller.window?.makeKeyAndOrderFront(nil)
+      // What the banner was about may be a question, and a question is answered in its card now.
+      controller.running.focusPendingQuestion()
       return
     }
   }
@@ -2477,6 +2479,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       if let session = workspace.sessions.first(where: { $0.state == state }) {
         workspace.selectedWorktreeID = session.worktreeID
         reload()
+        running.focusPendingQuestion()
         return
       }
     }

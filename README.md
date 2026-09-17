@@ -59,7 +59,9 @@ composer. Allow, Deny, or Escape answers it. Never modal.
 
 **Questions.** The agent's own question is the same kind of card, carrying its options — a click
 answers, checkboxes and a Done when it takes more than one, and an option's sketch of its own
-outcome folds under it. Typing in the composer answers in your own words, ticks included.
+outcome folds under it. The last row is Other, a field for the answer nobody offered: it takes the
+keyboard while the card is up, Return sends it with whatever is ticked, and Escape hands the
+keyboard back to the composer — where a line interrupts the question instead of answering it.
 
 **Tasks.** The agent's task list as a card, read from Claude Code's store rather than from the
 calls that write it. Folded it is the count and the task in flight; opened it is what is left,

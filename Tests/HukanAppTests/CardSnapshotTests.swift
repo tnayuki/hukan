@@ -87,8 +87,9 @@ final class CardSnapshotTests: XCTestCase {
   }
 
   /// The question card at its fullest: a multi-select question, two options ticked, and two
-  /// previews open — each sketch in its own monospaced box, unwrapped. The Other line under the
-  /// options is the third answer, which has no control because the composer below the card is it.
+  /// previews open — each sketch in its own monospaced box, unwrapped. The field under them is
+  /// Other, the answer no option offered, drawn empty because its placeholder is the whole of
+  /// what tells you the row is there to be typed in.
   ///
   /// The second sketch is composed to a whole number of terminal cells and still does not close,
   /// because its Japanese falls back to a face 1.49 cells wide. That is the recorded behaviour,
