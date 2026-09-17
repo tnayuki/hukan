@@ -563,11 +563,33 @@ final class RunningColumnViewController: NSViewController {
     return true
   }
 
+  /// Where the reader was in each session they left, by session id. Kept only for a session
+  /// left scrolled up: one left at the bottom was following the conversation, and coming back to
+  /// it means the bottom again, whatever has arrived since. Never saved — a place in a transcript
+  /// is this window's fact, and a restored window has no reader to have left it.
+  private var readerPlaces: [UUID: TranscriptDocumentView.ReaderAnchor] = [:]
+
+  /// Where a session lands when it comes on screen with nothing else asking for a place: the
+  /// reader's own place in it if they left one, otherwise the end.
+  private func landReader(in session: AgentSession?) {
+    if let session, let place = readerPlaces[session.id], place.offset < textView.length {
+      isRestoringAnchor = true
+      textView.scroll(to: place)
+      isRestoringAnchor = false
+      recordReader(pinned: false)
+    } else {
+      scrollTranscriptToBottom()
+    }
+  }
+
   private func attach(_ session: AgentSession?) {
     guard attached !== session else { return }
     // The draft belongs to the session being left, not the one arriving — snapshot it before
-    // the field is repointed, then load the incoming session's own.
+    // the field is repointed, then load the incoming session's own. So does the reader's place.
     attached?.draft = input.stringValue
+    if let leaving = attached {
+      readerPlaces[leaving.id] = anchorWasPinned ? nil : textView.readerAnchor()
+    }
     attached?.onAppend = nil
     attached?.onReload = nil
     attached?.onPrepend = nil
@@ -659,7 +681,7 @@ final class RunningColumnViewController: NSViewController {
       if hasJump {
         self.applyPendingScroll()
       } else if !matched {
-        self.scrollTranscriptToBottom()
+        self.landReader(in: session)
       }
     }
     let hasJump = pendingScrollOffset != nil
@@ -667,7 +689,7 @@ final class RunningColumnViewController: NSViewController {
     if hasJump {
       applyPendingScroll()
     } else if !matched {
-      scrollTranscriptToBottom()
+      landReader(in: session)
     }
 
     // Opening a session is what pulls its history off disk — and its task list, which is read

@@ -167,7 +167,12 @@ Workspace (one window)
   and a session switch landing while a fling was still running left the overlay scroller
   refusing to show for the gestures that followed, until a click or a focus change reset it —
   found by logging the private knob alpha in the running app, since a synthetic gesture never
-  reaches a scroll view without an accessibility grant.
+  reaches a scroll view without an accessibility grant. **Coming back to a session lands where
+  you left it**, unless you left it at the end: the end is where a reader following the
+  conversation wants to be whatever has arrived since, and anywhere else is a place they were
+  reading, which a session switch is no reason to lose. A search jump and a highlight match
+  still come first. The place is this window's fact and is never saved — a restored window has
+  no reader to have left one.
 - **A link in the transcript opens on the desk, not in the default browser.** The address an agent
   writes is the task's — the PR it just opened, the issue it is working from — which is what a web
   tab is for; ⌘ sends it out instead. Never automatic: hukan following an address out of the

@@ -341,6 +341,40 @@ final class TranscriptReaderTests: XCTestCase {
       "switched: \(scrollView.documentVisibleRect) in \(textView.frame.height)")
   }
 
+  /// Leaving a session scrolled up and coming back lands on the same line: the place is the
+  /// reader's, and a session switch is not a reason to lose it. A session left at the bottom was
+  /// following the conversation, and comes back at the bottom.
+  @MainActor
+  func testTheReadersPlaceSurvivesASessionSwitch() throws {
+    let (controller, window, scrollView, textView) = try openWindow()
+    defer { window.close() }
+    let workspace = controller.workspace
+    let first = try XCTUnwrap(workspace.selectedSession)
+    let other = try XCTUnwrap(
+      workspace.sessions.first { $0.worktreeID == first.worktreeID && $0.id != first.id })
+    fill(other)
+
+    scrollToMiddle(scrollView, textView)
+    settle(scrollView, textView)
+    let line = topLine(of: scrollView, textView)
+    XCTAssertTrue(line.hasPrefix("line "), "scrolled to the middle: \(line)")
+
+    workspace.selectedSessionID = other.id
+    controller.reload()
+    settle(scrollView, textView)
+    XCTAssertTrue(isAtBottom(scrollView, textView), "a session never left lands at the bottom")
+
+    workspace.selectedSessionID = first.id
+    controller.reload()
+    settle(scrollView, textView)
+    XCTAssertEqual(topLine(of: scrollView, textView), line, "back on the line they left")
+
+    workspace.selectedSessionID = other.id
+    controller.reload()
+    settle(scrollView, textView)
+    XCTAssertTrue(isAtBottom(scrollView, textView), "left at the bottom, back at the bottom")
+  }
+
   /// A conversation long enough that opening it renders the tail and leaves the rest on disk, so
   /// scrolling up pulls a slice in above the reader — the transcript hukan actually opens.
   @MainActor

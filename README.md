@@ -260,8 +260,9 @@ ends. Nothing is remembered per session — turning it on is a decision
 about this conversation, now — and the bridge goes with the engine, so a session hukan restarts
 comes back off. Turning it off, and a bridge that drops or is refused, say so in the transcript.
 
-**Sessions.** A restored session reads its conversation back rather than opening empty. Names are
-Claude Code's own titles. A session not yet reattached is marked `detached` and resumes on
+**Sessions.** A restored session reads its conversation back rather than opening empty, and
+switching back to a session lands on the line you left it at — or at the end, if that is where you
+left it. Names are Claude Code's own titles. A session not yet reattached is marked `detached` and resumes on
 selection; one another process already holds shows greyed and cannot be started, but still reads
 and searches, and returns the moment that process exits. A `claude` started outside the window —
 in a terminal, in a worktree open here — joins the rail as it starts, held, and takes its name
