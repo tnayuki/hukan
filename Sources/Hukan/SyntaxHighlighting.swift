@@ -638,7 +638,15 @@ final class EmphasisFragment: NSTextLayoutFragment {
     return super.renderingSurfaceBounds.union(bandSurface(in: textView))
   }
 
+  /// How many fragments this process has drawn. Not a metric, and read in one place: colours
+  /// that land without a redraw are invisible to every other check — the layout manager holds
+  /// them and the pane goes on showing the text without them — so counting draws is the only way
+  /// a test can tell the working arrangement from the broken one (see `SyntaxHighlighter.apply`).
+  /// Fragments are drawn on the main thread.
+  nonisolated(unsafe) static var drawsPerformed = 0
+
   override func draw(at point: CGPoint, in context: CGContext) {
+    Self.drawsPerformed += 1
     if let band { fillBand(band, at: point, in: context, of: textView) }
     guard let table, !table.spans.isEmpty, let extent,
       let contentManager = textLayoutManager?.textContentManager
@@ -942,7 +950,7 @@ final class SyntaxHighlighter {
       layoutManager.setRenderingAttributes([:], for: documentRange)
     }
     // The weights and slants go to the table the fragments draw from; the colours below are the
-    // rendering attributes, and setting them is also what makes a fragment redraw. Everything
+    // rendering attributes, and the redraw both need is asked for at the end. Everything
     // with emphasis, and the resets that follow one — a span with no emphasis earns its place in
     // the table only by taking emphasis away from something already in it.
     for span in spans {
@@ -958,7 +966,7 @@ final class SyntaxHighlighter {
     // Whether the file has bands at all is what the fragments' rendering surface is read off, and
     // that is read once, when a fragment is laid out. So the first bands to arrive are a relayout
     // — the fragments already standing were measured for a file that had none — while every later
-    // one is only a redraw, which the rendering attributes below already provoke.
+    // one is only a redraw, which the end of this asks for anyway.
     let hadBands = !banded.isEmpty
     banded += read.bands
     table?.bands = banded
@@ -970,6 +978,21 @@ final class SyntaxHighlighter {
     for span in spans {
       guard let range = textRange(in: contentManager, span.range) else { continue }
       layoutManager.setRenderingAttributes([.foregroundColor: span.color], for: range)
+    }
+    // Setting rendering attributes does not redraw anything. A TextKit 2 text view draws its
+    // text in subviews of its own, a run of fragments each, and nothing here marks those dirty —
+    // not the attributes, not the text view's own `needsDisplay`, not even invalidating and
+    // re-laying out the viewport, all of which were tried. So a finished highlight sat in the
+    // layout manager until something unrelated redrew the pane: measured at 450–750ms after the
+    // colours landed, which was the whole of the pause a file opened with. Marking the subviews
+    // is the one thing that took, and it brought the first coloured draw to within a frame.
+    if let textView { markDirty(textView.subviews) }
+  }
+
+  private func markDirty(_ views: [NSView]) {
+    for view in views {
+      view.needsDisplay = true
+      markDirty(view.subviews)
     }
   }
 
