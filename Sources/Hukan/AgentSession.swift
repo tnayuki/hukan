@@ -513,6 +513,38 @@ final class AgentSession {
     streamStableLength += stable.length
   }
 
+  /// User messages that arrived while a run was streaming, waiting for it to close.
+  ///
+  /// Every streamed flush replaces from the run's settled point to the end of the transcript,
+  /// and the buffered `assistant` replaces the whole run the same way — so a message appended
+  /// while the run is open lands *inside* the span being replaced and is wiped by the next
+  /// flush. That is the send typed mid-turn and pushed through at once, and a line typed on the
+  /// phone of a bridged session. They wait here instead and are drawn the moment the run closes,
+  /// right after the text they were sent under.
+  private var heldUserMessages: [NSAttributedString] = []
+
+  /// Draw a user message now, or once the open run has closed (see `heldUserMessages`).
+  private func appendUserMessage(_ fragment: NSAttributedString) {
+    flushStreamRender()
+    guard streamStart == nil else {
+      heldUserMessages.append(fragment)
+      return
+    }
+    markTime()
+    append(fragment)
+  }
+
+  /// The run has closed: draw what was sent while it streamed.
+  private func releaseHeldUserMessages() {
+    guard streamStart == nil, !heldUserMessages.isEmpty else { return }
+    let held = heldUserMessages
+    heldUserMessages = []
+    for fragment in held {
+      markTime()
+      append(fragment)
+    }
+  }
+
   /// When the last block went in, for deciding whether the conversation paused.
   private var lastStamp: Date?
 
@@ -688,6 +720,8 @@ final class AgentSession {
     pendingPrefix = []
     userMessages.removeAll()
     streamStart = nil
+    // The file being re-read holds them already, whatever the run was doing.
+    heldUserMessages = []
     lastStamp = nil
     historyCursor = nil
     lastRecordUUID = nil
@@ -896,6 +930,10 @@ final class AgentSession {
       self.remoteControlURL = nil
       self.announcedRemoteControlURL = nil
       self.isSettingRemoteControl = false
+      // A run the engine died in the middle of will never be closed by its `assistant`, so what
+      // was sent under it is drawn now rather than held for good.
+      self.streamStart = nil
+      self.releaseHeldUserMessages()
       // The process is gone, which is the whole of what a deferred stop was waiting for. Run it
       // before the branches below, because each of those is an exit too and the work is owed
       // whichever way this one was reached.
@@ -1087,8 +1125,7 @@ final class AgentSession {
       title = guess.isEmpty ? (attachments.isEmpty ? "" : "画像") : guess
     }
     hasSent = true
-    markTime()
-    append(
+    appendUserMessage(
       Transcript.userMessage(
         text, imagePaths: attachments.filter(\.isImage).map(\.path),
         forkAnchor: lastRecordUUID))
@@ -1169,6 +1206,8 @@ final class AgentSession {
     // rather than replace through a document that no longer holds this one.
     streamStart = nil
     pendingStreamText = ""
+    // Newer than anything the cut keeps, so they go with it.
+    heldUserMessages = []
     let length = min(max(prefixLength, 0), transcript.length)
     transcript.deleteCharacters(in: NSRange(location: length, length: transcript.length - length))
     // The cut message and everything after it are unreachable now, so their uuids would only
@@ -1887,6 +1926,7 @@ final class AgentSession {
         append(Transcript.markdown(text))
       }
       streamStart = nil
+      releaseHeldUserMessages()
 
       for block in blocks where block["type"] as? String == "tool_use" {
         let name = block["name"] as? String ?? "tool"
@@ -1916,8 +1956,7 @@ final class AgentSession {
         // wrote, and nothing else would ever show them: the answer would arrive under no question.
         // The engine marks where a message came from, so this is its own account and not a guess.
         if Self.isFromElsewhere(event.payload), let text = Self.promptText(event.payload) {
-          append(Transcript.userMessage(text, forkAnchor: lastRecordUUID))
-          markTime()
+          appendUserMessage(Transcript.userMessage(text, forkAnchor: lastRecordUUID))
         }
         userMessages.append((anchor: lastRecordUUID, uuid: uuid))
       }
@@ -2011,6 +2050,7 @@ final class AgentSession {
       // left set, the next turn's first delta would replace from the dead run's start, taking
       // the notes appended below with it.
       streamStart = nil
+      releaseHeldUserMessages()
       // A backstop for the card: a task tool whose result never reached the loop above (a turn
       // cut short, a shape the stream did not spell the usual way) still leaves the store right,
       // and the end of the turn is when a stale card would start to mislead.
