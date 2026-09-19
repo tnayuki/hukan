@@ -102,7 +102,8 @@ a local `main`/`master` — with this worktree's own commits above it and the hi
 below. A tag draws a rule of its own, carrying a tag glyph so the two cannot be read for each
 other, above the commit it names: on the main checkout that is where a release sits, and
 everything above the line is what has not gone out under it. Several tags on one commit are one
-rule, which names the first and counts the rest; hovering it lists them all. The line above the
+rule, which names the first and counts the rest; hovering it lists them all. A commit's
+right-click menu copies its full hash. The line above the
 section is a divider, so it can be dragged as tall as the log you are
 reading — or shut, which is the same act as the toolbar's glyph, and is remembered either way.
 

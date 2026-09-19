@@ -34,6 +34,15 @@ final class HistoryPanelTests: XCTestCase {
     XCTAssertEqual(labels[2], "Step 3")
   }
 
+  /// A commit row carries the menu; a rule, being a caption, carries none.
+  @MainActor
+  func testOnlyCommitRowsCarryAMenu() throws {
+    let panel = HistoryPanelViewController()
+    panel.show(history: history(2))
+    XCTAssertEqual(panel.menuTitles(forRow: 0), ["Copy Hash"])
+    XCTAssertEqual(panel.menuTitles(forRow: 2), [], "the fork-point rule")
+  }
+
   /// The dot marks what the upstream does not carry. Its column is there either way, so the
   /// hashes stay in a line rather than stepping in and out.
   @MainActor

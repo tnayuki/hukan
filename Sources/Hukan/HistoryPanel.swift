@@ -53,6 +53,10 @@ final class HistoryPanelViewController: NSViewController {
   /// very notification a person's click does, and without this a commit landing on the list threw
   /// a diff onto the desk on its own.
   private var isSelectingQuietly = false
+  /// The commit the right-click menu was raised on — read off `clickedRow` while the click is
+  /// being handled, since that is the only moment it names anything.
+  private var menuCommit: Git.Commit?
+  private let contextMenu = NSMenu()
   private var operation: Git.Operation?
   private let operationLabel = NSTextField(labelWithString: "")
   private lazy var operationHeight = operationLabel.heightAnchor.constraint(equalToConstant: 0)
@@ -130,6 +134,8 @@ final class HistoryPanelViewController: NSViewController {
     table.target = self
     table.doubleAction = #selector(activateSelected)
     table.onActivate = { [weak self] in self?.activateSelected() }
+    contextMenu.delegate = self
+    table.menu = contextMenu
     scroll.documentView = table
     scroll.hasVerticalScroller = true
     scroll.drawsBackground = false
@@ -367,6 +373,40 @@ extension HistoryPanelViewController: NSTableViewDataSource, NSTableViewDelegate
     line.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
     line.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
     return line
+  }
+}
+
+/// The right-click menu on a commit row: the hash, for handing the commit to an agent or to `git`.
+/// Opening it is the double-click's already. A rule has no menu, being a caption rather than a
+/// commit.
+extension HistoryPanelViewController: NSMenuDelegate {
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    menu.removeAllItems()
+    menuCommit = commitIndex(forRow: table.clickedRow).map { commits[$0] }
+    guard menuCommit != nil else { return }
+    build(menu)
+  }
+
+  /// What the menu offers on `row`, a title each — empty on a rule. Built through the same path
+  /// the click takes, so what is checked is what is offered.
+  func menuTitles(forRow row: Int) -> [String] {
+    guard commitIndex(forRow: row) != nil else { return [] }
+    let menu = NSMenu()
+    build(menu)
+    return menu.items.map(\.title)
+  }
+
+  private func build(_ menu: NSMenu) {
+    let item = NSMenuItem(title: "Copy Hash", action: #selector(copyHash), keyEquivalent: "")
+    item.target = self
+    menu.addItem(item)
+  }
+
+  /// The whole oid: it is what `git` and an agent take without ambiguity.
+  @objc private func copyHash() {
+    guard let oid = menuCommit?.oid else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(oid, forType: .string)
   }
 }
 
