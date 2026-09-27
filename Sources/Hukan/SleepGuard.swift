@@ -17,7 +17,7 @@ final class SleepGuard {
   /// state change: it only flips the assertion when the "any thinking" answer actually changes.
   func refresh() {
     let anyThinking = WorkspaceWindowController.all.contains { controller in
-      controller.workspace.sessions.contains { $0.isTurnActive }
+      controller.workspace.sessions.contains { $0.isWorking }
     }
     if anyThinking, activity == nil {
       activity = ProcessInfo.processInfo.beginActivity(

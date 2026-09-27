@@ -322,6 +322,20 @@ final class AgentSession {
   /// forever. A turn is active only once something has actually been sent.
   private(set) var isTurnActive = false
 
+  /// The subagents and workflows this engine has running, by task id — started with
+  /// `system/task_started`, retired by the `task_notification` that reports how each ended. One
+  /// launched in the background outlives the turn that launched it: the turn's `result` arrives
+  /// while it is still working, and the engine opens a turn of its own to hand the model what it
+  /// found. Only agents are counted. A backgrounded shell (`local_bash`) is often a server meant
+  /// to run until someone stops it, and a row that stayed busy for as long as `npm run dev` does
+  /// would say nothing about the agent.
+  private var backgroundTasks = Set<String>()
+
+  /// Whether the agent has anything in flight — a turn, or a subagent a finished turn left
+  /// running. This is what the rail reads as working; `isTurnActive` stays the queue gate and the
+  /// interrupt's, since a line sent while only a subagent runs goes straight to the engine.
+  var isWorking: Bool { isTurnActive || !backgroundTasks.isEmpty }
+
   /// Set while an interrupt we asked for is in flight, so the `error_during_execution` result
   /// the engine ends the cut turn with reads as "we stopped it", not "it crashed".
   private var interruptedTurn = false
@@ -944,6 +958,8 @@ final class AgentSession {
       // The turn is over and nothing can deliver what was queued, so drop it rather than
       // firing it into a fresh process on the next start.
       self.isTurnActive = false
+      // Its subagents were the process's; nothing is left to report how they ended.
+      self.backgroundTasks.removeAll()
       self.queuedMessages.removeAll()
       self.queueHeldByInterrupt = false
       // A deliberate respawn of a not-yet-sent session to pick up a launch-only setting (effort):
@@ -1659,6 +1675,10 @@ final class AgentSession {
     name == "TaskCreate" || name == "TaskUpdate"
   }
 
+  /// The `task_type`s that are an agent at work — a subagent, a workflow's, or one in the cloud —
+  /// out of everything the engine tracks as a task (`backgroundTasks` says why shells are not).
+  static let agentTaskTypes: Set<String> = ["local_agent", "local_workflow", "remote_agent"]
+
   /// Stop the running turn. Type-ahead behind it survives either way — it is text you typed,
   /// and the stop button is the one place nothing would hand it back — but what happens to it
   /// next is the difference between the two callers. From a redirecting send
@@ -2051,6 +2071,10 @@ final class AgentSession {
       // the notes appended below with it.
       streamStart = nil
       releaseHeldUserMessages()
+      // A subagent this turn sent to the background is still working, and the engine will open
+      // a turn of its own when it reports back — so the session is not done, and the green check
+      // would say it was.
+      if !backgroundTasks.isEmpty { state = .running }
       // A backstop for the card: a task tool whose result never reached the loop above (a turn
       // cut short, a shape the stream did not spell the usual way) still leaves the store right,
       // and the end of the turn is when a stale card would start to mislead.
@@ -2097,6 +2121,9 @@ final class AgentSession {
     case "system" where event.subtype == "init":
       // The starting point, before any worktree the agent may create. Moves are detected separately.
       state = .running
+      // Usually a turn a send opened, but the engine opens one of its own when a background
+      // subagent reports back — and that one is as much a turn in flight as any other.
+      isTurnActive = true
       // The engine reports the model and permission mode it actually started with, so the
       // pickers reflect reality — the model it remembered across --resume, and the mode as it
       // stands (which the engine forgets on resume, so it reads back as default until we
@@ -2137,6 +2164,30 @@ final class AgentSession {
         Transcript.note(
           status.map { "The request failed (HTTP \($0)) — retrying…" }
             ?? "The request failed to reach the API — retrying…"))
+
+    case "system" where event.subtype == "task_started":
+      guard let id = event.payload["task_id"] as? String,
+        let type = event.payload["task_type"] as? String,
+        Self.agentTaskTypes.contains(type)
+      else { break }
+      backgroundTasks.insert(id)
+
+    case "system" where event.subtype == "task_notification":
+      // Emitted once per task, whatever it ended as (completed, failed, killed).
+      guard let id = event.payload["task_id"] as? String,
+        backgroundTasks.remove(id) != nil, backgroundTasks.isEmpty, !isTurnActive,
+        state == .running
+      else { break }
+      // The last one has reported with no turn in flight. The engine is about to open a turn to
+      // hand the model its result, and that turn's `result` is what ends this; going idle here
+      // would flash the check in between. Only if no turn follows is the session done now.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+        guard let self, !self.isWorking, self.state == .running, self.runner != nil else {
+          return
+        }
+        self.state = .idle
+        self.onStateChange?()
+      }
 
     case "system" where event.subtype == "bridge_state":
       // Where Remote Control stands, pushed by the engine rather than polled — the same stance

@@ -1577,12 +1577,13 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     // A thinking session pulses; idle (green check) and needs-you (orange !) stay still, so
     // scanning the rail the one moving dot is the one still working. The row view is rebuilt
     // on every state change, so the effect starts and stops with the turn on its own.
-    // Gated on `isTurnActive` for the same reason as the transcript's pill: `start()` sets
-    // `.running` optimistically before any turn exists, so `.running` alone would pulse a
-    // started-but-unprompted session that is not actually thinking.
+    // Gated on `isWorking` (a turn, or a subagent one left running) for the same reason the
+    // transcript's pill is gated on the turn: `start()` sets `.running` optimistically before
+    // any turn exists, so `.running` alone would pulse a started-but-unprompted session that is
+    // not actually thinking.
     dot.setThinkingPulse(
       !node.isDetached && !node.heldElsewhere && node.state == .running
-        && node.session?.isTurnActive == true)
+        && node.session?.isWorking == true)
 
     let name = NSTextField(labelWithString: node.title)
     name.font = .systemFont(ofSize: 13)
@@ -1930,7 +1931,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       return
     }
     let alert = NSAlert()
-    let working = sessions.filter(\.isTurnActive).count
+    let working = sessions.filter(\.isWorking).count
     if sessions.count == 1 {
       alert.messageText = "Delete “\(sessions[0].title ?? "New session")”?"
     } else {
@@ -1963,7 +1964,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   private func confirmBusyTeardown(_ sessions: [AgentSession], title: String, detail: String)
     -> Bool
   {
-    let working = sessions.filter(\.isTurnActive).count
+    let working = sessions.filter(\.isWorking).count
     guard working > 0 else { return true }
     let alert = NSAlert()
     alert.messageText =

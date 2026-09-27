@@ -191,7 +191,7 @@ final class Workspace {
   /// mistake the time buckets made when "Older" swallowed a session that was still running.
   func isArchived(_ session: AgentSession) -> Bool {
     guard canArchive(session), archivedSessionIDs.contains(session.id) else { return false }
-    return !session.isTurnActive && session.state != .needsAttention
+    return !session.isWorking && session.state != .needsAttention
   }
 
   /// Only main's sessions can be archived. A linked worktree *is* the task: when it lands, the
