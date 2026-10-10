@@ -778,6 +778,23 @@ Workspace (one window)
   anyone makes, so nothing new is saved for it: the repositories' order is still yours to drag
   and still rides the saved paths, while the worktrees under one come back sorted from the paths
   themselves.
+  **Above the repositories, a group is a name someone gave, and it is the window's.** One window
+  per customer is the arrangement the rail exists to make unnecessary — what is waiting on you is
+  the question, and it was split across as many rails as there were customers. So repositories
+  gather under named groups, and the membership is made by hand rather than read off the remote's
+  owner: that was the obvious derivation and the one the checkouts here refute, one customer
+  spanning two GitHub organizations and another a GitHub one and an SVN host, so the rule would
+  have needed a table of exceptions written by hand anyway. **It is view state, not a second
+  app-global store** — saved with the window beside the folds and the order, keyed by repository
+  path, and kept for a repository that has closed, so opening it again in the same window puts it
+  back where it was. Nothing of a closed member is drawn: the membership waits in the state, which
+  is not the dimmed row Open Recent was chosen over. Opened in another window it arrives loose,
+  the one place this can disagree, and the one consolidating into a single window removes. **A
+  folded group's heading carries the loudest state inside it** — needing you over working, and
+  idle saying nothing — because a fold that hides a pulsing row is the one thing the rail must not
+  do, and pulling the row out of the fold, which is what the Archived section does, would undo the
+  fold that a customer's whole block was folded to get. The group's heading takes the uppercase
+  label the repository had, and the repository its name, so the two levels never read alike.
 - **A session leaves the rail by being archived, not by getting old.** The rail carried time
   buckets — Today, Yesterday, Last 7 days, Older, the last folded — and the proxy was wrong in
   both directions: a one-shot finished twenty minutes ago sat in Today all day, while a session

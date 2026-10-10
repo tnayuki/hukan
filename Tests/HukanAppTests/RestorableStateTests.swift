@@ -16,6 +16,38 @@ final class RestorableStateTests: XCTestCase {
     return restored
   }
 
+  func testGroupsMembershipOrderAndFoldsRoundTrip() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let firstURL = directory.appendingPathComponent("first")
+    let secondURL = directory.appendingPathComponent("second")
+    try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let workspace = Workspace()
+    // Ids rather than worktrees: a worktree's repository is unowned, and closing frees it.
+    let first = workspace.addWorktree(firstURL).repositoryID
+    let second = workspace.addWorktree(secondURL).repositoryID
+    let group = workspace.createGroup(name: "Customer")
+    let empty = workspace.createGroup(name: "Empty")
+    workspace.moveRailRepository(first, to: group, at: 0)
+    workspace.moveRailRepository(second, to: group, at: 1)
+    workspace.closeRepository(first)
+    workspace.moveRailGroup(empty, at: 0)
+    workspace.collapsedGroups = [group, empty]
+    let loose = workspace.addWorktree(directory).repositoryID
+    let restored = try roundTrip(workspace)
+    XCTAssertEqual(restored.groups, workspace.groups)
+    XCTAssertEqual(restored.collapsedGroups, [group, empty])
+    XCTAssertEqual(restored.topLevelOrder, ["g:" + empty, "g:" + group, "r:" + loose])
+    XCTAssertEqual(restored.groupID(for: first), group)
+    XCTAssertEqual(restored.groups[0].repositoryIDs, [first, second])
+    XCTAssertEqual(try roundTrip(restored).groups, workspace.groups)
+    restored.addWorktree(firstURL)
+    XCTAssertEqual(restored.groupID(for: first), group)
+    for path in workspace.repositories.map(\.id) { workspace.closeRepository(path) }
+    for path in restored.repositories.map(\.id) { restored.closeRepository(path) }
+  }
+
   /// A stand-in for what discovery rebuilds after decode: a fresh session carrying only its id,
   /// handed to `applyRestoredPrefs` the way `discoverSessions` hands every rebuilt one.
   private func revived(_ id: UUID, by workspace: Workspace) -> AgentSession {

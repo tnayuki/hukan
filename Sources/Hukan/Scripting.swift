@@ -402,7 +402,7 @@ final class StatusCommand: NSScriptCommand {
     guard let controller = frontController() else { return fail("no window") }
     let workspace = controller.workspace
     let repositories = workspace.railRepositories
-    guard !repositories.isEmpty else { return "(no worktrees)" }
+    guard !repositories.isEmpty || !workspace.groups.isEmpty else { return "(no worktrees)" }
     // The rail's own tree, flattened: repository, then its worktrees — main first, the way the
     // rail orders them — then that worktree's sessions in the rail's order, last-instructed first.
     // Derived from `railRepositories` so there is one grouping to keep right rather than two that
@@ -414,25 +414,38 @@ final class StatusCommand: NSScriptCommand {
     // key, so a row can read fresher than the ones above it.
     let now = Date()
     let selected = workspace.selectedSession?.id
-    return repositories.map { repository -> String in
-      let blocks = repository.worktrees.map { railWorktree -> String in
-        let worktree = railWorktree.worktree
-        let stat = worktree.diffstat
-        func row(_ entry: Workspace.RailEntry, archived: Bool) -> String {
-          let session = entry.session
-          let marker = session.id == selected ? "*" : " "
-          let title = session.title ?? "New session"
-          let state = Self.state(of: session)
-          let ago = Self.ago(from: session.updatedAt, to: now)
-          return "    \(marker) \(title)  [\(state)]  \(ago)" + (archived ? "  (archived)" : "")
+    let blocksByID = Dictionary(
+      uniqueKeysWithValues: repositories.map { repository -> (String, String) in
+        let blocks = repository.worktrees.map { railWorktree -> String in
+          let worktree = railWorktree.worktree
+          let stat = worktree.diffstat
+          func row(_ entry: Workspace.RailEntry, archived: Bool) -> String {
+            let session = entry.session
+            let marker = session.id == selected ? "*" : " "
+            let title = session.title ?? "New session"
+            let state = Self.state(of: session)
+            let ago = Self.ago(from: session.updatedAt, to: now)
+            return "    \(marker) \(title)  [\(state)]  \(ago)" + (archived ? "  (archived)" : "")
+          }
+          let rows =
+            railWorktree.sessions.map { row($0, archived: false) }
+            + railWorktree.archived.map { row($0, archived: true) }
+          let heading = "  \(worktree.displayName)  +\(stat.added) -\(stat.removed)"
+          return ([heading] + rows).joined(separator: "\n")
         }
-        let rows =
-          railWorktree.sessions.map { row($0, archived: false) }
-          + railWorktree.archived.map { row($0, archived: true) }
-        let heading = "  \(worktree.displayName)  +\(stat.added) -\(stat.removed)"
-        return ([heading] + rows).joined(separator: "\n")
-      }
-      return ([repository.repositoryName] + blocks).joined(separator: "\n")
+        return (
+          repository.repositoryID, ([repository.repositoryName] + blocks).joined(separator: "\n")
+        )
+      })
+    return workspace.topLevelOrder.compactMap { key -> String? in
+      let id = String(key.dropFirst(2))
+      if key.hasPrefix("r:") { return blocksByID[id] }
+      guard let group = workspace.groups.first(where: { $0.id == id }) else { return nil }
+      return
+        ([group.name.uppercased()]
+        + group.repositoryIDs.compactMap { blocksByID[$0] }.map {
+          $0.split(separator: "\n").map { "  " + $0 }.joined(separator: "\n")
+        }).joined(separator: "\n")
     }.joined(separator: "\n")
   }
 

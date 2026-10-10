@@ -85,7 +85,12 @@ it was started from. What git is told elsewhere arrives as it is told: a `git wo
 `git worktree remove` run in a terminal puts a row up or takes one down, and a `git checkout`
 renames the row it was run in. Dragging a repository's heading puts it somewhere else in the
 rail, worktrees and all — the insertion line falls only between repositories, never inside one,
-the worktrees' own order being the name's rather than anyone's. The open panel
+the worktrees' own order being the name's rather than anyone's. Repositories can be gathered
+into named groups — *New Group* on the rail's right-click, then a repository dragged onto the
+group's heading or sent there with *Move to Group* — so one window can hold several customers'
+work, each folding away under its own heading. A folded group's heading carries a dot when a
+session inside it is working or waiting on you. Groups belong to the window and come back with
+it, and a repository closed out of one goes back into it when it is opened again here. The open panel
 takes several at once, and *Open Recent* offers the ones this app has had open and this window has
 not — in the File menu, on the rail's right-click, and beside the empty window's button. An entry
 that is no longer a directory drops itself.

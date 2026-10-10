@@ -7,6 +7,7 @@ extension NSPasteboard.PasteboardType {
   /// `.fileURL`, which is the obvious thing to write for a row that stands for a checkout and the
   /// wrong one: it would offer that checkout to Finder and to every app that takes a folder, when
   /// the only thing this drag means is "put this repository here".
+  static let hukanGroupRow = NSPasteboard.PasteboardType("dev.tnayuki.hukan.group-row")
   static let hukanRepositoryRow = NSPasteboard.PasteboardType("dev.tnayuki.hukan.repository-row")
 }
 
@@ -16,6 +17,8 @@ final class RailNode: NSObject {
   // What a row shows is mutable, so a reload that changed nothing structural can pour the fresh
   // state into the instance the outline already holds (see `adopt`) instead of handing it a new
   // one. What a row *is* — its session, worktree, keys — stays fixed, since that is its identity.
+  let groupID: String?
+  var isGroupHeading: Bool { groupID != nil }
   var title: String
   var subtitle: String?
   var state: RunState?
@@ -77,6 +80,7 @@ final class RailNode: NSObject {
   /// repository, an empty worktree by its own id. The rail compares these before and after a
   /// reload to tell a pure reorder (worth a little animation) from a content-only change.
   var identityKey: String {
+    if let groupID { return "group:" + groupID }
     if let session, let matchOffset { return "h:" + session.id.uuidString + ":\(matchOffset)" }
     if let session { return "s:" + session.id.uuidString }
     if let section, let sectionKey { return "\(section):" + sectionKey }
@@ -117,8 +121,9 @@ final class RailNode: NSObject {
     heldElsewhere: Bool = false,
     worktree: Worktree? = nil, session: AgentSession? = nil, children: [RailNode] = [],
     groupRepositoryID: String? = nil, section: Section? = nil, sectionKey: String? = nil,
-    matchOffset: Int? = nil, matchLength: Int = 0
+    matchOffset: Int? = nil, matchLength: Int = 0, groupID: String? = nil
   ) {
+    self.groupID = groupID
     self.groupRepositoryID = groupRepositoryID
     self.title = title
     self.subtitle = subtitle
@@ -215,7 +220,7 @@ final class RailOutlineView: NSOutlineView {
 }
 
 final class SessionRailViewController: NSViewController, NSOutlineViewDataSource,
-  NSOutlineViewDelegate, NSMenuDelegate, NSSearchFieldDelegate
+  NSOutlineViewDelegate, NSMenuDelegate, NSSearchFieldDelegate, NSTextFieldDelegate
 {
   var workspace: Workspace?
   var onSelectWorktree: ((UUID) -> Void)?
@@ -305,6 +310,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// row. Read off the workspace on each reload rather than flagged by whoever wrote a fold, so a
   /// set changed from anywhere — a chevron, a key, a script, a restore — is seen the same way.
   private struct Arrangement: Equatable {
+    var groups: Set<String>
     var repositories: Set<String>
     var worktrees: Set<String>
     var archives: Set<String>
@@ -318,7 +324,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   private var lastArrangement: Arrangement?
   private var arrangement: Arrangement {
     Arrangement(
-      repositories: collapsedRepositories, worktrees: collapsedWorktrees,
+      groups: workspace?.collapsedGroups ?? [], repositories: collapsedRepositories,
+      worktrees: collapsedWorktrees,
       archives: expandedArchives, worktreeSections: collapsedWorktreeSections,
       results: collapsedResultSessions, searching: isSearching)
   }
@@ -415,7 +422,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     outlineView.menu = contextMenu
     // Reordering the repositories. `.move` only inside this window, and nothing at all outside
     // it: the drag rearranges a list, it does not hand anything over.
-    outlineView.registerForDraggedTypes([.hukanRepositoryRow])
+    outlineView.registerForDraggedTypes([.hukanRepositoryRow, .hukanGroupRow])
     outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
     outlineView.setDraggingSourceOperationMask([], forLocal: false)
     // An insertion line rather than a gap: a repository is one outline item now, so a gap opened
@@ -500,8 +507,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     ageTick?.invalidate()
     let tick = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
       guard let self, isViewLoaded else { return }
-      outlineView.reloadData(
-        forRowIndexes: IndexSet(0..<outlineView.numberOfRows), columnIndexes: IndexSet(integer: 0))
+      self.refreshRows()
     }
     tick.tolerance = 10
     RunLoop.main.add(tick, forMode: .common)
@@ -535,6 +541,9 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   }
 
   func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+    if editingGroupID != nil, control !== searchField {
+      return groupNameField(control, doCommandBy: selector)
+    }
     guard control === searchField else { return false }
     switch selector {
     case #selector(NSResponder.insertNewline(_:)):
@@ -935,7 +944,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       // drawn in place of the level that was missing — and that was the level's real absence, not
       // the fact that a repository's children are two kinds. As children they sit under the
       // heading already, so there is nothing left for a rule to say.
-      nodes = workspace.railRepositories.map { repo in
+      let repositoryNodes = workspace.railRepositories.map { repo in
         // The linked worktrees under a heading of their own, beneath main's rows. A repository's
         // children are two kinds — main's sessions and its worktrees — and the label is what tells
         // the block of worktree rows from the session rows above it. Only when there are any: a
@@ -948,7 +957,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
               section: .worktrees, sectionKey: repo.repositoryID))
         }
         return RailNode(
-          title: repo.repositoryName.uppercased(),
+          title: repo.repositoryName,
           // Main's branch, after the project name — the heading *is* the main worktree, and the
           // linked worktrees all name their branch on their own headings, so the root says its the
           // same way. `branch` directly, not displayName: its fallback is the folder name, which
@@ -957,6 +966,27 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
           worktree: repo.main?.worktree,
           children: children,
           groupRepositoryID: repo.repositoryID)
+      }
+      let byID = Dictionary(
+        uniqueKeysWithValues: repositoryNodes.compactMap { node in
+          node.repositoryID.map { ($0, node) }
+        })
+      nodes = workspace.topLevelOrder.compactMap { key in
+        let id = String(key.dropFirst(2))
+        if key.hasPrefix("r:") { return byID[id] }
+        guard let group = workspace.groups.first(where: { $0.id == id }) else { return nil }
+        let children = group.repositoryIDs.compactMap { byID[$0] }
+        let sessions = workspace.sessions.filter { session in
+          workspace.worktree(id: session.worktreeID).map {
+            group.repositoryIDs.contains($0.repositoryID)
+          } ?? false
+        }
+        let state: RunState? =
+          sessions.contains { $0.state == .needsAttention }
+          ? .needsAttention
+          : sessions.contains { $0.state == .running && $0.isWorking } ? .running : nil
+        return RailNode(
+          title: group.name.uppercased(), state: state, children: children, groupID: id)
       }
     }
     // The "nothing matched" note, shown only when a query is live and cleared everything, and
@@ -987,8 +1017,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     if sameShape {
       for (mine, theirs) in zip(previous, nodes) { mine.adopt(theirs) }
       nodes = previous
-      outlineView.reloadData(
-        forRowIndexes: IndexSet(0..<outlineView.numberOfRows), columnIndexes: IndexSet(integer: 0))
+      refreshRows()
       applyExternalPick(workspace)
       return
     }
@@ -1028,6 +1057,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     // anyone having asked. Every fold left is an explicit one.
     func isCollapsed(_ node: RailNode) -> Bool {
       guard !isSearching else { return false }
+      if let id = node.groupID { return workspace.collapsedGroups.contains(id) }
       if node.isRepositoryHeading, let repositoryID = node.repositoryID {
         return collapsedRepositories.contains(repositoryID)
       }
@@ -1047,7 +1077,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     // A folded node's children still get their state applied — expanding it later must reveal them
     // in the shape they were left, not a fresh-from-reloadData collapse.
     func applyNode(_ node: RailNode) {
-      guard !node.children.isEmpty else { return }
+      guard node.isGroupHeading || !node.children.isEmpty else { return }
       if !isCollapsed(node) { outlineView.expandItem(node) }
       for child in node.children { applyNode(child) }
     }
@@ -1160,7 +1190,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   }
 
   func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-    if let node = item as? RailNode { return !node.children.isEmpty }
+    if let node = item as? RailNode { return node.isGroupHeading || !node.children.isEmpty }
     return false
   }
 
@@ -1193,11 +1223,12 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any)
     -> NSPasteboardWriting?
   {
-    guard !isSearching, let node = item as? RailNode, node.isRepositoryHeading,
-      let repositoryID = node.repositoryID
+    guard !isSearching, let node = item as? RailNode,
+      let repositoryID = node.groupID ?? (node.isRepositoryHeading ? node.repositoryID : nil)
     else { return nil }
     let entry = NSPasteboardItem()
-    entry.setString(repositoryID, forType: .hukanRepositoryRow)
+    entry.setString(
+      repositoryID, forType: node.isGroupHeading ? .hukanGroupRow : .hukanRepositoryRow)
     return entry
   }
 
@@ -1205,11 +1236,22 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
     proposedChildIndex index: Int
   ) -> NSDragOperation {
-    guard !isSearching, draggedRepositoryID(from: info) != nil,
+    guard !isSearching else { return [] }
+    if draggedRepositoryID(from: info) != nil,
+      case .group(let id, let childIndex) = Self.dropDestination(
+        nodes, item: item, childIndex: index, draggingGroup: false),
+      let group = nodes.first(where: { $0.groupID == id })
+    {
+      outlineView.setDropItem(group, dropChildIndex: childIndex)
+      return .move
+    }
+    guard
+      draggedRepositoryID(from: info) != nil
+        || info.draggingPasteboard.string(forType: .hukanGroupRow) != nil,
       let boundary = dropBoundary(item: item, childIndex: index)
     else { return [] }
     // Retarget rather than refuse. Most of what the outline proposes — a drop *on* a row, or a
-    // place among some heading's children — is not a position in the repository order at all, and
+    // place among some heading's children — is not a position in the top-level order at all, and
     // refusing those would blink the insertion line out over most of the rail: "not here", when
     // the answer is "here, at this boundary".
     outlineView.setDropItem(nil, dropChildIndex: boundary)
@@ -1219,13 +1261,34 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   func outlineView(
     _ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int
   ) -> Bool {
-    guard let workspace, let repositoryID = draggedRepositoryID(from: info),
-      let boundary = dropBoundary(item: item, childIndex: index)
-    else { return false }
-    // The boundary is a row; what the move needs is the repository that row starts — or nil at the
-    // end of the list, which is the one boundary with no repository after it.
-    let before = boundary < nodes.count ? nodes[boundary].repositoryID : nil
-    guard workspace.moveRepository(repositoryID, before: before) else { return false }
+    guard !isSearching, let workspace else { return false }
+    let changed: Bool
+    if let id = draggedRepositoryID(from: info) {
+      guard
+        let destination = Self.dropDestination(
+          nodes, item: item, childIndex: index, draggingGroup: false)
+      else { return false }
+      switch destination {
+      case .group(let groupID, let childIndex):
+        guard let node = nodes.first(where: { $0.groupID == groupID }),
+          let group = workspace.groups.first(where: { $0.id == groupID })
+        else { return false }
+        let before =
+          childIndex >= 0 && childIndex < node.children.count
+          ? node.children[childIndex].repositoryID : nil
+        let position =
+          before.flatMap { group.repositoryIDs.firstIndex(of: $0) } ?? group.repositoryIDs.count
+        changed = workspace.moveRailRepository(id, to: groupID, at: position)
+      case .topLevel(let boundary):
+        changed = workspace.moveRailRepository(id, to: nil, at: boundary)
+      }
+    } else if let id = info.draggingPasteboard.string(forType: .hukanGroupRow) {
+      guard let boundary = dropBoundary(item: item, childIndex: index) else { return false }
+      changed = workspace.moveRailGroup(id, at: boundary)
+    } else {
+      return false
+    }
+    guard changed else { return false }
     isApplyingDrop = true
     defer { isApplyingDrop = false }
     onReorderRepositories?()
@@ -1234,6 +1297,29 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
 
   private func draggedRepositoryID(from info: NSDraggingInfo) -> String? {
     info.draggingPasteboard.string(forType: .hukanRepositoryRow)
+  }
+
+  enum DropDestination: Equatable {
+    case topLevel(Int)
+    case group(String, Int)
+  }
+
+  /// A repository can land among a group's children; a group itself only has a place at the
+  /// top level. Drops deeper in a repository snap to that repository's boundary in its parent.
+  static func dropDestination(
+    _ nodes: [RailNode], item: Any?, childIndex index: Int, draggingGroup: Bool
+  ) -> DropDestination? {
+    if !draggingGroup, let node = item as? RailNode,
+      let topIndex = topLevelIndex(nodes, of: node), let id = nodes[topIndex].groupID
+    {
+      let group = nodes[topIndex]
+      if node === group {
+        return .group(
+          id, index < 0 ? NSOutlineViewDropOnItemIndex : min(max(0, index), group.children.count))
+      }
+      if let child = topLevelIndex(group.children, of: node) { return .group(id, child) }
+    }
+    return dropBoundary(nodes, item: item, childIndex: index).map(DropDestination.topLevel)
   }
 
   /// The repository boundary a proposed drop belongs to, as an index into the top level. A
@@ -1271,6 +1357,20 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     // headings are pure labels.
     guard let node = item as? RailNode else { return false }
     return !node.isSectionHeading
+  }
+
+  /// The same state signal on a session and on a folded group's aggregate. The dot is the rail's
+  /// one signal, so it must not be color-only: the description gives VoiceOver the state the tint
+  /// encodes.
+  private static func statusDot(symbol: String, tint: NSColor, label: String?, thinking: Bool)
+    -> NSImageView
+  {
+    let dot = NSImageView()
+    dot.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+    dot.contentTintColor = tint
+    dot.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
+    dot.setThinkingPulse(thinking)
+    return dot
   }
 
   func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any)
@@ -1350,6 +1450,63 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       return cell
     }
 
+    if let id = node.groupID {
+      let editing = editingGroupID == id
+      let label =
+        editing
+        ? NSTextField(string: workspace?.groups.first { $0.id == id }?.name ?? node.title)
+        : NSTextField(labelWithString: node.title)
+      label.font = .systemFont(ofSize: 11, weight: .semibold)
+      label.textColor = .tertiaryLabelColor
+      label.translatesAutoresizingMaskIntoConstraints = false
+      label.identifier = NSUserInterfaceItemIdentifier(id)
+      label.delegate = self
+      cell.addSubview(label)
+      let collapsed = workspace?.collapsedGroups.contains(id) == true
+      let disclose = NSButton(
+        image: NSImage(
+          systemSymbolName: collapsed ? "chevron.forward" : "chevron.down",
+          accessibilityDescription: "Fold group")!, target: self,
+        action: #selector(toggleGroup(_:)))
+      disclose.isBordered = false
+      disclose.identifier = NSUserInterfaceItemIdentifier(id)
+      disclose.contentTintColor = .tertiaryLabelColor
+      disclose.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+      disclose.translatesAutoresizingMaskIntoConstraints = false
+      cell.addSubview(disclose)
+      NSLayoutConstraint.activate([
+        label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: indent),
+        label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        label.trailingAnchor.constraint(lessThanOrEqualTo: disclose.leadingAnchor, constant: -24),
+        disclose.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+        disclose.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        disclose.widthAnchor.constraint(equalToConstant: 16),
+      ])
+      // Folded, the group would hide exactly what the rail is for, so its heading carries the
+      // loudest state inside it: needing you outranks working, and an idle group says nothing.
+      if collapsed, let state = node.state {
+        let dot = Self.statusDot(
+          symbol: state.symbolName, tint: state.tint, label: state.label,
+          thinking: state == .running)
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(dot)
+        NSLayoutConstraint.activate([
+          dot.trailingAnchor.constraint(equalTo: disclose.leadingAnchor, constant: -6),
+          dot.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+          dot.widthAnchor.constraint(equalToConstant: 14),
+          dot.heightAnchor.constraint(equalToConstant: 14),
+        ])
+      }
+      if editing {
+        DispatchQueue.main.async { [weak self, weak label] in
+          guard self?.editingGroupID == id, let label else { return }
+          label.window?.makeFirstResponder(label)
+          label.selectText(nil)
+        }
+      }
+      return cell
+    }
+
     if node.isRepositoryHeading {
       let label = NSTextField(labelWithString: node.title)
       label.font = .systemFont(ofSize: 11, weight: .semibold)
@@ -1403,7 +1560,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
         disclose.toolTip = collapsed ? "Expand" : "Collapse"
         disclose.identifier = NSUserInterfaceItemIdentifier(repositoryID)
         disclose.target = self
-        disclose.action = #selector(toggleGroup(_:))
+        disclose.action = #selector(toggleRepository(_:))
         cell.addSubview(disclose)
 
         // A per-repository new-session control on the heading itself, which is main: a single
@@ -1420,7 +1577,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
         add.toolTip = "New session"
         add.identifier = NSUserInterfaceItemIdentifier(repositoryID)
         add.target = self
-        add.action = #selector(newSessionInGroup(_:))
+        add.action = #selector(newSessionInRepository(_:))
         cell.addSubview(add)
 
         NSLayoutConstraint.activate([
@@ -1548,7 +1705,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       return cell
     }
 
-    let dot = NSImageView()
     // Held-elsewhere and detached are both process-ownership facts that override the turn state:
     // a session another process holds cannot be acted on (a lock), and a restored-but-not-
     // reattached one must not wear a live face (a plain grey ring). Held outranks detached — a
@@ -1569,11 +1725,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       tint = node.state?.tint ?? .quaternaryLabelColor
       axLabel = node.state?.label
     }
-    // The dot is the rail's one signal, so it must not be color-only: the description gives
-    // VoiceOver the state the tint encodes.
-    dot.image = NSImage(systemSymbolName: symbol, accessibilityDescription: axLabel)
-    dot.contentTintColor = tint
-    dot.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
     // A thinking session pulses; idle (green check) and needs-you (orange !) stay still, so
     // scanning the rail the one moving dot is the one still working. The row view is rebuilt
     // on every state change, so the effect starts and stops with the turn on its own.
@@ -1581,8 +1732,9 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     // transcript's pill is gated on the turn: `start()` sets `.running` optimistically before
     // any turn exists, so `.running` alone would pulse a started-but-unprompted session that is
     // not actually thinking.
-    dot.setThinkingPulse(
-      !node.isDetached && !node.heldElsewhere && node.state == .running
+    let dot = Self.statusDot(
+      symbol: symbol, tint: tint, label: axLabel,
+      thinking: !node.isDetached && !node.heldElsewhere && node.state == .running
         && node.session?.isWorking == true)
 
     let name = NSTextField(labelWithString: node.title)
@@ -1695,6 +1847,36 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
 
     let row = outlineView.clickedRow
     let node = row >= 0 ? outlineView.item(atRow: row) as? RailNode : nil
+    func groupItem(_ title: String, _ action: Selector, _ value: Any?) -> NSMenuItem {
+      let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      item.target = self
+      item.representedObject = value
+      return item
+    }
+    if let id = node?.groupID {
+      menu.addItem(groupItem("Rename", #selector(renameClickedGroup(_:)), id))
+      menu.addItem(groupItem("Ungroup", #selector(ungroupClickedGroup(_:)), id))
+      return
+    }
+    if node == nil { menu.addItem(groupItem("New Group", #selector(createClickedGroup(_:)), nil)) }
+    if let node, node.isRepositoryHeading, let id = node.repositoryID, let workspace {
+      let submenu = NSMenu(title: "Move to Group")
+      for group in workspace.orderedGroups {
+        let item = groupItem(group.name, #selector(moveClickedRepository(_:)), [id, group.id])
+        item.state = workspace.groupID(for: id) == group.id ? .on : .off
+        submenu.addItem(item)
+      }
+      submenu.addItem(.separator())
+      submenu.addItem(groupItem("New Group", #selector(createClickedGroup(_:)), id))
+      let move = NSMenuItem(title: "Move to Group", action: nil, keyEquivalent: "")
+      move.submenu = submenu
+      menu.addItem(move)
+      if workspace.groupID(for: id) != nil {
+        menu.addItem(
+          groupItem("Remove from Group", #selector(moveClickedRepository(_:)), [id, ""]))
+      }
+      menu.addItem(.separator())
+    }
     let sessions = clickedSessions(row: row)
     // What the lifecycle items act on: never a held session — it belongs to another process, and
     // we do not act on what we do not own — so a batch quietly narrows to the ones that are ours
@@ -2003,6 +2185,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       } else {
         collapsedResultSessions.remove(session.id)
       }
+    } else if let id = node.groupID, let workspace {
+      write(&workspace.collapsedGroups, id, collapsed)
     } else if node.isRepositoryHeading, let repositoryID = node.repositoryID {
       write(&collapsedRepositories, repositoryID, collapsed)
     } else if node.isWorktreeHeading, let worktree = node.worktree {
@@ -2025,9 +2209,103 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     view.window?.invalidateRestorableState()
   }
 
+  private var editingGroupID: String?
+
+  /// Redraw every row in place — except a group heading whose name is being typed, since a
+  /// redraw rebuilds the cell and would take the field, and what was typed, with it.
+  private func refreshRows() {
+    var rows = IndexSet(0..<outlineView.numberOfRows)
+    if let id = editingGroupID,
+      let row = rows.first(where: { (outlineView.item(atRow: $0) as? RailNode)?.groupID == id })
+    {
+      rows.remove(row)
+    }
+    outlineView.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0))
+  }
+
+  private func editGroup(_ id: String) {
+    if isSearching { applyScriptedSearch("") }
+    editingGroupID = id
+    lastArrangement = nil
+    reload()
+    guard let node = nodes.first(where: { $0.groupID == id }) else { return }
+    let row = outlineView.row(forItem: node)
+    guard row >= 0 else { return }
+    outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    outlineView.scrollRowToVisible(row)
+    _ = outlineView.view(atColumn: 0, row: row, makeIfNecessary: true)
+  }
+
+  @objc private func createClickedGroup(_ sender: NSMenuItem) {
+    guard let workspace else { return }
+    let id = workspace.createGroup()
+    if let repositoryID = sender.representedObject as? String {
+      workspace.moveRailRepository(repositoryID, to: id, at: 0)
+    }
+    editGroup(id)
+    view.window?.invalidateRestorableState()
+  }
+
+  @objc private func renameClickedGroup(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? String else { return }
+    editGroup(id)
+  }
+
+  @objc private func ungroupClickedGroup(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? String else { return }
+    workspace?.ungroup(id)
+    reloadAfterFold()
+  }
+
+  @objc private func moveClickedRepository(_ sender: NSMenuItem) {
+    guard let values = sender.representedObject as? [String], let workspace else { return }
+    let groupID = values[1].isEmpty ? nil : values[1]
+    let index =
+      groupID.flatMap { id in workspace.groups.first { $0.id == id }?.repositoryIDs.count }
+      ?? workspace.topLevelOrder.count
+    workspace.moveRailRepository(values[0], to: groupID, at: index)
+    reloadAfterFold()
+  }
+
+  private func groupNameField(_ control: NSControl, doCommandBy commandSelector: Selector) -> Bool {
+    guard
+      commandSelector == #selector(NSResponder.insertNewline(_:))
+        || commandSelector == #selector(NSResponder.cancelOperation(_:))
+    else { return false }
+    if commandSelector == #selector(NSResponder.insertNewline(_:)),
+      let field = control as? NSTextField,
+      let id = editingGroupID
+    {
+      workspace?.renameGroup(id, name: field.stringValue)
+    }
+    editingGroupID = nil
+    view.window?.makeFirstResponder(outlineView)
+    reloadAfterFold()
+    return true
+  }
+
+  func controlTextDidEndEditing(_ notification: Notification) {
+    guard !isUpdatingSelection, let id = editingGroupID,
+      let field = notification.object as? NSTextField, field.identifier?.rawValue == id
+    else { return }
+    workspace?.renameGroup(id, name: field.stringValue)
+    editingGroupID = nil
+    reloadAfterFold()
+  }
+
+  @objc private func toggleGroup(_ sender: NSButton) {
+    guard let id = sender.identifier?.rawValue, let workspace else { return }
+    if workspace.collapsedGroups.contains(id) {
+      workspace.collapsedGroups.remove(id)
+    } else {
+      workspace.collapsedGroups.insert(id)
+    }
+    reloadAfterFold()
+  }
+
   /// The heading's disclosure. Toggles this repository's collapsed state and reloads so the
   /// rows and the chevron's direction both follow.
-  @objc private func toggleGroup(_ sender: NSButton) {
+  @objc private func toggleRepository(_ sender: NSButton) {
     guard let repositoryID = sender.identifier?.rawValue else { return }
     if collapsedRepositories.contains(repositoryID) {
       collapsedRepositories.remove(repositoryID)
@@ -2086,7 +2364,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// The repository heading's `+` — the heading is main, so this starts a session there. The
   /// repositoryID rides on the button's `identifier`, set when the row was built, so one action
   /// handles whichever heading was clicked.
-  @objc private func newSessionInGroup(_ sender: NSButton) {
+  @objc private func newSessionInRepository(_ sender: NSButton) {
     guard let repositoryID = sender.identifier?.rawValue else { return }
     newSession(inRepository: repositoryID)
   }

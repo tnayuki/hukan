@@ -152,6 +152,103 @@ final class Workspace {
   var selectedWorktreeID: UUID?
   var selectedSessionID: UUID?
 
+  /// Window-owned names and membership. Paths stay in a group when a repository closes; the
+  /// rail resolves only the open ones, so reopening restores both membership and position.
+  struct RailGroup: Equatable {
+    let id: String
+    var name: String
+    var repositoryIDs: [String] = []
+  }
+
+  var groups: [RailGroup] = []
+  /// The mixed top level, with `g:` group ids and `r:` repository paths. Old windows without
+  /// this key inherit their repository order; newly opened loose repositories append to it.
+  var railOrder: [String] = []
+  var collapsedGroups: Set<String> = []
+
+  var topLevelOrder: [String] {
+    let loose = repositories.filter { groupID(for: $0.id) == nil }.map { "r:" + $0.id }
+    let valid = Set(groups.map { "g:" + $0.id } + loose)
+    var seen = Set<String>()
+    return (railOrder + loose + groups.map { "g:" + $0.id }).filter {
+      valid.contains($0) && seen.insert($0).inserted
+    }
+  }
+
+  var orderedGroups: [RailGroup] {
+    topLevelOrder.compactMap { key in
+      guard key.hasPrefix("g:") else { return nil }
+      return groups.first { $0.id == String(key.dropFirst(2)) }
+    }
+  }
+
+  func groupID(for repositoryID: String) -> String? {
+    groups.first { $0.repositoryIDs.contains(repositoryID) }?.id
+  }
+
+  @discardableResult
+  func createGroup(name: String = "Untitled Group") -> String {
+    railOrder = topLevelOrder
+    let id = UUID().uuidString
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    groups.append(RailGroup(id: id, name: trimmed.isEmpty ? "Untitled Group" : trimmed))
+    railOrder.append("g:" + id)
+    return id
+  }
+
+  func renameGroup(_ id: String, name: String) {
+    guard let index = groups.firstIndex(where: { $0.id == id }) else { return }
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty { groups[index].name = trimmed }
+  }
+
+  func ungroup(_ id: String) {
+    guard let group = groups.first(where: { $0.id == id }) else { return }
+    railOrder = topLevelOrder
+    let index = railOrder.firstIndex(of: "g:" + id) ?? railOrder.count
+    railOrder.removeAll { $0 == "g:" + id }
+    let open = Set(repositories.map(\.id))
+    railOrder.insert(
+      contentsOf: group.repositoryIDs.filter { open.contains($0) }.map { "r:" + $0 }, at: index)
+    groups.removeAll { $0.id == id }
+    collapsedGroups.remove(id)
+  }
+
+  @discardableResult
+  func moveRailRepository(_ id: String, to groupID: String?, at index: Int) -> Bool {
+    guard repositories.contains(where: { $0.id == id }),
+      groupID == nil || groups.contains(where: { $0.id == groupID })
+    else { return false }
+    let oldGroups = groups
+    let oldOrder = topLevelOrder
+    railOrder = oldOrder
+    if let groupID, let target = groups.firstIndex(where: { $0.id == groupID }) {
+      let oldIndex = groups[target].repositoryIDs.firstIndex(of: id)
+      for i in groups.indices { groups[i].repositoryIDs.removeAll { $0 == id } }
+      let destination = index - ((oldIndex.map { $0 < index } ?? false) ? 1 : 0)
+      groups[target].repositoryIDs.insert(
+        id, at: min(max(0, destination), groups[target].repositoryIDs.count))
+      railOrder.removeAll { $0 == "r:" + id }
+    } else {
+      let oldIndex = railOrder.firstIndex(of: "r:" + id)
+      for i in groups.indices { groups[i].repositoryIDs.removeAll { $0 == id } }
+      railOrder.removeAll { $0 == "r:" + id }
+      let destination = index - ((oldIndex.map { $0 < index } ?? false) ? 1 : 0)
+      railOrder.insert("r:" + id, at: min(max(0, destination), railOrder.count))
+    }
+    return groups != oldGroups || railOrder != oldOrder
+  }
+
+  @discardableResult
+  func moveRailGroup(_ id: String, at index: Int) -> Bool {
+    railOrder = topLevelOrder
+    guard let from = railOrder.firstIndex(of: "g:" + id) else { return false }
+    let to = min(max(0, index - (from < index ? 1 : 0)), railOrder.count - 1)
+    guard from != to else { return false }
+    railOrder.insert(railOrder.remove(at: from), at: to)
+    return true
+  }
+
   /// The rail's disclosure state, held here (not on the rail view) so it survives a restart the
   /// same way the column widths and selection do — it is display state a reload rebuilds, so the
   /// choices have to outlive both the reload and the process. Each set is an exception to one
@@ -500,6 +597,7 @@ final class Workspace {
     RecentRepositories.shared.note(repositoryID)
     dropWorktrees(repo.worktrees)
     repositories.removeAll { $0.id == repositoryID }
+    railOrder.removeAll { $0 == "r:" + repositoryID }
   }
 
   /// Move a repository in the rail's order, landing it before `otherID` — or last, when that is
@@ -741,6 +839,12 @@ final class Workspace {
     static let selectedSessionID = "selectedSessionID"
     static let columnWidths = "columnWidths"
     static let historyHeight = "historyHeight"
+    static let groupIDs = "rail.groupIDs"
+    static let groupNames = "rail.groupNames"
+    static let membershipPaths = "rail.membershipPaths"
+    static let membershipGroups = "rail.membershipGroups"
+    static let railOrder = "rail.order"
+    static let collapsedGroups = "rail.collapsedGroups"
     static let collapsedRepositories = "rail.collapsedRepositories"
     static let collapsedWorktrees = "rail.collapsedWorktrees"
     static let expandedArchives = "rail.expandedArchives"
@@ -819,6 +923,14 @@ final class Workspace {
     fileTabs: [FileTabState] = [], commitTabs: [CommitTabState] = [],
     tabOrder: [RestoredTabOrder] = [], selectedTabIndexes: [UUID: Int] = [:]
   ) {
+    coder.encode(groups.map(\.id) as NSArray, forKey: Key.groupIDs)
+    coder.encode(groups.map(\.name) as NSArray, forKey: Key.groupNames)
+    coder.encode(groups.flatMap(\.repositoryIDs) as NSArray, forKey: Key.membershipPaths)
+    coder.encode(
+      groups.flatMap { group in group.repositoryIDs.map { _ in group.id } } as NSArray,
+      forKey: Key.membershipGroups)
+    coder.encode(topLevelOrder as NSArray, forKey: Key.railOrder)
+    coder.encode(Array(collapsedGroups) as NSArray, forKey: Key.collapsedGroups)
     let terminals = terminals ?? self.terminals
     coder.encode(worktrees.map(\.url.path) as NSArray, forKey: Key.worktreePaths)
     coder.encode(worktrees.map(\.id.uuidString) as NSArray, forKey: Key.worktreeIDs)
@@ -932,6 +1044,21 @@ final class Workspace {
   }
 
   func decodeState(from coder: NSCoder) {
+    groups = zip(strings(coder, Key.groupIDs), strings(coder, Key.groupNames)).map {
+      RailGroup(id: $0.0, name: $0.1)
+    }
+    var memberships = Set<String>()
+    for (path, groupID) in zip(
+      strings(coder, Key.membershipPaths), strings(coder, Key.membershipGroups))
+    {
+      if let index = groups.firstIndex(where: { $0.id == groupID }),
+        memberships.insert(path).inserted
+      {
+        groups[index].repositoryIDs.append(path)
+      }
+    }
+    railOrder = strings(coder, Key.railOrder)
+    collapsedGroups = Set(strings(coder, Key.collapsedGroups))
     let paths = strings(coder, Key.worktreePaths)
     let ids = strings(coder, Key.worktreeIDs)
     var seen = Set<String>()

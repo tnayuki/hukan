@@ -26,6 +26,21 @@ extension NSWindow {
     (windowController as? WorkspaceWindowController)?.workspace
   }
 
+  @objc var groups: [SDGroup] {
+    guard let workspace = sdWorkspace else { return [] }
+    return workspace.orderedGroups.map { SDGroup(id: $0.id, workspace: workspace, window: self) }
+  }
+
+  @objc(valueInGroupsWithUniqueID:)
+  func valueInGroups(withUniqueID id: Any) -> SDGroup? {
+    groups.first { $0.uniqueID == id as? String }
+  }
+
+  @objc(valueInGroupsWithName:)
+  func valueInGroups(withName name: String) -> SDGroup? {
+    groups.first { $0.name == name }
+  }
+
   @objc var repositories: [SDRepository] {
     guard let workspace = sdWorkspace else { return [] }
     var seen = Set<String>()
@@ -142,6 +157,48 @@ extension NSWindow {
   }
 }
 
+// MARK: - Group
+
+@objc(SDGroup)
+final class SDGroup: NSObject {
+  let id: String
+  let workspace: Workspace
+  let window: NSWindow
+
+  init(id: String, workspace: Workspace, window: NSWindow) {
+    self.id = id
+    self.workspace = workspace
+    self.window = window
+  }
+
+  @objc var uniqueID: String { id }
+  @objc var name: String { workspace.groups.first { $0.id == id }?.name ?? "" }
+  @objc var repositories: [SDRepository] {
+    let ids = workspace.groups.first { $0.id == id }?.repositoryIDs ?? []
+    return ids.filter { path in workspace.repositories.contains { $0.id == path } }.map {
+      SDRepository(repositoryID: $0, workspace: workspace, window: window)
+    }
+  }
+
+  @objc(valueInRepositoriesWithUniqueID:)
+  func valueInRepositories(withUniqueID id: Any) -> SDRepository? {
+    repositories.first { $0.uniqueID == id as? String }
+  }
+
+  @objc(valueInRepositoriesWithName:)
+  func valueInRepositories(withName name: String) -> SDRepository? {
+    repositories.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+  }
+
+  override var objectSpecifier: NSScriptObjectSpecifier? {
+    guard let container = window.objectSpecifier, let desc = container.keyClassDescription else {
+      return nil
+    }
+    return NSUniqueIDSpecifier(
+      containerClassDescription: desc, containerSpecifier: container, key: "groups", uniqueID: id)
+  }
+}
+
 // MARK: - Repository
 
 /// A repository is not a model object — it is `Workspace.worktrees` grouped by `repositoryID` (a
@@ -168,6 +225,23 @@ final class SDRepository: NSObject {
   @objc var uniqueID: String { repositoryID }
   @objc var name: String {
     anyWorktree?.repositoryName ?? (repositoryID as NSString).lastPathComponent
+  }
+
+  @objc var group: String {
+    get { workspace.groups.first { $0.repositoryIDs.contains(repositoryID) }?.name ?? "" }
+    set {
+      let name = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      let id =
+        name.isEmpty
+        ? nil
+        : workspace.orderedGroups.first { $0.name == name }?.id ?? workspace.createGroup(name: name)
+      let index =
+        id.flatMap { key in workspace.groups.first { $0.id == key }?.repositoryIDs.count }
+        ?? workspace.topLevelOrder.count
+      workspace.moveRailRepository(repositoryID, to: id, at: index)
+      controller?.reload()
+      window.invalidateRestorableState()
+    }
   }
 
   @objc var worktrees: [SDWorktree] {

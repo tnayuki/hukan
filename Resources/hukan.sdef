@@ -9,12 +9,24 @@
 
         <!-- Objects: application → window → repository → worktree → session. -->
 
+        <class name="group" code="cGrp" description="A manual rail group" plural="groups">
+            <cocoa class="SDGroup"/>
+            <property name="id" code="ID  " type="text" access="r">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r"/>
+            <element type="repository">
+                <cocoa key="repositories"/>
+            </element>
+        </class>
+
         <class name="repository" code="cRep" description="An open repository" plural="repositories">
             <cocoa class="SDRepository"/>
             <property name="id" code="ID  " type="text" access="r" description="The repository path, its unique identifier">
                 <cocoa key="uniqueID"/>
             </property>
             <property name="name" code="pnam" type="text" access="r" description="Display name of the repository"/>
+            <property name="group" code="pGrp" type="text" access="rw" description="Group name, or empty when loose"/>
             <element type="worktree">
                 <cocoa key="worktrees"/>
             </element>
@@ -118,6 +130,9 @@
 
         <class-extension extends="window" description="A hukan workspace window">
             <cocoa class="NSWindow"/>
+            <element type="group">
+                <cocoa key="groups"/>
+            </element>
             <element type="repository">
                 <cocoa key="repositories"/>
             </element>

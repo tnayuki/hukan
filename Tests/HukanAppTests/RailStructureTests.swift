@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 @testable import Hukan
@@ -243,4 +244,153 @@ final class RailStructureTests: XCTestCase {
     XCTAssertEqual(boundary(nil, -1), 2)
     XCTAssertEqual(boundary(nil, 99), 2)
   }
+  func testGroupsAndLooseRepositoriesBuildAMixedTree() {
+    let (workspace, _) = reorderable()
+    let group = workspace.createGroup(name: "Customer")
+    let empty = workspace.createGroup(name: "Empty")
+    XCTAssertTrue(workspace.moveRailRepository("/b", to: group, at: 0))
+    XCTAssertTrue(workspace.moveRailGroup(group, at: 0))
+    let rail = SessionRailViewController()
+    rail.workspace = workspace
+    rail.reload()
+    let outline = NSOutlineView()
+    XCTAssertEqual(rail.outlineView(outline, numberOfChildrenOfItem: nil), 4)
+    let heading = rail.outlineView(outline, child: 0, ofItem: nil) as! RailNode
+    XCTAssertEqual(heading.groupID, group)
+    XCTAssertEqual(heading.title, "CUSTOMER")
+    XCTAssertEqual(heading.children.map(\.repositoryID), ["/b"])
+    XCTAssertEqual(heading.children.first?.title, "b")
+    XCTAssertEqual(
+      (rail.outlineView(outline, child: 1, ofItem: nil) as! RailNode).repositoryID, "/a")
+    XCTAssertEqual((rail.outlineView(outline, child: 3, ofItem: nil) as! RailNode).groupID, empty)
+    XCTAssertEqual(SessionRailViewController.topLevelIndex([heading], of: heading.children[0]), 0)
+  }
+
+  func testRepositoriesJoinLeaveAndReorderWithinGroups() {
+    let (workspace, _) = reorderable()
+    let group = workspace.createGroup()
+    XCTAssertTrue(workspace.moveRailRepository("/a", to: group, at: 0))
+    XCTAssertTrue(workspace.moveRailRepository("/b", to: group, at: 1))
+    XCTAssertTrue(workspace.moveRailRepository("/c", to: group, at: 1))
+    XCTAssertEqual(workspace.groups[0].repositoryIDs, ["/a", "/c", "/b"])
+    XCTAssertTrue(workspace.moveRailRepository("/b", to: group, at: 0))
+    XCTAssertEqual(workspace.groups[0].repositoryIDs, ["/b", "/a", "/c"])
+    XCTAssertFalse(workspace.moveRailRepository("/b", to: group, at: 1))
+    XCTAssertTrue(workspace.moveRailRepository("/a", to: nil, at: 0))
+    XCTAssertNil(workspace.groupID(for: "/a"))
+    XCTAssertEqual(workspace.topLevelOrder, ["r:/a", "g:" + group])
+    XCTAssertEqual(workspace.groups[0].repositoryIDs, ["/b", "/c"])
+  }
+
+  func testGroupsReorderAndUngroupAtTheirPosition() {
+    let (workspace, _) = reorderable()
+    let first = workspace.createGroup(name: "First")
+    let second = workspace.createGroup(name: "Second")
+    workspace.moveRailRepository("/a", to: first, at: 0)
+    workspace.moveRailRepository("/b", to: first, at: 1)
+    XCTAssertTrue(workspace.moveRailGroup(second, at: 0))
+    XCTAssertEqual(workspace.topLevelOrder, ["g:" + second, "r:/c", "g:" + first])
+    XCTAssertFalse(workspace.moveRailGroup(second, at: 1))
+    workspace.collapsedGroups.insert(first)
+    workspace.ungroup(first)
+    XCTAssertEqual(workspace.topLevelOrder, ["g:" + second, "r:/c", "r:/a", "r:/b"])
+    XCTAssertNil(workspace.groupID(for: "/a"))
+    XCTAssertFalse(workspace.collapsedGroups.contains(first))
+    XCTAssertEqual(workspace.repositories.count, 3)
+  }
+
+  func testMembershipSurvivesCloseAndReopenInTheSameWorkspace() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let workspace = Workspace()
+    // The id is read before the close: a worktree's repository is unowned, and closing frees it.
+    let repositoryID = workspace.addWorktree(directory).repositoryID
+    let group = workspace.createGroup(name: "Customer")
+    workspace.moveRailRepository(repositoryID, to: group, at: 0)
+    workspace.closeRepository(repositoryID)
+    XCTAssertTrue(workspace.railRepositories.isEmpty)
+    XCTAssertEqual(workspace.groupID(for: repositoryID), group)
+    let reopened = workspace.addWorktree(directory)
+    XCTAssertEqual(workspace.groupID(for: reopened.repositoryID), group)
+    XCTAssertEqual(workspace.topLevelOrder, ["g:" + group])
+    workspace.closeRepository(reopened.repositoryID)
+  }
+
+  func testGroupNamesTrimAndEmptyNamesKeepThePreviousName() {
+    let workspace = Workspace()
+    let id = workspace.createGroup()
+    workspace.renameGroup(id, name: "  Customer \n")
+    XCTAssertEqual(workspace.groups[0].name, "Customer")
+    workspace.renameGroup(id, name: " \n")
+    XCTAssertEqual(workspace.groups[0].name, "Customer")
+    let second = workspace.createGroup(name: "Customer")
+    XCTAssertNotEqual(id, second)
+    XCTAssertEqual(workspace.groups.map(\.name), ["Customer", "Customer"])
+  }
+
+  func testGroupDropDestinations() {
+    let a = RailNode(title: "a", groupRepositoryID: "/a")
+    let b = RailNode(title: "b", groupRepositoryID: "/b")
+    let group = RailNode(title: "Customer", children: [a, b], groupID: "customer")
+    let loose = RailNode(title: "c", groupRepositoryID: "/c")
+    let nodes = [group, loose]
+    let destination = { (item: Any?, index: Int, draggingGroup: Bool) in
+      SessionRailViewController.dropDestination(
+        nodes, item: item, childIndex: index, draggingGroup: draggingGroup)
+    }
+    XCTAssertEqual(destination(group, -1, false), .group("customer", NSOutlineViewDropOnItemIndex))
+    XCTAssertEqual(destination(group, 1, false), .group("customer", 1))
+    XCTAssertEqual(destination(b, -1, false), .group("customer", 1))
+    XCTAssertEqual(destination(nil, 1, false), .topLevel(1))
+    XCTAssertEqual(destination(nil, -1, false), .topLevel(2))
+    XCTAssertEqual(destination(group, 1, true), .topLevel(0))
+    XCTAssertEqual(destination(b, -1, true), .topLevel(0))
+  }
+
+  func testGroupAggregateAttentionAndUnpromptedRunningState() {
+    let (workspace, repositories) = reorderable()
+    let group = workspace.createGroup()
+    workspace.moveRailRepository("/a", to: group, at: 0)
+    let session = AgentSession(worktreeID: repositories[0].worktrees[0].id)
+    workspace.sessions = [session]
+    workspace.collapsedGroups.insert(group)
+    let rail = SessionRailViewController()
+    rail.workspace = workspace
+    let outline = NSOutlineView()
+    func heading() -> RailNode {
+      rail.reload()
+      return rail.outlineView(outline, child: 2, ofItem: nil) as! RailNode
+    }
+    XCTAssertNil(heading().state)
+    session.state = .running
+    XCTAssertFalse(session.isWorking)
+    XCTAssertNil(heading().state)
+    session.state = .needsAttention
+    XCTAssertEqual(heading().state, .needsAttention)
+    workspace.closeRepository("/a")
+    XCTAssertNil(heading().state)
+  }
+
+  func testScriptingGroupNamesChooseTheFirstGroupInRailOrder() {
+    let (workspace, _) = reorderable()
+    let first = workspace.createGroup(name: "Customer")
+    let second = workspace.createGroup(name: "Customer")
+    workspace.moveRailGroup(second, at: 0)
+    let proxy = SDRepository(repositoryID: "/a", workspace: workspace, window: NSWindow())
+    XCTAssertEqual(proxy.group, "")
+    proxy.group = " Customer "
+    XCTAssertEqual(workspace.groupID(for: "/a"), second)
+    XCTAssertEqual(proxy.group, "Customer")
+    XCTAssertTrue(workspace.groups.first { $0.id == first }!.repositoryIDs.isEmpty)
+    proxy.group = "New Customer"
+    XCTAssertEqual(workspace.orderedGroups.last?.name, "New Customer")
+    let grouped = SDGroup(
+      id: workspace.groupID(for: "/a")!, workspace: workspace, window: proxy.window)
+    XCTAssertEqual(grouped.repositories.map(\.uniqueID), ["/a"])
+    proxy.group = ""
+    XCTAssertNil(workspace.groupID(for: "/a"))
+    XCTAssertEqual(workspace.topLevelOrder.last, "r:/a")
+  }
+
 }

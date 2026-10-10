@@ -90,6 +90,65 @@ final class RailKeyboardTests: XCTestCase {
     XCTAssertEqual(outline.selectedRow, 0)
   }
 
+  func testLeftAndRightFoldAGroupAndPreserveItsRepositoryFold() {
+    let (rail, workspace, _) = rail(sessionCount: 2)
+    let group = workspace.createGroup(name: "Customer")
+    workspace.moveRailRepository("/repo/main", to: group, at: 0)
+    workspace.collapsedRepositories = ["/repo/main"]
+    rail.reload()
+    let outline = rail.outlineViewForTesting
+    outline.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+    XCTAssertEqual(outline.numberOfRows, 2)
+    press(outline, .left)
+    XCTAssertEqual(workspace.collapsedGroups, [group])
+    XCTAssertEqual(outline.numberOfRows, 1)
+    rail.reload()
+    press(outline, .right)
+    XCTAssertTrue(workspace.collapsedGroups.isEmpty)
+    XCTAssertEqual(outline.numberOfRows, 2)
+    XCTAssertEqual(workspace.collapsedRepositories, ["/repo/main"])
+    press(outline, .right)
+    XCTAssertEqual(outline.selectedRow, 1)
+  }
+
+  func testEmptyGroupsFoldWithTheKeyboard() {
+    let (rail, workspace, _) = rail(sessionCount: 0)
+    let group = workspace.createGroup()
+    rail.reload()
+    let outline = rail.outlineViewForTesting
+    outline.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+    press(outline, .left)
+    XCTAssertEqual(workspace.collapsedGroups, [group])
+    press(outline, .right)
+    XCTAssertTrue(workspace.collapsedGroups.isEmpty)
+  }
+
+  func testNewGroupInlineNamingCommitsAndCancels() {
+    let (rail, workspace, _) = rail(sessionCount: 0)
+    let outline = rail.outlineViewForTesting
+    func create() -> NSTextField {
+      let menu = NSMenu()
+      rail.menuNeedsUpdate(menu)
+      let item = menu.items.first { $0.title == "New Group" }!
+      _ = rail.perform(item.action!, with: item)
+      let row = outline.numberOfRows - 1
+      let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true)!
+      return cell.subviews.compactMap { $0 as? NSTextField }.first { $0.isEditable }!
+    }
+    let cancelled = create()
+    cancelled.stringValue = "Discard this"
+    XCTAssertTrue(
+      rail.control(
+        cancelled, textView: NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:))))
+    XCTAssertEqual(workspace.groups[0].name, "Untitled Group")
+    let committed = create()
+    committed.stringValue = "  Customer  "
+    XCTAssertTrue(
+      rail.control(
+        committed, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))))
+    XCTAssertEqual(workspace.groups[1].name, "Customer")
+  }
+
   func testAShiftRangeKeepsGrowingAcrossReloads() {
     let (rail, workspace, _) = rail(sessionCount: 6)
     let outline = rail.outlineViewForTesting
