@@ -230,6 +230,23 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
     for observer in observers { observer.invalidate() }
   }
 
+  /// The tab is closing. Taking the pane out of the hierarchy is not the page ending: the web view
+  /// lives on for as long as anything holds it, and a video playing in it went on being heard
+  /// after its tab was gone. So the page is unloaded outright — media paused and the document
+  /// replaced with a blank one — before the pane leaves, rather than trusting the release to do it.
+  func close() {
+    for observer in observers { observer.invalidate() }
+    observers = []
+    onTitleChange = nil
+    onGrantChange = nil
+    onClose = nil
+    webView.stopLoading()
+    webView.pauseAllMediaPlayback()
+    webView.closeAllMediaPresentations()
+    webView.load(URLRequest(url: URL(string: "about:blank")!))
+    removeFromParent()
+  }
+
   /// What to save for this tab, or nil for one not worth a slot. A tab restored and never shown
   /// hands back exactly what it was given.
   var restorableState: BrowserTabState? {

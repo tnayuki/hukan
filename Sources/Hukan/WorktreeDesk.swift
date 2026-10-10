@@ -1281,7 +1281,7 @@ final class WorktreeDeskViewController: NSViewController {
       var tabs = self.browserTabsByWorktree[worktreeID] ?? []
       guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
       let previous = self.orderedSurfaces
-      tabs[index].pane.removeFromParent()
+      tabs[index].pane.close()
       tabs.remove(at: index)
       self.browserTabsByWorktree[worktreeID] = tabs
       self.view.window?.invalidateRestorableState()
@@ -1388,7 +1388,7 @@ final class WorktreeDeskViewController: NSViewController {
       guard let worktreeID, var tabs = browserTabsByWorktree[worktreeID],
         let index = tabs.firstIndex(where: { $0.id == id })
       else { return true }
-      tabs[index].pane.removeFromParent()
+      tabs[index].pane.close()
       tabs.remove(at: index)
       browserTabsByWorktree[worktreeID] = tabs
       view.window?.invalidateRestorableState()
@@ -1485,7 +1485,7 @@ final class WorktreeDeskViewController: NSViewController {
       fileTabsByWorktree[key] = nil
     }
     for key in browserTabsByWorktree.keys where !live.contains(key) {
-      for tab in browserTabsByWorktree[key] ?? [] { tab.pane.removeFromParent() }
+      for tab in browserTabsByWorktree[key] ?? [] { tab.pane.close() }
       browserTabsByWorktree[key] = nil
     }
     for key in commitTabsByWorktree.keys where !live.contains(key) {
