@@ -90,7 +90,10 @@ into named groups — *New Group* on the rail's right-click, then a repository d
 group's heading or sent there with *Move to Group* — so one window can hold several customers'
 work, each folding away under its own heading. A folded group's heading carries a dot when a
 session inside it is working or waiting on you. Groups belong to the window and come back with
-it, and a repository closed out of one goes back into it when it is opened again here. The open panel
+it, and a repository closed out of one goes back into it when it is opened again here. Dragging a
+repository's heading onto another window's rail moves it there whole and still running — its
+agents mid-turn, its terminals, its tabs with their pages and unsaved edits — which is how several
+windows become one. A repository that window already has open is not offered the drop. The open panel
 takes several at once, and *Open Recent* offers the ones this app has had open and this window has
 not — in the File menu, on the rail's right-click, and beside the empty window's button. An entry
 that is no longer a directory drops itself.

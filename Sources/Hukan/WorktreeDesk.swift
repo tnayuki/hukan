@@ -299,6 +299,50 @@ final class WorktreeDeskViewController: NSViewController {
     }
   }
 
+  /// Opaque live tabs: their panes and editor buffers are never serialized or closed.
+  struct DetachedTabs {
+    fileprivate var install: (WorktreeDeskViewController) -> Void
+  }
+
+  func detachTabs(in worktreeIDs: Set<UUID>) -> DetachedTabs {
+    if let worktreeID, worktreeIDs.contains(worktreeID) {
+      currentSurfaceView?.removeFromSuperview()
+      currentSurfaceView = nil
+    }
+    var installs: [(WorktreeDeskViewController) -> Void] = []
+    for id in worktreeIDs {
+      let files = fileTabsByWorktree.removeValue(forKey: id) ?? []
+      let browsers = browserTabsByWorktree.removeValue(forKey: id) ?? []
+      let commits = commitTabsByWorktree.removeValue(forKey: id) ?? []
+      let order = tabOrderByWorktree.removeValue(forKey: id)
+      let selected = surfaceByWorktree.removeValue(forKey: id)
+      let panes: [NSViewController] =
+        files.map { $0.content } + browsers.map { $0.pane }
+        + commits.map { $0.content }
+      for pane in panes {
+        if pane.isViewLoaded { pane.view.removeFromSuperview() }
+        pane.removeFromParent()
+      }
+      installs.append { desk in
+        desk.fileTabsByWorktree[id] = files
+        desk.browserTabsByWorktree[id] = browsers
+        desk.commitTabsByWorktree[id] = commits
+        desk.tabOrderByWorktree[id] = order
+        desk.surfaceByWorktree[id] = selected
+        for tab in files { desk.wire(tab) }
+        for tab in browsers { desk.wire(tab, in: id) }
+        for tab in commits { desk.addChild(tab.content) }
+      }
+    }
+    return DetachedTabs { desk in
+      for install in installs { install(desk) }
+    }
+  }
+
+  func adoptTabs(_ tabs: DetachedTabs) {
+    tabs.install(self)
+  }
+
   private let tabBar = TabStrip()
   /// The strip's clip. Tabs keep their natural width and run off the edge rather than being
   /// squeezed into slivers, so a desk with a dozen of them is walked rather than read at a
@@ -1077,7 +1121,10 @@ final class WorktreeDeskViewController: NSViewController {
         tabID: UUID(), title: url.host ?? url.absoluteString, url: url.absoluteString,
         level: .read, opening: true
       ) { [weak self] granted in
-        guard let self else {
+        guard
+          let self = WorkspaceWindowController.desk(for: worktreeID)
+            ?? self.flatMap({ $0.workspace?.worktree(id: worktreeID) != nil ? $0 : nil })
+        else {
           completion(.error("The desk is gone."))
           return
         }
@@ -1118,7 +1165,11 @@ final class WorktreeDeskViewController: NSViewController {
       tabID: id, title: pane.pageTitle, url: pane.currentURL?.absoluteString ?? "",
       level: needed
     ) { [weak self, weak pane] granted in
-      guard let self, let pane else {
+      guard
+        let self = WorkspaceWindowController.desk(for: worktreeID)
+          ?? self.flatMap({ $0.workspace?.worktree(id: worktreeID) != nil ? $0 : nil }),
+        let pane
+      else {
         completion(.error("The tab is gone."))
         return
       }

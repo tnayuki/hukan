@@ -606,6 +606,10 @@ final class RunningColumnViewController: NSViewController {
     }
   }
 
+  func detachSessions(in worktreeIDs: Set<UUID>) {
+    if let attached, worktreeIDs.contains(attached.worktreeID) { attach(nil) }
+  }
+
   private func attach(_ session: AgentSession?) {
     guard attached !== session else { return }
     // A question already up on the session arriving is marked as claimed without being focused:

@@ -364,6 +364,12 @@
             <result type="text"/>
         </command>
 
+        <command name="transfer" code="HuknTrnf" hidden="yes" description="Move an open repository, live, from the window holding it into the front window — the drop between two rails, for automated checks">
+            <cocoa class="TransferCommand"/>
+            <direct-parameter type="text" description="the repository's path, its id"/>
+            <result type="text"/>
+        </command>
+
         <command name="fold" code="HuknFold" hidden="yes" description="Inspect or drive the tool-call fold in the selected transcript, for automated checks">
             <cocoa class="FoldCommand"/>
             <direct-parameter type="text" optional="yes" description="status (default), expand, or collapse"/>

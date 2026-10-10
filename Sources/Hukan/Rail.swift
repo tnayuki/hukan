@@ -226,6 +226,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   var onSelectWorktree: ((UUID) -> Void)?
   var onSelectSession: ((AgentSession) -> Void)?
   var onCloseRepository: ((String) -> Void)?
+  var onAdoptRepository: ((Workspace, String, DropDestination) -> Bool)?
   /// A repository was dragged to a new place in the rail's order. The workspace has already been
   /// rearranged; this only asks the window to redraw and re-record its state.
   var onReorderRepositories: (() -> Void)?
@@ -420,8 +421,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     outlineView.doubleAction = #selector(sessionRowDoubleClicked)
     contextMenu.delegate = self
     outlineView.menu = contextMenu
-    // Reordering the repositories. `.move` only inside this window, and nothing at all outside
-    // it: the drag rearranges a list, it does not hand anything over.
+    // Reordering repositories, or moving them between windows. `.move` stays inside this app.
     outlineView.registerForDraggedTypes([.hukanRepositoryRow, .hukanGroupRow])
     outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
     outlineView.setDraggingSourceOperationMask([], forLocal: false)
@@ -1236,7 +1236,14 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
     proposedChildIndex index: Int
   ) -> NSDragOperation {
-    guard !isSearching else { return [] }
+    guard !isSearching, let workspace,
+      let source = (info.draggingSource as? NSView)?.window?.windowController
+        as? WorkspaceWindowController,
+      Self.allowsDrop(
+        repositoryID: draggedRepositoryID(from: info),
+        groupID: info.draggingPasteboard.string(forType: .hukanGroupRow),
+        from: source.workspace, to: workspace)
+    else { return [] }
     if draggedRepositoryID(from: info) != nil,
       case .group(let id, let childIndex) = Self.dropDestination(
         nodes, item: item, childIndex: index, draggingGroup: false),
@@ -1262,6 +1269,14 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     _ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int
   ) -> Bool {
     guard !isSearching, let workspace else { return false }
+    guard
+      let source = (info.draggingSource as? NSView)?.window?.windowController
+        as? WorkspaceWindowController,
+      Self.allowsDrop(
+        repositoryID: draggedRepositoryID(from: info),
+        groupID: info.draggingPasteboard.string(forType: .hukanGroupRow),
+        from: source.workspace, to: workspace)
+    else { return false }
     let changed: Bool
     if let id = draggedRepositoryID(from: info) {
       guard
@@ -1278,9 +1293,15 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
           ? node.children[childIndex].repositoryID : nil
         let position =
           before.flatMap { group.repositoryIDs.firstIndex(of: $0) } ?? group.repositoryIDs.count
-        changed = workspace.moveRailRepository(id, to: groupID, at: position)
+        changed =
+          source.workspace === workspace
+          ? workspace.moveRailRepository(id, to: groupID, at: position)
+          : onAdoptRepository?(source.workspace, id, .group(groupID, position)) ?? false
       case .topLevel(let boundary):
-        changed = workspace.moveRailRepository(id, to: nil, at: boundary)
+        changed =
+          source.workspace === workspace
+          ? workspace.moveRailRepository(id, to: nil, at: boundary)
+          : onAdoptRepository?(source.workspace, id, .topLevel(boundary)) ?? false
       }
     } else if let id = info.draggingPasteboard.string(forType: .hukanGroupRow) {
       guard let boundary = dropBoundary(item: item, childIndex: index) else { return false }
@@ -1297,6 +1318,19 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
 
   private func draggedRepositoryID(from info: NSDraggingInfo) -> String? {
     info.draggingPasteboard.string(forType: .hukanRepositoryRow)
+  }
+
+  static func allowsDrop(
+    repositoryID: String?, groupID: String?, from source: Workspace, to destination: Workspace
+  ) -> Bool {
+    if let repositoryID {
+      return source.repositories.contains { $0.id == repositoryID }
+        && (source === destination || !destination.repositories.contains { $0.id == repositoryID })
+    }
+    return source === destination
+      && groupID.map { id in
+        source.groups.contains { $0.id == id }
+      } == true
   }
 
   enum DropDestination: Equatable {

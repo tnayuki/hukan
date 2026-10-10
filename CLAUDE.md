@@ -795,6 +795,17 @@ Workspace (one window)
   do, and pulling the row out of the fold, which is what the Archived section does, would undo the
   fold that a customer's whole block was folded to get. The group's heading takes the uppercase
   label the repository had, and the repository its name, so the two levels never read alike.
+  **Moving between windows is a transfer, not a close and an open.** Gathering windows into one
+  is the reason groups exist, and the cheap version of the move — close it there, open it here —
+  stops every engine and shell in the repository and drops every unsaved buffer, so consolidating
+  would cost the agents that are working right now. So the objects themselves change hands: the
+  sessions keep their engines, the terminals their shells, the tabs their pages, grants and undo
+  stacks, and only the closures that name a window are rewired. The tabs leave the source desk
+  before the source redraws, since that redraw closes whatever no longer has a worktree. Only a
+  repository crosses — a group is a window's own arrangement, and one already open on the other
+  side is refused rather than merged, there being no rule for two sets of live objects standing
+  for one checkout. It is not a close, so Open Recent does not hear of it, and the source forgets
+  its membership there, the move having been the decision.
 - **A session leaves the rail by being archived, not by getting old.** The rail carried time
   buckets — Today, Yesterday, Last 7 days, Older, the last folded — and the proxy was wrong in
   both directions: a one-shot finished twenty minutes ago sat in Today all day, while a session
@@ -1921,7 +1932,9 @@ buttons, and otherwise only reachable by clicking at coordinates. `completions` 
 kind: the command list is rows on a panel floating over the window, so checking that a `/` opened
 it — and that `⏎` took the row the arrows had reached — is otherwise a click at coordinates.
 `typing` goes through the text view's own edit path rather than a shortcut only a script can
-take, so what it exercises is the list a person would get. `recents` is one of the same kind: Open Recent hangs in three places, two of them
+take, so what it exercises is the list a person would get. `transfer "<path>"` is the drop between two rails — a repository moved, live, from the window
+holding it into the front one, or into a new window when the front one is holding it, which is
+the only way a script can have a second window to move into. `recents` is one of the same kind: Open Recent hangs in three places, two of them
 context menus that cannot be opened without a right-click at coordinates, so the verb reports what
 a row would say and what it would open, and `opening` takes one the way clicking it would.
 `selected sessions` is the last of them, and

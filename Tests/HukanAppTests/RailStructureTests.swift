@@ -393,4 +393,87 @@ final class RailStructureTests: XCTestCase {
     XCTAssertEqual(workspace.topLevelOrder.last, "r:/a")
   }
 
+  func testRepositoryTransferCarriesLiveObjectsAndRemovesSourceMembership() throws {
+    let (source, repositories) = reorderable()
+    let repository = repositories[0]
+    let worktree = repository.worktrees[0]
+    let session = AgentSession(worktreeID: worktree.id)
+    session.state = .needsAttention
+    session.draft = "Unsent draft"
+    let terminal = TerminalSession(worktreeID: worktree.id, cwd: worktree.url)
+    source.sessions = [session]
+    source.terminals = [terminal]
+    source.selectedWorktreeID = worktree.id
+    source.selectedSessionID = session.id
+    source.archivedSessionIDs = [session.id]
+    source.collapsedRepositories = [repository.id]
+    source.collapsedWorktrees = [worktree.id.uuidString]
+    source.expandedArchives = [worktree.id.uuidString]
+    source.collapsedWorktreeSections = [repository.id]
+    let group = source.createGroup()
+    source.moveRailRepository(repository.id, to: group, at: 0)
+
+    let detached = try XCTUnwrap(source.detachRepository(repository.id))
+    XCTAssertTrue(detached.repository === repository)
+    XCTAssertTrue(detached.sessions[0] === session)
+    XCTAssertTrue(detached.terminals[0] === terminal)
+    XCTAssertEqual(repository.worktrees.count, 2)
+    XCTAssertEqual(session.state, .needsAttention)
+    XCTAssertEqual(session.draft, "Unsent draft")
+    XCTAssertFalse(terminal.isSpawned)
+    XCTAssertTrue(source.sessions.isEmpty)
+    XCTAssertTrue(source.terminals.isEmpty)
+    XCTAssertTrue(source.archivedSessionIDs.isEmpty)
+    XCTAssertTrue(source.collapsedRepositories.isEmpty)
+    XCTAssertTrue(source.collapsedWorktrees.isEmpty)
+    XCTAssertTrue(source.expandedArchives.isEmpty)
+    XCTAssertTrue(source.collapsedWorktreeSections.isEmpty)
+    XCTAssertNil(source.groupID(for: repository.id))
+    XCTAssertFalse(source.railOrder.contains("r:" + repository.id))
+    XCTAssertEqual(source.selectedWorktreeID, repositories[1].worktrees[0].id)
+    XCTAssertNil(source.selectedSessionID)
+
+    let destination = Workspace()
+    var heldChanges = 0
+    destination.onSessionsChanged = { heldChanges += 1 }
+    XCTAssertTrue(destination.adoptRepository(detached))
+    XCTAssertTrue(destination.repositories[0] === repository)
+    XCTAssertTrue(destination.sessions[0] === session)
+    XCTAssertTrue(destination.terminals[0] === terminal)
+    XCTAssertEqual(destination.archivedSessionIDs, [session.id])
+    XCTAssertEqual(destination.collapsedRepositories, [repository.id])
+    XCTAssertEqual(destination.collapsedWorktrees, [worktree.id.uuidString])
+    XCTAssertEqual(destination.expandedArchives, [worktree.id.uuidString])
+    XCTAssertEqual(destination.collapsedWorktreeSections, [repository.id])
+    session.onHeldChange?()
+    XCTAssertEqual(heldChanges, 1)
+    XCTAssertFalse(destination.adoptRepository(detached))
+    XCTAssertEqual(destination.sessions.count, 1)
+    XCTAssertEqual(destination.terminals.count, 1)
+    // Reopening in the source has no old group membership to recover.
+    source.repositories.append(Repository(id: repository.id))
+    XCTAssertNil(source.groupID(for: repository.id))
+  }
+
+  func testForeignRailDropsRefuseDuplicateRepositoriesAndGroups() {
+    let (source, _) = reorderable()
+    let destination = Workspace()
+    let group = source.createGroup()
+    func allows(repository: String? = nil, group: String? = nil) -> Bool {
+      SessionRailViewController.allowsDrop(
+        repositoryID: repository, groupID: group, from: source, to: destination)
+    }
+    XCTAssertTrue(allows(repository: "/a"))
+    XCTAssertFalse(allows(repository: "/gone"))
+    XCTAssertFalse(allows(group: group))
+    destination.repositories = [Repository(id: "/a")]
+    XCTAssertFalse(allows(repository: "/a"))
+    XCTAssertTrue(
+      SessionRailViewController.allowsDrop(
+        repositoryID: "/a", groupID: nil, from: source, to: source))
+    XCTAssertTrue(
+      SessionRailViewController.allowsDrop(
+        repositoryID: nil, groupID: group, from: source, to: source))
+  }
+
 }

@@ -319,6 +319,35 @@ final class RecentsCommand: NSScriptCommand {
   }
 }
 
+/// `transfer "<path>"` moves an open repository from whichever window holds it into the front one,
+/// loose at the end of its rail — the same transfer a drop between two rails makes. When the front
+/// window is the one holding it, a new window is opened to take it, which is the only way a script
+/// can have a second window to move into. Hidden, like `recents`: the drag crosses two windows and
+/// is a gesture no script can make without coordinates.
+@objc(TransferCommand)
+final class TransferCommand: NSScriptCommand {
+  override func performDefaultImplementation() -> Any? {
+    guard var controller = frontController() else { return fail("no window") }
+    guard let path = directParameter as? String, !path.isEmpty else { return fail("no path") }
+    if controller.workspace.repositories.contains(where: { $0.id == path }) {
+      let fresh = WorkspaceWindowController(workspace: Workspace())
+      fresh.showWindow(nil)
+      controller = fresh
+    }
+    let destination = controller
+    guard
+      let source = WorkspaceWindowController.all.first(where: {
+        $0 !== destination && $0.workspace.repositories.contains { $0.id == path }
+      })
+    else { return fail("no other window holds \(path)") }
+    let moved = controller.adoptRepository(
+      path, from: source.workspace, at: .topLevel(controller.workspace.topLevelOrder.count))
+    guard moved else { return fail("refused") }
+    controller.reload()
+    return nil
+  }
+}
+
 /// `browser "<address>"` opens or focuses a web tab on the selected worktree's desk, taking the
 /// address bar's own reading of the text — so a script exercises the same address-or-search rule a
 /// person does. With nothing to open it reports the worktree's web tabs, one line each. Hidden,

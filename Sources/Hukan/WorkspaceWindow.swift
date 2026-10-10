@@ -298,6 +298,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       self.resumeSelectedSessionIfNeeded()
       self.reload()
     }
+    rail.onAdoptRepository = { [weak self] source, id, destination in
+      self?.adoptRepository(id, from: source, at: destination) ?? false
+    }
     rail.onCloseRepository = { [weak self] repositoryID in
       guard let self else { return }
       self.workspace.closeRepository(repositoryID)
@@ -2095,9 +2098,69 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     return terminal
   }
 
+  /// The current owner, resolved when a pending browser grant is answered after a move.
+  static func desk(for worktreeID: UUID) -> WorktreeDeskViewController? {
+    all.first { $0.workspace.worktree(id: worktreeID) != nil }?.files.desk
+  }
+
+  /// Take a repository from another window with everything in it still running — sessions on
+  /// their engines, terminals on their shells, tabs with their pages and unsaved edits — rather
+  /// than closing it there and opening it here, which would stop all of it. The tabs leave the
+  /// source desk before the source reloads, since that reload closes what has no worktree.
+  func adoptRepository(
+    _ id: String, from sourceWorkspace: Workspace,
+    at destination: SessionRailViewController.DropDestination
+  ) -> Bool {
+    guard !workspace.repositories.contains(where: { $0.id == id }),
+      let source = Self.all.first(where: {
+        $0 !== self && $0.workspace === sourceWorkspace
+      }),
+      let repository = source.workspace.repositories.first(where: { $0.id == id })
+    else { return false }
+    if case .group(let groupID, _) = destination,
+      !workspace.groups.contains(where: { $0.id == groupID })
+    {
+      return false
+    }
+    source.setMaximized(nil)
+    setMaximized(nil)
+    let worktreeIDs = Set(repository.worktrees.map(\.id))
+    source.running.detachSessions(in: worktreeIDs)
+    let tabs = source.files.desk.detachTabs(in: worktreeIDs)
+    guard let detached = source.workspace.detachRepository(id) else { return false }
+    workspace.adoptRepository(detached)
+    files.desk.adoptTabs(tabs)
+    // The adopting workspace has already pointed every session's held changes at itself; what is
+    // left is the window's own wiring, which only the sessions the source had attached carry.
+    for session in detached.sessions where session.onStateChange != nil { attach(session) }
+    for terminal in detached.terminals { wireTerminal(terminal) }
+    switch destination {
+    case .group(let groupID, let index):
+      workspace.moveRailRepository(id, to: groupID, at: index)
+    case .topLevel(let index):
+      workspace.moveRailRepository(id, to: nil, at: index)
+    }
+    let main = repository.worktrees.first { $0.isMain } ?? repository.worktrees.first
+    workspace.selectedWorktreeID = main?.id
+    workspace.selectedSessionID = main.flatMap { worktree in
+      detached.sessions.filter { $0.worktreeID == worktree.id }
+        .max { $0.lastInstructedAt < $1.lastInstructedAt }?.id
+    }
+    source.reload()
+    source.window?.invalidateRestorableState()
+    window?.invalidateRestorableState()
+    return true
+  }
+
   /// Wire a terminal's callbacks and add it to the workspace — shared by live creation and
   /// restore. Invalidates restorable state so the terminal set (and its scrollback) is saved.
   private func registerTerminal(_ terminal: TerminalSession) {
+    wireTerminal(terminal)
+    workspace.terminals.append(terminal)
+    window?.invalidateRestorableState()
+  }
+
+  private func wireTerminal(_ terminal: TerminalSession) {
     // Capture the id, not the terminal — the terminal owns these closures, so holding it back
     // would be a cycle that outlives its removal.
     let id = terminal.id
@@ -2108,8 +2171,6 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       self?.files.reload()
       self?.window?.invalidateRestorableState()
     }
-    workspace.terminals.append(terminal)
-    window?.invalidateRestorableState()
   }
 
   /// Turn the terminals decoded from restoration state into live sessions — the scrollback is

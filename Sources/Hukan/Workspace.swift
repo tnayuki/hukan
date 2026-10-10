@@ -587,6 +587,73 @@ final class Workspace {
     }
   }
 
+  /// The live contents of a repository, carried between workspaces without closing anything.
+  struct DetachedRepository {
+    let repository: Repository
+    let sessions: [AgentSession]
+    let terminals: [TerminalSession]
+    let archivedSessionIDs: Set<UUID>
+    let collapsedRepositories: Set<String>
+    let collapsedWorktrees: Set<String>
+    let expandedArchives: Set<String>
+    let collapsedWorktreeSections: Set<String>
+  }
+
+  func detachRepository(_ id: String) -> DetachedRepository? {
+    guard let repository = repositories.first(where: { $0.id == id }) else { return nil }
+    let worktreeIDs = Set(repository.worktrees.map(\.id))
+    let keys = Set(worktreeIDs.map(\.uuidString))
+    let movingSessions = sessions.filter { worktreeIDs.contains($0.worktreeID) }
+    let sessionIDs = Set(movingSessions.map(\.id))
+    let detached = DetachedRepository(
+      repository: repository, sessions: movingSessions,
+      terminals: terminals.filter { worktreeIDs.contains($0.worktreeID) },
+      archivedSessionIDs: archivedSessionIDs.intersection(sessionIDs),
+      collapsedRepositories: collapsedRepositories.intersection([id]),
+      collapsedWorktrees: collapsedWorktrees.intersection(keys),
+      expandedArchives: expandedArchives.intersection(keys),
+      collapsedWorktreeSections: collapsedWorktreeSections.intersection([id]))
+    repositories.removeAll { $0.id == id }
+    sessions.removeAll { worktreeIDs.contains($0.worktreeID) }
+    terminals.removeAll { worktreeIDs.contains($0.worktreeID) }
+    archivedSessionIDs.subtract(sessionIDs)
+    collapsedRepositories.remove(id)
+    collapsedWorktrees.subtract(keys)
+    expandedArchives.subtract(keys)
+    collapsedWorktreeSections.remove(id)
+    for i in groups.indices { groups[i].repositoryIDs.removeAll { $0 == id } }
+    railOrder.removeAll { $0 == "r:" + id }
+    if selectedWorktreeID.map({ worktreeIDs.contains($0) }) == true {
+      selectedWorktreeID = worktrees.first?.id
+      selectedSessionID = nil
+    } else if selectedSessionID.map({ sessionIDs.contains($0) }) == true {
+      selectedSessionID = nil
+    }
+    syncWatchers()
+    syncTranscriptWatcher()
+    return detached
+  }
+
+  @discardableResult
+  func adoptRepository(_ detached: DetachedRepository) -> Bool {
+    guard !repositories.contains(where: { $0.id == detached.repository.id }) else { return false }
+    repositories.append(detached.repository)
+    sessions.append(contentsOf: detached.sessions)
+    terminals.append(contentsOf: detached.terminals)
+    archivedSessionIDs.formUnion(detached.archivedSessionIDs)
+    collapsedRepositories.formUnion(detached.collapsedRepositories)
+    collapsedWorktrees.formUnion(detached.collapsedWorktrees)
+    expandedArchives.formUnion(detached.expandedArchives)
+    collapsedWorktreeSections.formUnion(detached.collapsedWorktreeSections)
+    for session in detached.sessions {
+      session.onHeldChange = { [weak self] in self?.onSessionsChanged?() }
+    }
+    syncWatchers()
+    startSessionsRegistryWatcher()
+    syncTranscriptWatcher()
+    return true
+  }
+
   /// Close a repository: drop it and every worktree of it from the window, stopping any
   /// agent still attached. Nothing on disk is touched — the worktrees stay in git and the
   /// transcripts stay where Claude Code put them, so reopening brings it all back.
