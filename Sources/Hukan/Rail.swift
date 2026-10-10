@@ -1534,8 +1534,11 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       if editing {
         DispatchQueue.main.async { [weak self, weak label] in
           guard self?.editingGroupID == id, let label else { return }
+          // Select through the editor the focus just started, not `selectText`: that ends the
+          // editing under way before beginning its own, and the end is read as the name being
+          // committed — the field closed the moment it opened.
           label.window?.makeFirstResponder(label)
-          label.selectText(nil)
+          label.currentEditor()?.selectAll(nil)
         }
       }
       return cell
