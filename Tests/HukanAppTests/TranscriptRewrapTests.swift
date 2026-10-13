@@ -8,8 +8,8 @@ final class TranscriptRewrapTests: XCTestCase {
   /// In a real (never shown) window: AppKit drops an invalidation on a view with no window, so
   /// `needsDisplay` would read back false however it was set.
   @MainActor
-  private func makeHostedTextView() -> TranscriptDocumentView {
-    let (scrollView, textView) = makeTranscriptDocumentView()
+  private func makeHostedTextView() -> ReadingView {
+    let (scrollView, textView) = makeReadingView()
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: .borderless,
       backing: .buffered, defer: false)

@@ -25,7 +25,7 @@ final class TranscriptReaderTests: XCTestCase {
   /// thousands of points, and wide enough that the maximize doubles its width.
   @MainActor
   private func openWindow(lines: Int = 2000) throws -> (
-    WorkspaceWindowController, NSWindow, NSScrollView, TranscriptDocumentView
+    WorkspaceWindowController, NSWindow, NSScrollView, ReadingView
   ) {
     let workspace = RailPreviewTests.sampleWorkspace()
     let session = try XCTUnwrap(workspace.sessions.first)
@@ -70,8 +70,8 @@ final class TranscriptReaderTests: XCTestCase {
       ])
   }
 
-  private func transcriptTextView(in view: NSView) -> TranscriptDocumentView? {
-    if let found = view as? TranscriptDocumentView { return found }
+  private func transcriptTextView(in view: NSView) -> ReadingView? {
+    if let found = view as? ReadingView { return found }
     for subview in view.subviews {
       if let found = transcriptTextView(in: subview) { return found }
     }
@@ -79,19 +79,19 @@ final class TranscriptReaderTests: XCTestCase {
   }
 
   /// The line the reader has at the top of the viewport, read back off the view.
-  private func topLine(of scrollView: NSScrollView, _ textView: TranscriptDocumentView) -> String {
+  private func topLine(of scrollView: NSScrollView, _ textView: ReadingView) -> String {
     let index = textView.insertionOffset(at: scrollView.documentVisibleRect.origin)
     let text = textView.string as NSString
     return text.substring(with: text.lineRange(for: NSRange(location: index, length: 0)))
       .trimmingCharacters(in: .newlines)
   }
 
-  private func isAtBottom(_ scrollView: NSScrollView, _ textView: TranscriptDocumentView) -> Bool {
+  private func isAtBottom(_ scrollView: NSScrollView, _ textView: ReadingView) -> Bool {
     scrollView.documentVisibleRect.maxY >= textView.frame.height - 1
   }
 
   /// The number of the line at the top of the viewport.
-  private func drawnTopLine(_ scrollView: NSScrollView, _ textView: TranscriptDocumentView)
+  private func drawnTopLine(_ scrollView: NSScrollView, _ textView: ReadingView)
     -> Int?
   {
     Int(topLine(of: scrollView, textView).split(separator: " ").dropFirst().first ?? "")
@@ -109,7 +109,7 @@ final class TranscriptReaderTests: XCTestCase {
       name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
   }
 
-  private func scrollToMiddle(_ scrollView: NSScrollView, _ textView: TranscriptDocumentView) {
+  private func scrollToMiddle(_ scrollView: NSScrollView, _ textView: ReadingView) {
     scrollView.contentView.scroll(to: NSPoint(x: 0, y: textView.frame.height / 2))
     scrollView.reflectScrolledClipView(scrollView.contentView)
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
@@ -129,7 +129,7 @@ final class TranscriptReaderTests: XCTestCase {
   /// started moving as one that has finished.
   @MainActor
   private func settle(
-    _ scrollView: NSScrollView, _ textView: TranscriptDocumentView, still: TimeInterval = 0.25,
+    _ scrollView: NSScrollView, _ textView: ReadingView, still: TimeInterval = 0.25,
     timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line
   ) {
     var last: [CGFloat] = []
@@ -379,7 +379,7 @@ final class TranscriptReaderTests: XCTestCase {
   /// scrolling up pulls a slice in above the reader — the transcript hukan actually opens.
   @MainActor
   private func openWindowOnALazyConversation() throws -> (
-    NSWindow, NSScrollView, TranscriptDocumentView, URL
+    NSWindow, NSScrollView, ReadingView, URL
   ) {
     let worktree = URL(fileURLWithPath: "/repo/hukan")
     let workspace = RailPreviewTests.sampleWorkspace()

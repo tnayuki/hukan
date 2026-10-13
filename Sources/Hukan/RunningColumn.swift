@@ -15,7 +15,7 @@ final class RunningColumnViewController: NSViewController {
   /// once — a session that has never connected has no window to be a fraction of.
   private let contextLabel = NSTextField(labelWithString: "")
   private let scrollView: NSScrollView
-  private let textView: TranscriptDocumentView
+  private let textView: ReadingView
   private let input = ComposerInput()
   var inputField: NSView { input.focusTarget }
 
@@ -143,7 +143,7 @@ final class RunningColumnViewController: NSViewController {
   var isMaximized = false
 
   init() {
-    (scrollView, textView) = makeTranscriptDocumentView()
+    (scrollView, textView) = makeReadingView()
     super.init(nibName: nil, bundle: nil)
     // Set once, not per attached session: where a link goes does not depend on which
     // conversation is on screen (the mirror, set in `attach`, is the thing that does).
@@ -151,12 +151,12 @@ final class RunningColumnViewController: NSViewController {
       self?.onOpenURL?(url) ?? false
     }
     textView.messageActions = [
-      TranscriptDocumentView.MessageAction(title: "Fork Before This Message") {
+      ReadingView.MessageAction(title: "Fork Before This Message") {
         [weak self] anchor, range in
         guard let self, let session = self.attached else { return }
         self.onForkSession?(session, anchor, range)
       },
-      TranscriptDocumentView.MessageAction(
+      ReadingView.MessageAction(
         title: "Roll Back to Before This Message",
         isEnabled: { [weak self] in self?.attached?.canRollBack ?? false },
         perform: { [weak self] anchor, range in
@@ -479,7 +479,7 @@ final class RunningColumnViewController: NSViewController {
     isRestoringAnchor = true
     let moved = textView.expandAllFolds(preserving: anchor?.offset ?? 0)
     if let anchor {
-      textView.scroll(to: TranscriptDocumentView.ReaderAnchor(offset: moved, within: anchor.within))
+      textView.scroll(to: ReadingView.ReaderAnchor(offset: moved, within: anchor.within))
     }
     isRestoringAnchor = false
     scrollAnchor = textView.readerAnchor()
@@ -591,7 +591,7 @@ final class RunningColumnViewController: NSViewController {
   /// left scrolled up: one left at the bottom was following the conversation, and coming back to
   /// it means the bottom again, whatever has arrived since. Never saved — a place in a transcript
   /// is this window's fact, and a restored window has no reader to have left it.
-  private var readerPlaces: [UUID: TranscriptDocumentView.ReaderAnchor] = [:]
+  private var readerPlaces: [UUID: ReadingView.ReaderAnchor] = [:]
 
   /// Where a session lands when it comes on screen with nothing else asking for a place: the
   /// reader's own place in it if they left one, otherwise the end.
@@ -773,10 +773,10 @@ final class RunningColumnViewController: NSViewController {
   @objc private func liveScrollStarted() { isLiveScrolling = true }
   @objc private func liveScrollEnded() { isLiveScrolling = false }
 
-  /// Where the reader is, as a character offset (see `TranscriptDocumentView.ReaderAnchor`).
+  /// Where the reader is, as a character offset (see `ReadingView.ReaderAnchor`).
   /// Recorded on every scroll so it is always the pre-relayout truth by the time a relayout needs
   /// it — reading it afterwards would read a position the relayout has already moved.
-  private var scrollAnchor: TranscriptDocumentView.ReaderAnchor?
+  private var scrollAnchor: ReadingView.ReaderAnchor?
   /// Whether that scroll left the reader at the bottom. A relayout must send them back to the
   /// bottom, not to the line that happened to be at the top of the last viewport.
   private var anchorWasPinned = true
@@ -872,7 +872,7 @@ final class RunningColumnViewController: NSViewController {
   /// The transcript has been re-wrapped, so the clip view's point offset now names a different
   /// part of the conversation — put the reader back on their own text (or at the bottom, if that
   /// is where they were). Once per width the text is actually laid out at (see
-  /// `TranscriptDocumentView.onRewrap`), by which time every segment is laid out and the view
+  /// `ReadingView.onRewrap`), by which time every segment is laid out and the view
   /// sized to them, so the scroll lands where it is aimed.
   private func putReaderBack() {
     isRestoringAnchor = true

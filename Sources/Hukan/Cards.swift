@@ -24,7 +24,7 @@ final class ScrollBox: LayerSurface {
     self.maxHeight = maxHeight
     self.inset = inset
     self.bordered = bordered
-    let (scrollView, textView) = makeTranscriptDocumentView()
+    let (scrollView, textView) = makeReadingView()
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     wantsLayer = true

@@ -222,7 +222,7 @@ final class ForkTests: XCTestCase {
   /// view what is under the block's trailing centre, and under everywhere else.
   func testTheMarkIsHitWhereItIsDrawn() throws {
     _ = NSApplication.shared
-    let (scrollView, view) = makeTranscriptDocumentView()
+    let (scrollView, view) = makeReadingView()
     scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
     view.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
     let rendered = Transcript.render([

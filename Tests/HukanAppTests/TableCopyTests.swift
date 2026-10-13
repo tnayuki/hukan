@@ -4,7 +4,7 @@ import XCTest
 @testable import Hukan
 
 /// A table renders as one drawn attachment, so a selection covering it would copy as `￼` unless the
-/// attachment is expanded back to text. `TranscriptDocumentView.writeSelection` does that; this pins it,
+/// attachment is expanded back to text. `ReadingView.writeSelection` does that; this pins it,
 /// offscreen, on a private pasteboard so it never touches the real clipboard.
 final class TableCopyTests: XCTestCase {
   override class func setUp() {
@@ -13,7 +13,7 @@ final class TableCopyTests: XCTestCase {
   }
 
   func testCopyingSelectionExpandsTableToMarkdown() throws {
-    let (_, textView) = makeTranscriptDocumentView()
+    let (_, textView) = makeReadingView()
     textView.setContent(
       Transcript.markdown(
         """

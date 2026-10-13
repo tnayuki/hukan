@@ -21,7 +21,7 @@ final class TranscriptFindTests: XCTestCase {
   // MARK: The fold is not a filter
 
   func testExpandingOpensEveryFoldAndKeepsTheReadersPlace() throws {
-    let (_, textView) = makeTranscriptDocumentView()
+    let (_, textView) = makeReadingView()
     textView.setContent(Transcript.toolUse(name: "Bash", input: ["command": Self.command]))
     // The reader is standing on a word between the two calls, so opening the first moves them
     // and opening the second does not.
@@ -80,7 +80,7 @@ final class TranscriptFindTests: XCTestCase {
   }
 
   private func findScrollView(in view: NSView) -> NSScrollView? {
-    if let scrollView = view as? NSScrollView, scrollView.documentView is TranscriptDocumentView {
+    if let scrollView = view as? NSScrollView, scrollView.documentView is ReadingView {
       return scrollView
     }
     for subview in view.subviews {
@@ -110,7 +110,7 @@ final class TranscriptFindTests: XCTestCase {
     defer { window.close() }
 
     let scrollView = try XCTUnwrap(findScrollView(in: try XCTUnwrap(window.contentView)))
-    let textView = try XCTUnwrap(scrollView.documentView as? TranscriptDocumentView)
+    let textView = try XCTUnwrap(scrollView.documentView as? ReadingView)
     window.makeFirstResponder(textView)
 
     let item = NSMenuItem()

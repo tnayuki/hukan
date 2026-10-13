@@ -26,10 +26,10 @@ final class TableSelectionTests: XCTestCase {
   private func placedTable(
     _ markdown: String, width: CGFloat = 600, file: StaticString = #filePath, line: UInt = #line
   ) throws -> (
-    textView: TranscriptDocumentView, attachment: TableAttachment, layout: TableLayout,
+    textView: ReadingView, attachment: TableAttachment, layout: TableLayout,
     offset: Int
   ) {
-    let (scrollView, textView) = makeTranscriptDocumentView()
+    let (scrollView, textView) = makeReadingView()
     scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
     textView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
     textView.setContent(Transcript.markdown(markdown))

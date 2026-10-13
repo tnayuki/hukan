@@ -1,7 +1,7 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// The editor's text view. An `NSTextView`, where the transcript is `TranscriptDocumentView` — a
+/// The editor's text view. An `NSTextView`, where the transcript is `ReadingView` — a
 /// view of its own over TextKit 2 stacks, with a selection, a find client and a fold toggle of
 /// its own. None of that means anything to a source file, which is edited, and so wants exactly
 /// what `NSTextView` is; only `WordSelectingTextView` is shared, which is what `EditorTextView`

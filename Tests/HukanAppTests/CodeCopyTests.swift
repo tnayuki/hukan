@@ -28,7 +28,7 @@ final class CodeCopyTests: XCTestCase {
     XCTAssertEqual(blocks(in: fenced).count, 1, "only the fence is a slab, not the prose")
 
     let command = "echo one\necho two"
-    let (_, textView) = makeTranscriptDocumentView()
+    let (_, textView) = makeReadingView()
     textView.setContent(Transcript.toolUse(name: "Bash", input: ["command": command]))
     let header = try XCTUnwrap(textView.foldStates().folded.first)
     XCTAssertTrue(textView.toggleFold(at: header))
@@ -54,7 +54,7 @@ final class CodeCopyTests: XCTestCase {
 
   /// The mark is hit exactly where it is drawn: the trailing room of the slab's first line.
   func testTheMarkIsHitWhereItIsDrawn() throws {
-    let (scrollView, textView) = makeTranscriptDocumentView()
+    let (scrollView, textView) = makeReadingView()
     scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
     textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
     textView.setContent(
@@ -90,7 +90,7 @@ final class CodeCopyTests: XCTestCase {
   /// paragraph, so taking its middle put the mark halfway down the block, which is where the
   /// message's `…` lives and the whole thing the corner was chosen against.
   func testTheMarkStaysOnTheFirstLineOfAWrappedCommand() throws {
-    let (scrollView, textView) = makeTranscriptDocumentView()
+    let (scrollView, textView) = makeReadingView()
     scrollView.frame = NSRect(x: 0, y: 0, width: 300, height: 300)
     textView.frame = NSRect(x: 0, y: 0, width: 300, height: 300)
     let command =
@@ -121,7 +121,7 @@ final class CodeCopyTests: XCTestCase {
   /// anywhere but its own rectangle. Pinned with the tracking area that makes the call reachable
   /// at all: one, over the whole view, carrying `.cursorUpdate`.
   func testThePointerIsAnArrowOnTheMarkAndAnIBeamOffIt() throws {
-    let (scrollView, textView) = makeTranscriptDocumentView()
+    let (scrollView, textView) = makeReadingView()
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
       styleMask: [.titled], backing: .buffered, defer: false)

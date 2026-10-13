@@ -65,7 +65,7 @@ final class AutolinkTests: XCTestCase {
   /// them apart: a fold toggles and never leaves the transcript, a real URL goes to whoever asked
   /// for it, and with nobody asking it falls through to AppKit and the default browser.
   func testTheClickDelegateSendsRealLinksOutAndFoldsFolds() {
-    let (_, textView) = makeTranscriptDocumentView()
+    let (_, textView) = makeReadingView()
     textView.setContent(Transcript.markdown("Opened https://example.com/pr/1\n"))
     var opened: [URL] = []
     textView.onOpenURL = { url in

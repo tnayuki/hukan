@@ -166,8 +166,8 @@ final class FoldCommand: NSScriptCommand {
     }
   }
 
-  private static func transcriptView(in view: NSView) -> TranscriptDocumentView? {
-    if let found = view as? TranscriptDocumentView { return found }
+  private static func transcriptView(in view: NSView) -> ReadingView? {
+    if let found = view as? ReadingView { return found }
     for subview in view.subviews {
       if let found = transcriptView(in: subview) { return found }
     }

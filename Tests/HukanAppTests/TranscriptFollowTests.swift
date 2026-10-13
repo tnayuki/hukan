@@ -16,7 +16,7 @@ import XCTest
 final class TranscriptFollowTests: XCTestCase {
   @MainActor
   private func openWindow() throws -> (
-    NSWindow, NSScrollView, TranscriptDocumentView, AgentSession
+    NSWindow, NSScrollView, ReadingView, AgentSession
   ) {
     let workspace = RailPreviewTests.sampleWorkspace()
     let session = try XCTUnwrap(workspace.sessions.first)
@@ -40,8 +40,8 @@ final class TranscriptFollowTests: XCTestCase {
     return (window, try XCTUnwrap(textView.enclosingScrollView), textView, session)
   }
 
-  private func transcriptTextView(in view: NSView) -> TranscriptDocumentView? {
-    if let found = view as? TranscriptDocumentView { return found }
+  private func transcriptTextView(in view: NSView) -> ReadingView? {
+    if let found = view as? ReadingView { return found }
     for subview in view.subviews {
       if let found = transcriptTextView(in: subview) { return found }
     }

@@ -8,7 +8,7 @@ import AppKit
 /// thing the document adds is where the segment starts. Which is what lets the document's height
 /// be a sum of a few dozen numbers rather than TextKit's estimate of a viewport's surroundings —
 /// the estimate `NSTextView` writes over its own frame, and the reason the reader's line used to
-/// move under them (see `TranscriptDocumentView`).
+/// move under them (see `ReadingView`).
 ///
 /// The one edit that lands inside a segment is a tool call folding, and that costs the segment a
 /// re-layout of its own length and nothing else.

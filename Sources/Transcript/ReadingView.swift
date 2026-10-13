@@ -1,6 +1,8 @@
 import AppKit
 
-/// The transcript, drawn by a view that owns its own height.
+/// The transcript, drawn by a view that owns its own height — and every other run of rendered
+/// prose that is read rather than edited (a plan card, a Markdown file's preview), since what it
+/// carries for the conversation is exactly what reading anything wants.
 ///
 /// It was an `NSTextView` — one TextKit 2 stack over the whole conversation — and everything
 /// that view fought was the view's and not the engine's: it sized itself to TextKit's *estimate*
@@ -35,7 +37,7 @@ public protocol TranscriptStorageMirror: AnyObject {
   func editTranscript(in range: NSRange, with replacement: NSAttributedString)
 }
 
-public final class TranscriptDocumentView: NSView {
+public final class ReadingView: NSView {
 
   // MARK: The document
 
@@ -1396,9 +1398,9 @@ public final class TranscriptDocumentView: NSView {
   }
 }
 
-extension TranscriptDocumentView: NSUserInterfaceValidations {}
+extension ReadingView: NSUserInterfaceValidations {}
 
-extension TranscriptDocumentView: NSTextFinderClient {
+extension ReadingView: NSTextFinderClient {
   public var isSelectable: Bool { true }
   public var allowsMultipleSelection: Bool { false }
   public var isEditable: Bool { false }
@@ -1442,8 +1444,8 @@ extension TranscriptDocumentView: NSTextFinderClient {
 }
 
 /// The scroll view and the transcript view inside it — the standard wiring, assembled by hand.
-public func makeTranscriptDocumentView() -> (NSScrollView, TranscriptDocumentView) {
-  let view = TranscriptDocumentView(frame: .zero)
+public func makeReadingView() -> (NSScrollView, ReadingView) {
+  let view = ReadingView(frame: .zero)
   let scrollView = NSScrollView()
   scrollView.documentView = view
   scrollView.drawsBackground = false

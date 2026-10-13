@@ -9,8 +9,8 @@ import XCTest
 final class ScrollAnchorTests: XCTestCase {
   /// A transcript tall enough that a re-wrap moves the reader visibly — the "long session" the
   /// bug needed.
-  private func longTranscript(width: CGFloat = 600) -> (NSScrollView, TranscriptDocumentView) {
-    let (scrollView, textView) = makeTranscriptDocumentView()
+  private func longTranscript(width: CGFloat = 600) -> (NSScrollView, ReadingView) {
+    let (scrollView, textView) = makeReadingView()
     scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
     scrollView.layoutSubtreeIfNeeded()
     let body = NSMutableAttributedString()
@@ -26,14 +26,14 @@ final class ScrollAnchorTests: XCTestCase {
   }
 
   /// The line the reader has at the top of the viewport, read back off the view.
-  private func topLine(of scrollView: NSScrollView, _ textView: TranscriptDocumentView) -> String {
+  private func topLine(of scrollView: NSScrollView, _ textView: ReadingView) -> String {
     let index = textView.insertionOffset(at: scrollView.documentVisibleRect.origin)
     let text = textView.string as NSString
     return text.substring(with: text.lineRange(for: NSRange(location: index, length: 0)))
       .trimmingCharacters(in: .newlines)
   }
 
-  private func scrollToMiddle(_ scrollView: NSScrollView, _ textView: TranscriptDocumentView) {
+  private func scrollToMiddle(_ scrollView: NSScrollView, _ textView: ReadingView) {
     scrollView.contentView.scroll(to: NSPoint(x: 0, y: textView.frame.height / 2))
     scrollView.reflectScrolledClipView(scrollView.contentView)
     textView.display()
@@ -107,7 +107,7 @@ final class ScrollAnchorTests: XCTestCase {
 
   /// An empty transcript has no layout to anchor to, and must not be made to invent one.
   func testEmptyTranscriptHasNoAnchor() {
-    let (scrollView, textView) = makeTranscriptDocumentView()
+    let (scrollView, textView) = makeReadingView()
     scrollView.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
     scrollView.layoutSubtreeIfNeeded()
     XCTAssertNil(textView.readerAnchor())

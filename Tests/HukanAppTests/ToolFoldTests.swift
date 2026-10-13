@@ -15,7 +15,7 @@ final class ToolFoldTests: XCTestCase {
   }
 
   func testFoldRoundTripThroughClickDelegate() throws {
-    let (_, textView) = makeTranscriptDocumentView()
+    let (_, textView) = makeReadingView()
     let command = "echo one\necho two\necho three"
     textView.setContent(Transcript.toolUse(name: "Bash", input: ["command": command]))
     let storage = TranscriptDocumentText(textView)
@@ -68,7 +68,7 @@ final class ToolFoldTests: XCTestCase {
   /// An ExitPlanMode plan is a compact foldable record: a "Here is Claude's plan:" one-liner (no
   /// mechanical tool name, no preview) that opens to the whole plan and folds back.
   func testPlanFoldsToOneLinerAndRoundTrips() throws {
-    let (_, textView) = makeTranscriptDocumentView()
+    let (_, textView) = makeReadingView()
     let plan = (1...12).map { "- item \($0)" }.joined(separator: "\n")
     textView.setContent(Transcript.toolUse(name: "ExitPlanMode", input: ["plan": plan]))
     let storage = TranscriptDocumentText(textView)
@@ -101,7 +101,7 @@ final class ToolFoldTests: XCTestCase {
 /// What the tests read the view's text through: `string` re-read on every use, since the view
 /// rewrites its segments on a fold.
 private struct TranscriptDocumentText {
-  let view: TranscriptDocumentView
-  init(_ view: TranscriptDocumentView) { self.view = view }
+  let view: ReadingView
+  init(_ view: ReadingView) { self.view = view }
   var string: String { view.string }
 }

@@ -72,7 +72,7 @@ final class TableLayoutTests: XCTestCase {
   /// was laid out at the full width and then drawn from the indent — running out past the tint on
   /// its right, which is what a table fitted to its pane exists not to do.
   func testATableInATypedMessageStaysInsideTheBlock() throws {
-    let (scrollView, textView) = makeTranscriptDocumentView()
+    let (scrollView, textView) = makeReadingView()
     let width: CGFloat = 600
     scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 400)
     textView.frame = NSRect(x: 0, y: 0, width: width, height: 400)

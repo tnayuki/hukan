@@ -43,7 +43,7 @@ public enum TranscriptPreview {
     let appearance = NSAppearance(named: .darkAqua)!
     NSApplication.shared.appearance = appearance
 
-    let (scrollView, view) = makeTranscriptDocumentView()
+    let (scrollView, view) = makeReadingView()
     view.appearance = appearance
     // The width first, so the content is laid out at it once.
     scrollView.frame = NSRect(x: 0, y: 0, width: width, height: 20_000)
