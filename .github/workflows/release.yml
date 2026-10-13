@@ -15,12 +15,15 @@ permissions:
 
 jobs:
   build:
-    # The runner is pinned to the macOS 26 image for its SDK: AppKit gives a window the
-    # appearance and behaviour the SDK it was linked against knows, so a build against the 15
-    # SDK wears the old toolbar, sidebar and controls on a macOS 26 desk. README's "macOS 15"
+    # The runner is pinned to the image whose SDK and OS are the desk's: AppKit gives a window
+    # the appearance and behaviour the SDK it was linked against knows, so a build against an
+    # older SDK wears the old toolbar, sidebar and controls on a newer desk. README's "macOS 15"
     # is the deployment target — the floor the app runs on — not the SDK it is built with;
-    # pinning the runner to that was the mistake.
-    runs-on: macos-26
+    # pinning the runner to that was the mistake. The OS matters as well as the SDK, because the
+    # snapshot references are recorded on the desk and compared here: text is set by the OS, so
+    # a runner one macOS behind failed every reference the desk drew. `xcode-27` is macOS 27
+    # with Xcode 27, still a preview image, and is the one that matches.
+    runs-on: xcode-27
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -29,6 +32,12 @@ jobs:
         # The same gate as the pre-commit hook, over the whole tree rather than the staged blobs;
         # swift-format is Xcode's own, so nothing is installed.
         run: xcrun swift-format lint --strict -p -r Sources Tests
+
+      - name: Metal toolchain
+        # SwiftTerm ships a Metal shader, and Xcode 27 no longer carries the compiler for one: it
+        # is a component downloaded on demand, which the image has not done. Without it the build
+        # stops at `Shaders.metal` before a single test runs.
+        run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Runner display settings
         # Five things the image ships that are the display's opinion rather than hukan's, each
