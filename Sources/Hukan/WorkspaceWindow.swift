@@ -568,11 +568,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// filter is what runs out of room: a toolbar item that no longer fits is not shrunk but
   /// moved to the overflow menu, so the field does not narrow, it vanishes.
   ///
-  /// 296 captioned, re-measured when the filter went from 130 to the 144 its placeholder needs
-  /// (see `sessionFilterWidth`): the item is dropped at a 292pt rail and survives at 296. The
-  /// uncaptioned floor did not move — 144 is the last width 280 absorbs — so the widening is
-  /// paid for in the mode that caused it and the ordinary window keeps its minimum.
-  static func railMinimumWidth(labelled: Bool) -> CGFloat { labelled ? 296 : 280 }
+  /// Re-measured for the macOS 27 SDK, whose toolbar seats each item on a glass platter and
+  /// spaces them wider: the same row now drops its filter below a 292pt rail uncaptioned and a
+  /// 308pt one captioned, twelve points more in both, where it had cleared 280 and 296. The
+  /// floors carry four points of slack over that, as the panel's do. The panel's own row was
+  /// re-measured on the same run and still clears its 280 and 372 — measured with the rail held
+  /// wide, since an item the rail drops reflows the whole bar and reads as the panel's failure.
+  static func railMinimumWidth(labelled: Bool) -> CGFloat { labelled ? 312 : 296 }
 
   /// What the desk is allowed to ask for, and how hard it holds it. A tab whose content resists
   /// compression harder than this does not get a wider desk — it wins the argument, moves the
