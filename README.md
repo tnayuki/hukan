@@ -185,7 +185,12 @@ this machine's Safari) and terminals (named as Terminal.app names one). An image
 pixels — one image pixel to one device pixel, so a screenshot is as sharp and as large as it was
 taken — over a checkerboard where it is transparent, with its pixel count and size under it; a
 file holding several bitmaps, an icon set, shows the largest and says so. What does not fit
-scrolls, and a pinch, a two-finger double tap or the zoom keys get closer. The plain
+scrolls, and a pinch, a two-finger double tap or the zoom keys get closer. A Markdown file has a
+second tab beside its source — Open Preview, on the file's tab or its row in the files panel —
+that reads it as a document: lines wrapped in the file close up into their paragraphs, what is
+being typed in the source shows as it is typed, a relative link opens the file it names and an
+address a web tab, and Open Source goes back to the line that was being read. HTML, Mermaid and
+maths stay as their source text. The plain
 new-tab key opens a browser rather than a terminal — the shell work here is the agent's — and
 the strip walks, numbers, closes and reorders the way a browser's does: a new tab opens at the
 end, a drag puts one wherever it is dropped, and closing the active one lands on its right-hand

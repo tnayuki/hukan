@@ -80,6 +80,19 @@ final class FileContentViewController: NSViewController {
       imagePane.isHidden = !showsImage
     }
   }
+  /// A Markdown file's preview: the same file read through the transcript's renderer instead of
+  /// edited. Fixed for the pane's life, the way a tab's kind is — a tab is the source or the
+  /// preview, and opening the other is opening the other tab. Built only for a preview, which
+  /// then never builds a gutter, a highlighter or a git base: there is nothing here to number,
+  /// colour or diff.
+  let isRendered: Bool
+  private var reading: (scrollView: NSScrollView, view: ReadingView)?
+  /// Where a link in the preview goes, decided by whoever holds the desk — a relative path is a
+  /// file of this worktree, an address is a web tab.
+  var onOpenURL: ((URL) -> Void)?
+  /// Fired on every change to the buffer, with its text, so a preview of the same file can follow
+  /// what is being typed rather than what was last saved.
+  var onTextChanged: ((String) -> Void)?
   private var gutter: EditorGutter?
   /// The open file's syntax highlighter, held for exactly as long as the file is showing —
   /// nil when no vendored grammar covers it, and the text renders plain.
@@ -130,9 +143,15 @@ final class FileContentViewController: NSViewController {
   /// catch the save, and the Don't Save that throws the edit away.
   var onDirtyChanged: (() -> Void)?
 
-  init() {
+  init(rendered: Bool = false) {
     (scrollView, textView) = makeEditorTextView()
+    isRendered = rendered
+    if rendered { reading = makeReadingView() }
     super.init(nibName: nil, bundle: nil)
+    reading?.view.onOpenURL = { [weak self] url in
+      self?.onOpenURL?(url)
+      return true
+    }
     textView.allowsUndo = true
     // ⌘F in a file is the text view's own find bar, the way ⌘F in a terminal is SwiftTerm's.
     textView.usesFindBar = true
@@ -155,6 +174,16 @@ final class FileContentViewController: NSViewController {
   /// the tab did not — the unsaved-edit dot — moved onto the tab, where it is beside the ✕ that
   /// would discard it.
   override func loadView() {
+    if let reading {
+      // No gutter and no image half: a preview is text to read and nothing else.
+      let container = NSView()
+      reading.scrollView.translatesAutoresizingMaskIntoConstraints = false
+      container.addSubview(reading.scrollView)
+      _ = reading.scrollView.pin(to: container)
+      view = container
+      render()
+      return
+    }
     scrollView.translatesAutoresizingMaskIntoConstraints = false
 
     let gutter = EditorGutter(scrollView: scrollView, textView: textView)
@@ -221,7 +250,11 @@ final class FileContentViewController: NSViewController {
     if edited, !isDirty { onEdited?() }
     isDirty = edited
     scheduleLineChanges()
+    onTextChanged?(textView.string)
   }
+
+  /// The buffer as it stands, saved or not — what a preview opened beside it starts from.
+  var currentText: String? { isLoaded && textView.isEditable ? textView.string : nil }
 
   /// Whether the open file has an unsaved edit, so the Save menu item can enable itself.
   var hasUnsavedEdit: Bool { isDirty }
@@ -253,6 +286,10 @@ final class FileContentViewController: NSViewController {
     self.worktree = worktree
     self.path = path
     baseFileName = path.map { ($0 as NSString).lastPathComponent } ?? ""
+    guard !isRendered else {
+      render()
+      return
+    }
     // The new file starts over: the highlighter is per-language, the gutter per-file.
     highlighter = path.flatMap { SyntaxHighlighter(textView: textView, path: $0) }
     gutter?.lineChanges = Git.LineChanges()
@@ -268,6 +305,10 @@ final class FileContentViewController: NSViewController {
     loadViewIfNeeded()
     path = newPath
     baseFileName = (newPath as NSString).lastPathComponent
+    guard !isRendered else {
+      render(preservingScroll: true)
+      return
+    }
     highlighter = SyntaxHighlighter(textView: textView, path: newPath)
     guard !isDirty else {
       // The text stays; what it is measured against moves with the name — and so does the
@@ -295,6 +336,10 @@ final class FileContentViewController: NSViewController {
 
   func render(preservingScroll: Bool = false) {
     loadViewIfNeeded()
+    if isRendered {
+      renderPreview(preservingScroll: preservingScroll)
+      return
+    }
     guard let worktree, let path else {
       showsImage = false
       textView.isEditable = false
@@ -368,6 +413,61 @@ final class FileContentViewController: NSViewController {
     }
   }
 
+  // MARK: The preview
+
+  /// Read the file and draw it as a document. The read is the editor's, so a file that is not
+  /// text says so here in the same words, drawn as a note rather than rendered.
+  private func renderPreview(preservingScroll: Bool) {
+    guard let reading, let worktree, let path else {
+      reading?.view.setContent(NSAttributedString())
+      return
+    }
+    let url = Self.fileURL(worktree: worktree, path: path)
+    DispatchQueue.global(qos: .userInitiated).async {
+      let read = Self.read(at: url, path: path)
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.path == path else { return }
+        switch read {
+        case .text(let text):
+          self.showPreview(of: text, keepingPlace: preservingScroll)
+        case .notText(let note):
+          reading.view.setContent(Transcript.note(note))
+        case .image:
+          reading.view.setContent(Transcript.note("An image has no preview"))
+        }
+        self.isLoaded = true
+      }
+    }
+  }
+
+  /// Draw `text` — the file as read, or the source tab's buffer as it is being typed. A redraw
+  /// keeps the reader on the block they were reading: the anchor is an offset into the old text,
+  /// which an edit above it moves, but it lands within a line or two and the alternative is the
+  /// preview jumping to the top on every keystroke.
+  func showPreview(of text: String, keepingPlace: Bool = true) {
+    guard let reading else { return }
+    loadViewIfNeeded()
+    let anchor = keepingPlace ? reading.view.readerAnchor() : nil
+    reading.view.setContent(Transcript.markdown(text, document: true))
+    reading.view.layoutSubtreeIfNeeded()
+    if let anchor {
+      reading.view.scroll(to: anchor)
+    } else {
+      reading.scrollView.contentView.scroll(to: .zero)
+      reading.scrollView.reflectScrolledClipView(reading.scrollView.contentView)
+    }
+  }
+
+  /// The source line of the block at the top of the preview — where Open Source lands, so going
+  /// to the text to correct something arrives at what was being read.
+  var previewTopSourceLine: Int? {
+    guard let view = reading?.view, let anchor = view.readerAnchor(), view.length > 0 else {
+      return nil
+    }
+    let offset = min(anchor.offset, view.length - 1)
+    return view.attribute(.markdownSourceLine, at: offset) as? Int
+  }
+
   /// Land an image in the pane. Nothing the text half keeps means anything here — there is no
   /// buffer to be dirty, no base to diff against, no grammar and no lines to number — so all of
   /// it is cleared rather than left standing from whatever the tab showed before.
@@ -404,6 +504,7 @@ final class FileContentViewController: NSViewController {
   /// absent, as it is once the line was edited. The files panel's hand-off for a content hit.
   /// Deferred until the file's text has landed.
   func reveal(line: Int, term: String?) {
+    guard !isRendered else { return }
     guard isLoaded, let storage = textView.textStorage else {
       pendingReveal = (line, term)
       return
@@ -435,12 +536,21 @@ final class FileContentViewController: NSViewController {
   /// and the async load only turns editing on under the caret already placed here.
   func focus() {
     loadViewIfNeeded()
+    if let reading {
+      view.window?.makeFirstResponder(reading.view)
+      return
+    }
     view.window?.makeFirstResponder(showsImage ? imagePane : textView)
   }
 
   /// ⌘F: the text view's find bar. The menu item is already disabled over an image (see the
   /// desk's `canFind`); this is the other side of the same rule, for every other way in.
   func performFind(_ sender: Any?) {
+    if let reading {
+      view.window?.makeFirstResponder(reading.view)
+      reading.view.performFindPanelAction(sender)
+      return
+    }
     guard !showsImage else { return }
     view.window?.makeFirstResponder(textView)
     textView.performFindPanelAction(sender)
@@ -627,6 +737,12 @@ final class FileColumns {
     // A single click previews, a double-click (or Return) pins — the rail's gesture, kept.
     panel.onSelect = { [weak self] path, line in self?.openFromPanel(path, line: line, pin: false) }
     panel.onActivate = { [weak self] path, line in self?.openFromPanel(path, line: line, pin: true)
+    }
+    panel.onOpenPreview = { [weak self] path in
+      guard let self, let workspace = self.workspace,
+        let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
+      else { return }
+      self.desk.openFile(worktree: worktree, path: path, preview: false, rendered: true)
     }
     // The History section is the panel's other half and opens tabs the same way — the index is
     // here, the reading is on the desk.

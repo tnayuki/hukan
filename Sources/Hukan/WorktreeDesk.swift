@@ -200,6 +200,9 @@ private final class TabLabelButton: NSButton, NSDraggingSource {
 struct FileTabState: Equatable {
   var worktreeID: UUID
   var path: String
+  /// The file's preview rather than its source — a second tab on the same buffer, so it is part
+  /// of what the tab is and comes back as what it was.
+  var rendered = false
 }
 
 /// What a commit tab keeps: the oid, and the worktree it was opened from. The oid is the tab's
@@ -265,11 +268,21 @@ final class WorktreeDeskViewController: NSViewController {
     /// A restored tab nobody has looked at yet: the path is known, but the file is unread and the
     /// pane unbuilt until the tab is shown. See `realize`.
     var isPending = false
-    let content = FileContentViewController()
-    init(path: String, isPreview: Bool) {
+    /// A Markdown file's preview: read-only, drawn as a document, following the source tab's
+    /// buffer while one is open. Same path, different tab — so a tab is found by the pair.
+    let isRendered: Bool
+    let content: FileContentViewController
+    init(path: String, isPreview: Bool, rendered: Bool = false) {
       self.path = path
       self.isPreview = isPreview
+      self.isRendered = rendered
+      content = FileContentViewController(rendered: rendered)
     }
+  }
+
+  /// Whether a path is Markdown — what decides that a file tab offers a preview at all.
+  static func isMarkdown(_ path: String) -> Bool {
+    ["md", "markdown", "mdown", "mkd"].contains((path as NSString).pathExtension.lowercased())
   }
 
   /// One web tab: its own pane (web view + chrome). Like files, browsers are the desk's state,
@@ -329,7 +342,7 @@ final class WorktreeDeskViewController: NSViewController {
         desk.commitTabsByWorktree[id] = commits
         desk.tabOrderByWorktree[id] = order
         desk.surfaceByWorktree[id] = selected
-        for tab in files { desk.wire(tab) }
+        for tab in files { desk.wire(tab, in: id) }
         for tab in browsers { desk.wire(tab, in: id) }
         for tab in commits { desk.addChild(tab.content) }
       }
@@ -396,7 +409,7 @@ final class WorktreeDeskViewController: NSViewController {
   /// The showing worktree's file tabs by path, in strip order — what a test reads to check that a
   /// tab followed a rename or left with a delete. The strip itself is views, and a tab's identity
   /// is its path, so this is the whole of what there is to assert.
-  var openFilePaths: [String] { fileTabs.map(\.path) }
+  var openFilePaths: [String] { fileTabs.filter { !$0.isRendered }.map(\.path) }
   private var browserTabs: [BrowserTab] { worktreeID.flatMap { browserTabsByWorktree[$0] } ?? [] }
   private var commitTabs: [CommitTab] { worktreeID.flatMap { commitTabsByWorktree[$0] } ?? [] }
 
@@ -571,7 +584,7 @@ final class WorktreeDeskViewController: NSViewController {
   var restorableFileTabs: [FileTabState] {
     fileTabsByWorktree.flatMap { worktreeID, tabs in
       inStripOrder(tabs, in: worktreeID, surface: { .file($0.id) })
-        .map { FileTabState(worktreeID: worktreeID, path: $0.path) }
+        .map { FileTabState(worktreeID: worktreeID, path: $0.path, rendered: $0.isRendered) }
     }
   }
 
@@ -608,9 +621,9 @@ final class WorktreeDeskViewController: NSViewController {
       guard let worktree = workspace?.worktree(id: state.worktreeID) else { continue }
       let url = worktree.url.appendingPathComponent(state.path)
       guard FileManager.default.fileExists(atPath: url.path) else { continue }
-      let tab = FileTab(path: state.path, isPreview: false)
+      let tab = FileTab(path: state.path, isPreview: false, rendered: state.rendered)
       tab.isPending = true
-      wire(tab)
+      wire(tab, in: state.worktreeID)
       fileTabsByWorktree[state.worktreeID, default: []].append(tab)
     }
   }
@@ -664,6 +677,19 @@ final class WorktreeDeskViewController: NSViewController {
     }
     tab.isPending = false
     tab.content.show(worktree: worktree, path: tab.path)
+    if tab.isRendered { followBuffer(of: tab, in: worktreeID) }
+  }
+
+  /// A preview drawn from the source tab's buffer when one is open and holds an edit — what is
+  /// being typed is what the preview is for checking — and from the file otherwise, which the
+  /// read in `show` already did.
+  private func followBuffer(of preview: FileTab, in worktreeID: UUID) {
+    guard
+      let source = (fileTabsByWorktree[worktreeID] ?? []).first(where: {
+        !$0.isRendered && $0.path == preview.path && !$0.isPending
+      }), source.content.hasUnsavedEdit, let text = source.content.currentText
+    else { return }
+    preview.content.showPreview(of: text)
   }
 
   private func realize(_ tab: CommitTab) {
@@ -726,9 +752,21 @@ final class WorktreeDeskViewController: NSViewController {
 
   /// The hooks every file tab carries, wherever it came from: what a save tells the window, what
   /// the first edit does to a preview slot, and the dot the strip puts up for an unsaved edit.
-  private func wire(_ tab: FileTab) {
+  private func wire(_ tab: FileTab, in worktreeID: UUID) {
     tab.content.onSaved = { [weak self] worktreeID, path in
       self?.onFileSaved?(worktreeID, path)
+    }
+    // The source's buffer reaches every preview of it, the moment it moves.
+    tab.content.onTextChanged = { [weak self, weak tab] text in
+      guard let self, let tab else { return }
+      for preview in self.fileTabsByWorktree[worktreeID] ?? []
+      where preview.isRendered && preview.path == tab.path && !preview.isPending {
+        preview.content.showPreview(of: text)
+      }
+    }
+    tab.content.onOpenURL = { [weak self, weak tab] url in
+      guard let self, let tab else { return }
+      self.followLink(url, from: tab.path, in: worktreeID)
     }
     // The first edit pins the tab: you must not lose what you just started typing to the next
     // single click reusing the slot.
@@ -869,28 +907,35 @@ final class WorktreeDeskViewController: NSViewController {
   /// lasting tab — and pins the preview one if that is what was already showing this file.
   /// `reveal` lands the view on a line, selecting `term` there — the files panel's hand-off for
   /// a content hit, so stepping down its lines steps the preview tab through the occurrences.
+  ///
+  /// `rendered` opens the file's preview instead — a Markdown file read as a document, in a tab
+  /// of its own beside the source. Never in the preview slot: it is asked for by name, from a
+  /// menu, which is the deliberate open.
   func openFile(
-    worktree: Worktree, path: String, preview: Bool, reveal: (line: Int, term: String?)? = nil
+    worktree: Worktree, path: String, preview: Bool, reveal: (line: Int, term: String?)? = nil,
+    rendered: Bool = false
   ) {
     loadViewIfNeeded()
     self.worktreeID = worktree.id
     var tabs = fileTabsByWorktree[worktree.id] ?? []
+    let preview = preview && !rendered
     let tab: FileTab
-    if let existing = tabs.first(where: { $0.path == path }) {
+    if let existing = tabs.first(where: { $0.path == path && $0.isRendered == rendered }) {
       // Already open: focus it, and a deliberate (non-preview) open pins a tab that was a preview.
       tab = existing
       if !preview { tab.isPreview = false }
-    } else if preview, let slot = tabs.first(where: { $0.isPreview }) {
+    } else if preview, let slot = tabs.first(where: { $0.isPreview && !$0.isRendered }) {
       // Reuse the single preview slot rather than piling up tabs: repoint it at the new file.
       tab = slot
       tab.path = path
       tab.content.show(worktree: worktree, path: path)
     } else {
-      let fresh = FileTab(path: path, isPreview: preview)
-      wire(fresh)
-      fresh.content.show(worktree: worktree, path: path)
+      let fresh = FileTab(path: path, isPreview: preview, rendered: rendered)
+      wire(fresh, in: worktree.id)
       tabs.append(fresh)
       fileTabsByWorktree[worktree.id] = tabs
+      fresh.content.show(worktree: worktree, path: path)
+      if rendered { followBuffer(of: fresh, in: worktree.id) }
       tab = fresh
     }
     surface = .file(tab.id)
@@ -1048,7 +1093,8 @@ final class WorktreeDeskViewController: NSViewController {
       // a tab that has not been read yet says `(unread)` instead, which is the honest answer for
       // it, and a restored strip is exactly what this is read to check.
       let kind = tab.content.isShowingImage ? "  (image)" : ""
-      return "file      \(tab.path)\(tab.isPending ? "  (unread)" : "")\(kind)"
+      let label = tab.isRendered ? "preview   " : "file      "
+      return "\(label)\(tab.path)\(tab.isPending ? "  (unread)" : "")\(kind)"
     case .commit(let id):
       guard let tab = commitTabs.first(where: { $0.id == id }) else { return "commit" }
       return "commit    \(tab.oid.prefix(7))\(tab.isPending ? "  (unread)" : "")"
@@ -1422,9 +1468,11 @@ final class WorktreeDeskViewController: NSViewController {
       guard tabs[index].content.confirmLeavingCurrentFile() else { return false }
       let closed = tabs[index].path
       tabs[index].content.removeFromParent()
+      let wasSource = !tabs[index].isRendered
       tabs.remove(at: index)
       fileTabsByWorktree[worktreeID] = tabs
-      onFileTabClosed?(worktreeID, closed)
+      // A preview closing is not the editor exiting: an `edit … waiting` is waiting on the source.
+      if wasSource { onFileTabClosed?(worktreeID, closed) }
       return true
     case .commit(let id):
       guard let worktreeID, var tabs = commitTabsByWorktree[worktreeID],
@@ -1460,6 +1508,7 @@ final class WorktreeDeskViewController: NSViewController {
     for tab in fileTabs
     where !tab.isPending && (changed == nil || changed?.contains(tab.path) == true) {
       tab.content.refreshCurrent()
+      if tab.isRendered, let worktreeID { followBuffer(of: tab, in: worktreeID) }
     }
   }
 
@@ -1474,7 +1523,7 @@ final class WorktreeDeskViewController: NSViewController {
       tab.path = path
       // A restored tab that has not been read yet only needs the new name: it opens on it.
       if !tab.isPending { tab.content.renamed(to: path) }
-      onFileTabRenamed?(worktreeID, previous, path)
+      if !tab.isRendered { onFileTabRenamed?(worktreeID, previous, path) }
       moved = true
     }
     guard moved else { return }
@@ -1493,7 +1542,7 @@ final class WorktreeDeskViewController: NSViewController {
     let gone = Set(doomed.map(\.id))
     tabs.removeAll { gone.contains($0.id) }
     fileTabsByWorktree[worktreeID] = tabs
-    for tab in doomed { onFileTabClosed?(worktreeID, tab.path) }
+    for tab in doomed where !tab.isRendered { onFileTabClosed?(worktreeID, tab.path) }
     reconcileSurface(previous: previous)
     rebuildTabBar()
     applySurface()
@@ -1593,10 +1642,14 @@ final class WorktreeDeskViewController: NSViewController {
         // editor's own header used to say that the tab did not, and it belongs here, next to the
         // ✕ that would discard it.
         let name = (file.path as NSString).lastPathComponent
+        // A preview wears the glyph for rendered text, which is what tells it from the source tab
+        // of the same name beside it; it has no edit of its own to put a dot up for.
         let tab = makeTab(
-          index: index, title: (file.content.hasUnsavedEdit ? "• " : "") + name, image: nil,
+          index: index, title: (file.content.hasUnsavedEdit ? "• " : "") + name,
+          image: file.isRendered
+            ? NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: "Preview") : nil,
           selected: surface == item, preview: file.isPreview)
-        tab.toolTip = file.path
+        tab.toolTip = file.isRendered ? "Preview of \(file.path)" : file.path
         tabs.append(tab)
       case .commit(let id):
         guard let commit = commits.first(where: { $0.id == id }) else { continue }
@@ -1761,9 +1814,21 @@ final class WorktreeDeskViewController: NSViewController {
     // Only a preview tab has anything to keep open; the rest already are.
     if preview { add("Keep Open", #selector(keepTabOpen(_:))) }
     add(isMaximized ? "Restore Layout" : "Maximize Tab", #selector(toggleMaximized(_:)))
+    // A Markdown file's two faces, each offering the other: the source opens its preview, and
+    // the preview opens the source where it is being read.
+    let order = orderedSurfaces
+    if order.indices.contains(index), case .file(let id) = order[index],
+      let file = fileTabs.first(where: { $0.id == id }), Self.isMarkdown(file.path)
+    {
+      menu.addItem(.separator())
+      if file.isRendered {
+        add("Open Source", #selector(openSourceFromMenu(_:)))
+      } else {
+        add("Open Preview", #selector(openPreviewFromMenu(_:)))
+      }
+    }
     // A web tab's share with the agent, spelled out: the glyph on its bar is the read and the
     // withdrawal, and driving is otherwise only offered by the card that asks for it.
-    let order = orderedSurfaces
     if order.indices.contains(index), case .browser(let id) = order[index],
       let tab = browserTabs.first(where: { $0.id == id })
     {
@@ -1774,6 +1839,58 @@ final class WorktreeDeskViewController: NSViewController {
       add("Stop Sharing with the Agent", #selector(stopSharingTab(_:)), enabled: level != nil)
     }
     return menu
+  }
+
+  @objc private func openPreviewFromMenu(_ sender: NSMenuItem) {
+    guard let (tab, worktree) = fileTab(at: sender.tag) else { return }
+    openFile(worktree: worktree, path: tab.path, preview: false, rendered: true)
+  }
+
+  @objc private func openSourceFromMenu(_ sender: NSMenuItem) {
+    guard let (tab, worktree) = fileTab(at: sender.tag) else { return }
+    let line = tab.content.previewTopSourceLine
+    openFile(
+      worktree: worktree, path: tab.path, preview: false, reveal: line.map { ($0, nil) })
+    activeFileContent?.focus()
+  }
+
+  private func fileTab(at index: Int) -> (FileTab, Worktree)? {
+    let order = orderedSurfaces
+    guard order.indices.contains(index), case .file(let id) = order[index],
+      let tab = fileTabs.first(where: { $0.id == id }),
+      let worktree = worktreeID.flatMap({ workspace?.worktree(id: $0) })
+    else { return nil }
+    return (tab, worktree)
+  }
+
+  /// A link clicked in a preview. An address is a web tab on this desk, the transcript's rule; a
+  /// path is read against the file it was written in, and a file of this worktree opens in the
+  /// preview slot — following a document's links is reading, not deciding to edit. A `#heading`
+  /// on its own, or anything that leaves the worktree, goes nowhere rather than somewhere wrong.
+  private func followLink(_ url: URL, from path: String, in worktreeID: UUID) {
+    guard let worktree = workspace?.worktree(id: worktreeID) else { return }
+    if let scheme = url.scheme?.lowercased() {
+      if scheme == "http" || scheme == "https" {
+        openBrowser(worktree: worktree, url: url)
+      } else {
+        NSWorkspace.shared.open(url)
+      }
+      return
+    }
+    let target = url.path.removingPercentEncoding ?? url.path
+    guard !target.isEmpty else { return }
+    let directory = (path as NSString).deletingLastPathComponent
+    let joined =
+      target.hasPrefix("/")
+      ? String(target.dropFirst()) : (directory as NSString).appendingPathComponent(target)
+    let resolved = (joined as NSString).standardizingPath
+    guard !resolved.hasPrefix(".."), !resolved.hasPrefix("/"),
+      FileManager.default.fileExists(atPath: worktree.url.appendingPathComponent(resolved).path)
+    else {
+      NSSound.beep()
+      return
+    }
+    openFile(worktree: worktree, path: resolved, preview: true)
   }
 
   @objc private func shareTabForReading(_ sender: NSMenuItem) { share(.read, at: sender.tag) }

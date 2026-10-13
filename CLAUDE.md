@@ -447,6 +447,20 @@ Workspace (one window)
   gutter, no base and no dirty state, so nothing here can be saved or asked about on the way out.
   **And there is no image diff**: the file pane has no diff at all by the decision above, so a
   changed image is the one on disk and what it replaced is the PR's to show.
+- **A Markdown file's preview is a second tab on the same buffer, not a mode of the first.** A
+  Source/Preview switch in the pane is the Diff/Source switch again, the mode needed always being
+  the one you are not in; so the preview is a tab of its own, beside the source, keyed by the same
+  `(Worktree, relative path)` with its kind beside it — read-only, never the preview slot (it is
+  asked for by name), following the source's buffer as it is typed, and back as a preview after a
+  relaunch. The file is still edited in exactly one place. **It is read through the transcript's
+  renderer**, for the reason that renderer exists: every CommonMark library drops emphasis that
+  touches CJK punctuation, and one window reading Markdown two ways would draw the agent's plan
+  and the same plan written to a file differently. What a file adds is that its line breaks are
+  the writer's editor rather than the writer, so a document closes a wrapped paragraph up — with
+  no space where either side is CJK — where a message keeps every line it was sent with. **HTML,
+  Mermaid and maths are not rendered**: each needs a browser engine behind the preview, which
+  would trade away the renderer this rests on, and a count of the `.md` files on this machine put
+  them at a few dozen against eleven thousand. The editor goes on never wrapping.
 - **Space previews the row, and the previewer is the system's.** The Finder's key and the
   Finder's panel, which is the whole of what makes it affordable: a `.pdf`, a `.mov`, a font, an
   archive are all answered without hukan learning a thing about any of them — and those are

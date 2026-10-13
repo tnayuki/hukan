@@ -81,6 +81,8 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   var onSelect: ((String, Int?) -> Void)?
   /// A double-click / Return on a row: open it as a lasting tab.
   var onActivate: ((String, Int?) -> Void)?
+  /// The context menu's Open Preview: a Markdown file read as a document, in a tab of its own.
+  var onOpenPreview: ((String) -> Void)?
   /// The context menu's Open in Terminal: a shell in this directory. Terminals are the window
   /// controller's to make, so the panel only says where one belongs.
   var onNewTerminal: ((URL) -> Void)?
@@ -1422,6 +1424,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
 
     if !target.isRoot, !target.isDirectory {
       add("Open in New Tab", #selector(openTargetInNewTab))
+      if WorktreeDeskViewController.isMarkdown(target.path) {
+        add("Open Preview", #selector(openTargetPreview))
+      }
     }
     // Space's other end. Every key this panel has is in this menu — ⏎ as Rename, ⌘↓ as Open in
     // New Tab — because the menu is where a key is found by someone who does not already know it
@@ -1455,6 +1460,11 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   @objc private func openTargetInNewTab() {
     guard let target = menuTarget, !target.isDirectory else { return }
     onActivate?(target.path, target.line)
+  }
+
+  @objc private func openTargetPreview() {
+    guard let target = menuTarget, !target.isDirectory else { return }
+    onOpenPreview?(target.path)
   }
 
   /// The menu opens the preview rather than toggling it: a menu item is a thing chosen, where

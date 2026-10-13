@@ -257,6 +257,9 @@
             <parameter name="from terminal" code="EdTm" type="text" optional="yes" description="the hukan terminal asking (its TERM_SESSION_ID), so a file outside every worktree lands on that terminal's desk">
                 <cocoa key="fromTerminal"/>
             </parameter>
+            <parameter name="rendered" code="EdRn" type="boolean" optional="yes" hidden="yes" description="also open a Markdown file's preview, which is otherwise a menu item">
+                <cocoa key="rendered"/>
+            </parameter>
             <result type="text"/>
         </command>
 

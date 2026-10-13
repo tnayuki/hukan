@@ -522,6 +522,12 @@ final class EditCommand: NSScriptCommand {
     guard let controller = controller ?? frontController() else { return fail("no window") }
     guard let opened = controller.openPath(URL(fileURLWithPath: text), terminalID: terminalID)
     else { return fail("no such path: \(text)") }
+    if argument("rendered", as: Bool.self) == true,
+      case .file(let worktreeID, let tabPath) = opened,
+      WorktreeDeskViewController.isMarkdown(tabPath)
+    {
+      controller.openPreview(worktreeID: worktreeID, path: tabPath)
+    }
     guard case .file(let worktreeID, let tabPath) = opened,
       argument("waiting", as: Bool.self) == true
     else { return "opened" }

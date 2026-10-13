@@ -965,6 +965,10 @@ final class Workspace {
     // window goes, so what comes back is the file as it stands on disk.
     static let fileWorktreeIDs = "files.worktreeIDs"
     static let filePaths = "files.paths"
+    /// "1" where the tab is a Markdown file's preview rather than its source. A list of its own
+    /// beside the paths rather than a mark inside them, so a state saved before previews existed
+    /// reads as every tab being the source, which is what it was.
+    static let fileRendered = "files.rendered"
     // Commit tabs: the worktree they were opened from and the oid, which is the tab's identity.
     static let commitWorktreeIDs = "commits.worktreeIDs"
     static let commitOids = "commits.oids"
@@ -1094,6 +1098,7 @@ final class Workspace {
 
     coder.encode(fileTabs.map(\.worktreeID.uuidString) as NSArray, forKey: Key.fileWorktreeIDs)
     coder.encode(fileTabs.map(\.path) as NSArray, forKey: Key.filePaths)
+    coder.encode(fileTabs.map { $0.rendered ? "1" : "" } as NSArray, forKey: Key.fileRendered)
 
     coder.encode(
       commitTabs.map(\.worktreeID.uuidString) as NSArray, forKey: Key.commitWorktreeIDs)
@@ -1267,11 +1272,14 @@ final class Workspace {
 
     let fileWorktrees = strings(coder, Key.fileWorktreeIDs)
     let filePaths = strings(coder, Key.filePaths)
+    let fileRendered = strings(coder, Key.fileRendered)
     pendingRestoredFileTabs = []
     for (index, idString) in fileWorktrees.enumerated() where index < filePaths.count {
       guard let worktreeID = UUID(uuidString: idString), !filePaths[index].isEmpty else { continue }
       pendingRestoredFileTabs.append(
-        FileTabState(worktreeID: worktreeID, path: filePaths[index]))
+        FileTabState(
+          worktreeID: worktreeID, path: filePaths[index],
+          rendered: index < fileRendered.count && fileRendered[index] == "1"))
     }
 
     let commitWorktrees = strings(coder, Key.commitWorktreeIDs)

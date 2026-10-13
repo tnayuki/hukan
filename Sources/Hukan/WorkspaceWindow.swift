@@ -2036,6 +2036,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     return .file(worktreeID: worktree.id, tabPath: path)
   }
 
+  /// A Markdown file's preview, beside the source tab `show(file:in:)` just opened — the `edit`
+  /// verb's `rendered`, which is how a script reaches what is otherwise a menu item.
+  func openPreview(worktreeID: UUID, path: String) {
+    guard let worktree = workspace.worktree(id: worktreeID) else { return }
+    files.desk.openFile(worktree: worktree, path: path, preview: false, rendered: true)
+  }
+
   /// File ▸ Save (Cmd+S). Writes the open source file back to disk; a no-op with nothing edited.
   @objc func saveFile(_ sender: Any?) {
     files.saveCurrent()

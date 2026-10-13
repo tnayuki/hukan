@@ -109,6 +109,7 @@ public enum RenderCase {
     ("markdown-blocks", markdownBlocks),
     ("message-mark", messageMark),
     ("links", links),
+    ("markdown-file", markdownFile),
   ]
 
   public static func content(for name: String) -> NSAttributedString? {
@@ -303,5 +304,36 @@ public enum RenderCase {
 
       A closing paragraph, with a [link](https://example.com) and `inline code`.
       """)
+  }
+
+  /// A Markdown file as its preview reads it: a hard-wrapped paragraph closing up into one, in
+  /// English and in Japanese, a quote whose bare `>` breaks it into paragraphs, a list item
+  /// carried over the line under it, and a line ended by two spaces keeping its break.
+  private static func markdownFile() -> NSAttributedString {
+    Transcript.markdown(
+      """
+      # 第1話「評価セッション」
+
+      > AIの分野の外にいる人々は、私たちがつくったAIがどう動いているのかを
+      > 理解していないと知ると、しばしば驚く。
+      >
+      > ——引用の出典
+
+          *
+
+      人類が滅ぶまでの道筋は七つの段階に分かれていて、
+      その最初の一つに足をかけたのは僕だった。
+
+      The editor never wraps a line, so a file read in it is hard-wrapped
+      at some column; the preview closes those breaks up into the paragraph
+      they always were.
+
+      - a list item whose text runs on
+        over the line under it
+      - the second item
+
+      An address, kept on its own line:  
+      1-2-3 Somewhere
+      """, document: true)
   }
 }
