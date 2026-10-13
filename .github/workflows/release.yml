@@ -88,8 +88,12 @@ jobs:
           if [ -n "$R" ]; then
             xcrun xcresulttool get test-results summary --path "$R" | jq -r \
               '"\(.result): \(.passedTests) passed, \(.failedTests) failed", (.testFailures[]? | "  \(.testIdentifierString)\n    \(.failureText)")'
-          else
-            tail -40 xcodebuild-test.log
+          fi
+          # A run that never reached a test — the build failed, or the host would not launch —
+          # leaves an empty result, and what went wrong is only in the log.
+          if [ $status -ne 0 ]; then
+            grep -E "error:|Testing failed|Test session results" xcodebuild-test.log | sort -u | head -40
+            tail -20 xcodebuild-test.log
           fi
           exit $status
 
