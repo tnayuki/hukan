@@ -8,6 +8,9 @@ extension NSAttributedString.Key {
   static let blockAccent = NSAttributedString.Key("hukanBlockAccent")
   /// Which edges of the block this paragraph is on, for rounding.
   static let blockEdges = NSAttributedString.Key("hukanBlockEdges")
+  /// The 1-based line of the Markdown source a rendered block began on — set only when a file
+  /// is rendered (`Transcript.markdown(_:document:)`), so its preview can open the source there.
+  public static let markdownSourceLine = NSAttributedString.Key("hukanMarkdownSourceLine")
 }
 
 /// The payload a foldable tool call carries in the transcript, riding in `Transcript.toolTokenKey`
@@ -179,13 +182,44 @@ public enum Transcript {
   /// touches CJK punctuation (see `styled`), so adopting a library would trade a fixed bug
   /// for an unfixed one. Tables were the feature worth having from that side, so they are
   /// implemented here instead.
-  public static func markdown(_ source: String, base: NSFont = prose) -> NSAttributedString {
+  ///
+  /// `document` is for a file rather than a message. A message's lines are what the agent meant
+  /// them to be, one per line, and the transcript keeps them; a file is hard-wrapped at some
+  /// column or written a paragraph to a line, and in both the line break inside a paragraph is
+  /// the writer's editor and not the writer — so a run of lines with no blank between them is one
+  /// paragraph, a list item carries on over the lines under it, and a quote reads as paragraphs
+  /// rather than a line each. Each block also carries the line it began on
+  /// (`markdownSourceLine`), which is how a preview finds its way back to the source.
+  public static func markdown(_ source: String, base: NSFont = prose, document: Bool = false)
+    -> NSAttributedString
+  {
     let rendered = NSMutableAttributedString()
     let lines = source.components(separatedBy: "\n")
     var index = 0
+    // Every block goes through here, so a document's blocks can say which line they came from.
+    func emit(_ block: NSAttributedString, from line: Int) {
+      let start = rendered.length
+      rendered.append(block)
+      guard document, rendered.length > start else { return }
+      rendered.addAttribute(
+        .markdownSourceLine, value: line + 1,
+        range: NSRange(location: start, length: rendered.length - start))
+    }
+    // The lines after `index` that carry on the block above them: in a document, anything up to
+    // a blank line or a line that opens a block of its own.
+    func continuation() -> [String] {
+      guard document else { return [] }
+      var carried: [String] = []
+      while index < lines.count, !startsBlock(lines, at: index) {
+        carried.append(lines[index])
+        index += 1
+      }
+      return carried
+    }
     while index < lines.count {
       let line = lines[index]
       let trimmed = line.trimmingCharacters(in: .whitespaces)
+      let first = index
 
       // Fenced code: gather the whole run first, so the slab is styled as one thing.
       if trimmed.hasPrefix("```") {
@@ -198,13 +232,13 @@ public enum Transcript {
           index += 1
         }
         index += 1  // the closing fence
-        rendered.append(codeBlock(body))
+        emit(codeBlock(body), from: first)
         continue
       }
       index += 1
 
       if let table = Table(lines: lines, start: index - 1) {
-        rendered.append(table.rendered(base: base))
+        emit(table.rendered(base: base), from: first)
         index = table.end
         continue
       }
@@ -224,39 +258,107 @@ public enum Transcript {
               .trimmingCharacters(in: .whitespaces))
           index += 1
         }
-        rendered.append(quote(body, base: base))
+        emit(quote(document ? paragraphs(body) : body, base: base), from: first)
         continue
       }
 
       if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-        rendered.append(rule())
+        emit(rule(), from: first)
         continue
       }
 
       if let heading = headingLevel(of: trimmed) {
-        rendered.append(
+        emit(
           self.heading(
-            String(trimmed.dropFirst(heading).drop { $0 == " " }), level: heading, base: base))
+            String(trimmed.dropFirst(heading).drop { $0 == " " }), level: heading, base: base),
+          from: first)
         continue
       }
 
       if let bullet = bulletBody(of: trimmed) {
-        rendered.append(
-          listItem(bullet, marker: "•", indent: line.prefix { $0 == " " }.count, base: base))
+        emit(
+          listItem(
+            joined([bullet] + continuation()), marker: "•",
+            indent: line.prefix { $0 == " " }.count, base: base), from: first)
         continue
       }
       if let (marker, body) = orderedBody(of: trimmed) {
-        rendered.append(
-          listItem(body, marker: marker, indent: line.prefix { $0 == " " }.count, base: base))
+        emit(
+          listItem(
+            joined([body] + continuation()), marker: marker,
+            indent: line.prefix { $0 == " " }.count, base: base), from: first)
         continue
       }
 
-      let paragraph = NSMutableAttributedString(attributedString: styled(line, base: base))
+      let paragraph = NSMutableAttributedString(
+        attributedString: styled(joined([line] + continuation()), base: base))
       paragraph.append(NSAttributedString(string: "\n", attributes: [.font: base]))
       applyBlock(BlockStyle(indent: 0, spacingBefore: 0, spacingAfter: 6), to: paragraph)
-      rendered.append(paragraph)
+      emit(paragraph, from: first)
     }
     return rendered
+  }
+
+  /// Whether the line at `index` ends the paragraph above it: a blank line, or one that opens a
+  /// block of its own. The block loop's own tests, in its order.
+  private static func startsBlock(_ lines: [String], at index: Int) -> Bool {
+    let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+    return trimmed.isEmpty || trimmed.hasPrefix("```") || trimmed.hasPrefix(">")
+      || trimmed == "---" || trimmed == "***" || trimmed == "___"
+      || headingLevel(of: trimmed) != nil || bulletBody(of: trimmed) != nil
+      || orderedBody(of: trimmed) != nil || Table(lines: lines, start: index) != nil
+  }
+
+  /// One paragraph out of the lines it was wrapped across. A line ending in two spaces or a
+  /// backslash asked for a break there, which is a line separator — the same paragraph, a new
+  /// line. Otherwise the break is a space, except where either side is CJK: Japanese is written
+  /// without spaces, so a wrap in the middle of a sentence must close up rather than open a gap
+  /// no one typed.
+  private static func joined(_ lines: [String]) -> String {
+    var result = ""
+    for line in lines {
+      let piece = result.isEmpty ? line : line.trimmingCharacters(in: .whitespaces)
+      guard !result.isEmpty else {
+        result = piece
+        continue
+      }
+      if result.hasSuffix("  ") || result.hasSuffix("\\") {
+        if result.hasSuffix("\\") { result.removeLast() }
+        while result.hasSuffix(" ") { result.removeLast() }
+        result += "\u{2028}" + piece
+        continue
+      }
+      while result.hasSuffix(" ") { result.removeLast() }
+      let closesUp =
+        result.unicodeScalars.last.map(isCJK) == true
+        || piece.unicodeScalars.first.map(isCJK) == true
+      result += (closesUp ? "" : " ") + piece
+    }
+    return result
+  }
+
+  /// Ideographs, kana, and the punctuation that sits between them — everything from the CJK
+  /// radicals block up, plus the full-width forms.
+  private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
+    (0x2E80...0x9FFF).contains(scalar.value) || (0xF900...0xFAFF).contains(scalar.value)
+      || (0xFF00...0xFFEF).contains(scalar.value) || (0x20000...0x3FFFF).contains(scalar.value)
+  }
+
+  /// A quote's lines as a document reads them: runs joined into paragraphs, a bare `>` between
+  /// them the break.
+  private static func paragraphs(_ lines: [String]) -> [String] {
+    var result: [String] = []
+    var run: [String] = []
+    for line in lines {
+      if line.isEmpty {
+        if !run.isEmpty { result.append(joined(run)) }
+        run = []
+      } else {
+        run.append(line)
+      }
+    }
+    if !run.isEmpty { result.append(joined(run)) }
+    return result
   }
 
   // MARK: - Streaming markdown
