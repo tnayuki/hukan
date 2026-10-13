@@ -111,7 +111,16 @@ Workspace (one window)
   is the transcript's width, and a transcript grown over a folded desk is a number nothing can
   tell from one somebody dragged, so the arrangement was replayed and the desk collapsed again.
   Now the drag stops at the column's minimum and the fold belongs to the maximize alone, which is
-  what it was added for. The strip's right-click menu is the same set of acts spelled out — the
+  what it was added for. **Bar one: a worktree with no tabs folds its desk**, and the conversation
+  takes the width — an empty desk is a blank column, and the worktree a session has just entered
+  is exactly the one that has nothing on it yet. It is not a fold anyone makes, so it is not
+  remembered either: whether the desk is folded is read off the strip and the mode every time,
+  which is what keeps it from disagreeing with them. The maximize's memento leaves the desk out
+  for that reason — it can only ever have been "the strip was empty", and a tab that arrives while
+  the conversation has the window would otherwise come back folded inside the column with no way
+  to it — and the widths are not recorded while it holds, since the transcript then stands at the
+  width of the pair. What it costs is that switching between a worktree with tabs and one without
+  moves the transcript's width, which was weighed and taken. The strip's right-click menu is the same set of acts spelled out — the
   four ways to close from a tab, `Keep Open` while it is still a preview, and that maximize.
 - **The desk's plain `⌘T` is the browser's; the terminal takes `⌃⌘T`.** Creation is two families,
   `⌘N` for the rail and `⌘T` for the desk, and within the desk the plain key goes to what is

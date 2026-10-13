@@ -34,11 +34,28 @@ final class MaximizeTests: XCTestCase {
     XCTAssertFalse(showing.panel)
   }
 
+  /// A window that is laid out, the way a launched one is: the empty desk folds only once the
+  /// columns have been arranged.
+  private func openArrangedWindow() -> (WorkspaceWindowController, Workspace, NSWindow) {
+    let (controller, workspace, window) = openWindow()
+    window.setFrame(NSRect(x: 0, y: -4000, width: 1600, height: 800), display: true)
+    controller.arrangeColumnsIfNeeded()
+    return (controller, workspace, window)
+  }
+
+  /// Any tab will do; a commit tab is the one that reads nothing until it is looked at.
+  private func openTab(_ controller: WorkspaceWindowController, _ workspace: Workspace) {
+    let worktree = workspace.worktree(id: workspace.selectedWorktreeID!)!
+    controller.deskForScripting.openCommit(
+      worktree: worktree, oid: String(repeating: "0", count: 40), preview: false)
+  }
+
   /// Focus nowhere in the columns is the desk's, which is where ⌃⌘M started — and the desk
   /// maximized folds the transcript, not itself.
   func testFocusNowhereMaximizesTheDesk() {
-    let (controller, _, window) = openWindow()
+    let (controller, workspace, window) = openWindow()
     defer { window.close() }
+    openTab(controller, workspace)
 
     controller.toggleMaximize(nil)
 
@@ -233,6 +250,80 @@ final class MaximizeTests: XCTestCase {
       with: .leftMouseDown, location: NSPoint(x: view.bounds.midX, y: view.bounds.midY),
       modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0,
       clickCount: count, pressure: 1)!
+  }
+
+  /// An empty desk gives its width to the conversation, and the first tab takes it back — the
+  /// fold is the strip's, so closing the last tab folds it again.
+  func testAnEmptyDeskFoldsUntilATabOpens() {
+    let (controller, workspace, window) = openArrangedWindow()
+    defer { window.close() }
+
+    XCTAssertFalse(controller.showingColumns.desk, "an empty desk stayed open")
+    XCTAssertTrue(controller.showingColumns.session)
+
+    openTab(controller, workspace)
+    XCTAssertTrue(controller.showingColumns.desk, "the first tab did not open the desk")
+
+    XCTAssertTrue(controller.deskForScripting.closeActiveTab())
+    XCTAssertFalse(controller.showingColumns.desk, "the last tab closing left the desk open")
+  }
+
+  /// Focus nowhere falls to the desk only when there is a desk to give the window to; an empty
+  /// one is folded, and the conversation is what is on screen.
+  func testFocusNowhereOnAnEmptyDeskMaximizesTheSession() {
+    let (controller, _, window) = openArrangedWindow()
+    defer { window.close() }
+
+    controller.toggleMaximize(nil)
+
+    XCTAssertEqual(controller.maximizedColumn, .session)
+  }
+
+  /// The case a remembered fold would get wrong: the desk was empty when the conversation took
+  /// the window, a tab arrived while it had it, and the way out has to show that tab rather than
+  /// put back a fold with something inside it and no way to it.
+  func testATabThatArrivedUnderTheModeIsShownOnTheWayOut() {
+    let (controller, workspace, window) = openArrangedWindow()
+    defer { window.close() }
+
+    controller.focusComposer()
+    controller.toggleMaximize(nil)
+    openTab(controller, workspace)
+    XCTAssertFalse(controller.showingColumns.desk, "the tab broke into the maximized session")
+
+    controller.toggleMaximize(nil)
+    XCTAssertNil(controller.maximizedColumn)
+    XCTAssertTrue(controller.showingColumns.desk)
+  }
+
+  /// The other half: the desk had a tab when the mode began and lost it under the mode, so the
+  /// way out folds it rather than opening an empty column.
+  func testATabThatLeftUnderTheModeLeavesTheDeskFolded() {
+    let (controller, workspace, window) = openArrangedWindow()
+    defer { window.close() }
+    openTab(controller, workspace)
+
+    controller.focusComposer()
+    controller.toggleMaximize(nil)
+    XCTAssertTrue(controller.deskForScripting.closeActiveTab())
+
+    controller.toggleMaximize(nil)
+    XCTAssertFalse(controller.showingColumns.desk)
+  }
+
+  /// What the transcript measures while the empty desk has folded is the width of the pair, and
+  /// saved it would come back after a relaunch as a desk squeezed to its minimum. The width kept
+  /// is the one it had beside the desk.
+  func testAFoldedDeskRecordsNoWidths() {
+    let (controller, workspace, window) = openArrangedWindow()
+    defer { window.close() }
+    XCTAssertFalse(controller.showingColumns.desk)
+    let saved = workspace.columnWidths
+
+    window.setFrame(NSRect(x: 0, y: -4000, width: 1800, height: 800), display: true)
+    window.layoutIfNeeded()
+
+    XCTAssertEqual(workspace.columnWidths, saved)
   }
 
   /// Being sent to a session is being sent to the rail as much as to the transcript, and the

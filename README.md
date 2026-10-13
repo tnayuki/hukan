@@ -203,7 +203,8 @@ end, a drag puts one wherever it is dropped, and closing the active one lands on
 neighbour. Past the point where the tabs stop fitting, it scrolls sideways instead of squeezing
 every label at once, and whichever tab is picked is scrolled back into sight; `+` keeps the
 trailing edge, outside the scroll. A click previews and a double-click promotes: a preview
-becomes lasting, and a lasting tab takes the whole window.
+becomes lasting, and a lasting tab takes the whole window. A worktree with no tabs open has no
+desk at all: the conversation takes its width, and the first tab opened gives it back.
 
 The strip comes back after a relaunch — every kind of tab, on its worktree, in the order it stood
 in, open at the tab that was showing. Nothing is read until its tab is looked at, so a desk of a

@@ -216,7 +216,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // it back to `setPosition`, which answers a position past the minimum by collapsing. With
     // the drag refused, that same replay clamps at `deskMinimumWidth` and the column is simply
     // there. A maximized session still folds it, by `isCollapsed`, which this flag does not
-    // govern.
+    // govern — and so does a desk with no tabs, see `updateDeskFold`.
     deskItem.canCollapse = false
     deskItem.holdingPriority = Self.deskHoldingPriority
 
@@ -359,6 +359,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.onSetMaximized = { [weak self] maximized in
       self?.setMaximized(maximized ? .desk : nil)
     }
+    files.desk.onTabsChanged = { [weak self] in self?.updateDeskFold() }
     running.onSetMaximized = { [weak self] maximized in
       self?.setMaximized(maximized ? .session : nil)
     }
@@ -512,6 +513,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     defer {
       isArrangingColumns = false
       recordColumnWidths()
+      // After the record, so what is saved is the arrangement with the desk in it — and without
+      // an animation, since the window is only now being laid out at all.
+      updateDeskFold(animated: false)
     }
 
     // Two dividers, one per split now that the columns are nested: the rail's is the outer
@@ -634,6 +638,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // reads, so they measure nothing and it catches them, but a maximized session leaves the
     // transcript standing at the full width of the window.
     guard maximized == nil else { return }
+    // Nor while an empty desk has given the conversation its width: the transcript stands at
+    // the width of the pair, and replayed after a relaunch that is a desk squeezed to its
+    // minimum the moment a tab opens. The width it had beside the desk is the one to keep.
+    guard !deskItem.isCollapsed else { return }
     // The wrapper each split view puts around an item's view, not the item's view itself: a
     // sidebar item insets its content, so recording the inner width and feeding it back to
     // setPosition loses that inset on every launch — the rail shrank 8pt each time. Reached
@@ -2444,8 +2452,32 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// maximized. Deliberately not saved with the window: a restored window opening with no rail
   /// and no transcript reads as a broken one, and the mode is a thing you are doing, not a thing
   /// the workspace is.
-  private var maximized:
-    (column: MaximizedColumn, rail: Bool, running: Bool, desk: Bool, panel: Bool)?
+  ///
+  /// The desk is not in it. Nothing folds the desk by hand, so what it was before the mode is
+  /// only whether it had tabs, and that is asked again on the way out rather than remembered —
+  /// a tab that arrived while the conversation had the window (an agent's `browser_open`, a
+  /// terminal's `$EDITOR`) would otherwise come back folded inside a desk with no way to it.
+  private var maximized: (column: MaximizedColumn, rail: Bool, running: Bool, panel: Bool)?
+
+  /// Whether the selected worktree's strip is empty — the one thing outside the mode that folds
+  /// the desk.
+  private var isDeskEmpty: Bool { files.tabCount == 0 }
+
+  /// An empty desk gives its width to the conversation; the first tab takes it back. Derived,
+  /// never stored: the fold is whatever the mode and the strip say it is right now, so nothing
+  /// remembered can disagree with the tabs. While a column has the window the mode decides
+  /// alone, and leaving it asks this same question. Not before the columns are arranged, either
+  /// — the saved widths are set against an unfolded desk, and the arrangement folds it after.
+  private func updateDeskFold(animated: Bool = true) {
+    guard hasArrangedColumns, maximized == nil else { return }
+    let collapsed = isDeskEmpty
+    guard deskItem.isCollapsed != collapsed else { return }
+    if animated {
+      NSAnimationContext.runAnimationGroup { _ in deskItem.animator().isCollapsed = collapsed }
+    } else {
+      deskItem.isCollapsed = collapsed
+    }
+  }
 
   /// Which columns are on screen, read off the split items rather than off the screen: a fold
   /// is what this mode is made of, and asserting one otherwise means measuring pixels.
@@ -2477,7 +2509,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// Which column ⌃⌘M means, read off where the focus is: an edge column maximizes the column
   /// it feeds — the rail's detail is the conversation, the files panel's is a tab — and the two
   /// middle columns maximize themselves. Focus nowhere in the columns (the toolbar's fields, or
-  /// a window nobody has clicked in yet) falls to the desk, which is where the key started.
+  /// a window nobody has clicked in yet) falls to the desk, which is where the key started —
+  /// unless the desk is empty and folded, when the conversation is the column on screen.
   private var maximizeTargetForFocus: MaximizedColumn {
     var view = window?.firstResponder as? NSView
     while let current = view {
@@ -2485,7 +2518,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       if current === files.desk.view || current === files.panel.view { return .desk }
       view = current.superview
     }
-    return .desk
+    return isDeskEmpty ? .session : .desk
   }
 
   /// Fold everything but one column away, or unfold it. Everything that can collapse does —
@@ -2495,19 +2528,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// which is the arrangement the way back has to lead to.
   private func setMaximized(_ column: MaximizedColumn?) {
     guard maximized?.column != column else { return }
+    // An empty desk has nothing to give the window to — the menu item already says so.
+    if column == .desk, isDeskEmpty { return }
     let before =
-      maximized.map { ($0.rail, $0.running, $0.desk, $0.panel) }
-      ?? (
-        railItem.isCollapsed, runningItem.isCollapsed, deskItem.isCollapsed,
-        filesPanelItem.isCollapsed
-      )
+      maximized.map { ($0.rail, $0.running, $0.panel) }
+      ?? (railItem.isCollapsed, runningItem.isCollapsed, filesPanelItem.isCollapsed)
     if let column {
-      maximized = (column, before.0, before.1, before.2, before.3)
+      maximized = (column, before.0, before.1, before.2)
       setColumnsCollapsed(
         rail: true, running: column != .session, desk: column != .desk, panel: true)
     } else {
       maximized = nil
-      setColumnsCollapsed(rail: before.0, running: before.1, desk: before.2, panel: before.3)
+      setColumnsCollapsed(
+        rail: before.0, running: before.1, desk: hasArrangedColumns && isDeskEmpty,
+        panel: before.2)
     }
     files.isDeskMaximized = isDeskMaximized
     running.isMaximized = isSessionMaximized
@@ -2517,18 +2551,19 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// move is the caller's and is left alone — putting it back is exactly what the memento must
   /// not do here. What is put back is the pair the mode folded that nothing else can unfold: the
   /// transcript and the desk have no toggle of their own, so a mode dropped in place would leave
-  /// whichever of them it had folded with no way back. Each returns to what it was before the
-  /// mode, so a divider somebody had dragged shut stays shut.
+  /// whichever of them it had folded with no way back. The transcript returns to what it was
+  /// before the mode; the desk to what its strip says now.
   private func forgetMaximizedLayout() {
     guard let before = maximized else { return }
     maximized = nil
     files.isDeskMaximized = false
     running.isMaximized = false
-    guard runningItem.isCollapsed != before.running || deskItem.isCollapsed != before.desk
+    let desk = hasArrangedColumns && isDeskEmpty
+    guard runningItem.isCollapsed != before.running || deskItem.isCollapsed != desk
     else { return }
     NSAnimationContext.runAnimationGroup { _ in
       runningItem.animator().isCollapsed = before.running
-      deskItem.animator().isCollapsed = before.desk
+      deskItem.animator().isCollapsed = desk
     }
   }
 

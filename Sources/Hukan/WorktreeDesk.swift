@@ -243,6 +243,10 @@ final class WorktreeDeskViewController: NSViewController {
   /// Ask the window for the whole width, or to put the other columns back. The desk is a column
   /// and the columns are the window's, so maximizing is asked for here, never done here.
   var onSetMaximized: ((Bool) -> Void)?
+  /// The strip was rebuilt, which every act that opens or closes a tab — and every switch of
+  /// worktree — ends in. The window reads `tabCount` off it, since an empty desk gives its width
+  /// to the conversation.
+  var onTabsChanged: (() -> Void)?
 
   /// Whether the window is showing the desk alone right now. The window controller sets it once
   /// the columns have moved, and the strip reads it back: the tab menu says Maximize or Restore,
@@ -1616,6 +1620,7 @@ final class WorktreeDeskViewController: NSViewController {
     // case that hides its own tab (and the `+` with it) was the odd exception. Only nothing open
     // collapses it.
     let total = files.count + commits.count + browsers.count + terminals.count
+    defer { onTabsChanged?() }
     guard total > 0 else {
       tabScroll.isHidden = true
       plusButton.isHidden = true
