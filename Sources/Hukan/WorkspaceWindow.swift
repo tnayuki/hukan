@@ -321,6 +321,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     rail.onStartSession = { [weak self] session in self?.startSessionFromRail(session) }
     // The rail has already confirmed — deleting unlinks the transcript, so there is no undo.
     rail.onSetTags = { [weak self] session, tags in self?.setTags(tags, for: session) }
+    rail.onOpenTag = { [weak self] url, session in self?.openTag(url, of: session) }
     rail.onDeleteSession = { [weak self] session in
       guard let self else { return }
       self.workspace.deleteSession(session)
@@ -2216,6 +2217,19 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     files.openBrowser(url: url)
     return true
+  }
+
+  /// A tag's page, opened from its chip: on the desk of the session's worktree, by the same rule a
+  /// link pressed in the transcript follows — ⌘, or an address a web tab will not take, goes out to
+  /// the default browser instead.
+  private func openTag(_ url: URL, of session: AgentSession) {
+    guard !NSEvent.modifierFlags.contains(.command), BrowserEnvironment.opensAsWebTab(url),
+      let worktree = workspace.worktree(id: session.worktreeID)
+    else {
+      NSWorkspace.shared.open(url)
+      return
+    }
+    files.desk.openBrowser(worktree: worktree, url: url)
   }
 
   /// File ▸ New Browser (⌘T). A web tab in the selected worktree's desk, over the shared

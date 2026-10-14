@@ -967,6 +967,17 @@ Workspace (one window)
   rest and the rail is no longer one height — so a row's height is worked out before the row
   exists, from the rail's width and the insets the source-list style puts around a cell, which are
   measured rather than documented and held by a test against the outline's own frames.
+  **A tag can name its page, and the click opens it where a link in the transcript would** — on
+  the desk of the session's worktree, the session selected first since the desk shows only the
+  selected worktree's tabs, ⌘ sending it out to the default browser instead. The PR an agent tags
+  is the PR it just opened, which is what a web tab is for, and one rule for every address in the
+  window is what keeps the ⌘ meaning one thing. The address rides in the tag's own string, `PR:
+  #42 <https://…>`, rather than beside it: the tool, the editor, the saved state and the scripting
+  property then stay one string per tag, and a field for addresses would be a second list to keep
+  in step with the first. Only `http(s)`, the transcript's narrow half of the scheme table, and
+  the label is cut to what a row holds while the address never is — a shortened address is a
+  different page. A chip with no address leaves the click to the row, so labelling a session
+  costs nothing in how its row is chosen.
   **They are view state, not master data.** Claude Code has a `tag` record of its own — one
   string, last one wins, carried across a resume — but nothing in the engine writes it, so using it
   would mean hukan appending to a transcript, which it never does; and a tag exists to find a row

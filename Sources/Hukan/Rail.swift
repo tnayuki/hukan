@@ -245,6 +245,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   var onDeleteSession: ((AgentSession) -> Void)?
   /// Replace a session's tags with what was typed into the rail's editor.
   var onSetTags: ((AgentSession, [String]) -> Void)?
+  /// A tag's chip was clicked: open the page it names, for the session it labels.
+  var onOpenTag: ((URL, AgentSession) -> Void)?
   /// Fired whenever the query changes, so the window can re-highlight the open transcript for the
   /// new terms. Distinct from a rail reload: the rail filters itself, but the running column needs
   /// the terms to mark where a session matched.
@@ -1842,8 +1844,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     // The tags, on lines of their own under the title, so neither has to give way to the other.
     // Read off the session at draw time, like the age, so a change needs only a redraw and a new
     // height (see `heightOfRowByItem`). Not on a hit row, which is a snippet of the transcript.
-    if let tags = Self.tags(of: node) {
-      let flow = TagFlowView(tags: tags)
+    if let tags = Self.tags(of: node), let session = node.session {
+      let flow = TagFlowView(tags: tags) { [weak self] url in self?.openTag(url, of: session) }
       flow.translatesAutoresizingMaskIntoConstraints = false
       cell.addSubview(flow)
       NSLayoutConstraint.activate([
@@ -1858,6 +1860,15 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   }
 
   // MARK: - Tag lines
+
+  /// A chip naming a page was clicked. The page is the task's, so it opens on the desk of the
+  /// session it labels, and the session is selected first, since the desk shows only the selected
+  /// worktree's tabs. ⌘ sends the page out to the default browser instead and leaves the rail
+  /// where it was — the transcript's link rule, read the same way here.
+  private func openTag(_ url: URL, of session: AgentSession) {
+    if !NSEvent.modifierFlags.contains(.command) { selectSessions([session.id]) }
+    onOpenTag?(url, session)
+  }
 
   /// The tags a row draws under its title, or nil when it draws none.
   private static func tags(of node: RailNode) -> [String]? {
@@ -2105,10 +2116,10 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     alert.messageText = "Tags"
     alert.informativeText =
       "Separate tags with commas. Write each as kind: value — only the value is shown, and the "
-      + "kind picks its colour."
+      + "kind picks its colour. End one with <https://…> to open that page when it is clicked."
     let field = NSTextField(string: SessionTags.joined(session.tags))
     field.placeholderString = "JIRA: ABC-123, PR: #42"
-    field.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
+    field.frame = NSRect(x: 0, y: 0, width: 360, height: 22)
     alert.accessoryView = field
     alert.addButton(withTitle: "Save")
     alert.addButton(withTitle: "Cancel")

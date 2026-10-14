@@ -83,7 +83,10 @@ enum HukanMCP {
         "Replace this session's tags with the given list. Tags label the session on the user's "
         + "list of sessions, so it can be found at a glance by what it is working on: write each "
         + "as `kind: value` — `JIRA: ABC-123`, `Issue: #42`, `PR: #58886`. Only the value is shown; "
-        + "the kind picks the colour, so spell the same kind the same way every time. The list "
+        + "the kind picks the colour, so spell the same kind the same way every time. When you "
+        + "know the address of what a tag names, end the tag with it in angle brackets — "
+        + "`PR: #58886 <https://github.com/owner/repo/pull/58886>` — and clicking the tag opens "
+        + "that page. The list "
         + "is the whole set, not a change to it: pass the tags to keep as well as the new one, "
         + "and an empty list to clear them. Answers with the tags as they now stand.",
       inputSchema: [

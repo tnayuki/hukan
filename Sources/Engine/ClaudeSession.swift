@@ -334,8 +334,9 @@ final class ClaudeSession {
   /// and not an account of what hukan is.
   static let tagInstruction =
     "When the work is tied to a ticket, an issue or a pull request, tag this session with it using "
-    + "`mcp__\(HukanMCP.serverName)__\(HukanMCP.setTagsTool)` (`kind: value`, e.g. `JIRA: ABC-123`, "
-    + "`PR: #58886`)."
+    + "`mcp__\(HukanMCP.serverName)__\(HukanMCP.setTagsTool)` (`kind: value`, followed by "
+    + "` <url>` when you know its address, e.g. `JIRA: ABC-123`, "
+    + "`PR: #58886 <https://github.com/owner/repo/pull/58886>`)."
 
   /// What `--append-system-prompt` carries: one line per tool the window depends on the agent
   /// calling.

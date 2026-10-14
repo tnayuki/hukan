@@ -5,11 +5,16 @@ import AppKit
 /// so a row reads as a few short identifiers rather than a line of `JIRA:` prefixes, and the
 /// colour still says which tracker each one is from.
 ///
+/// A tag may end in the address of what it names, in angle brackets — `PR: #42 <https://…>` — and
+/// then its chip opens that page. It rides in the string rather than beside it, so the tool, the
+/// rail's editor, the saved state and the scripting property all stay one string per tag.
+///
 /// They are view state, the window's like the rail's order: keyed by session id in the restorable
 /// state, set by the agent through the hosted tool or by hand from the rail.
 enum SessionTags {
-  /// A tag no row could hold is cut here rather than at the chip, so what is stored, what the
-  /// tool answers with and what is drawn are the same string. Sixty is what a title is cut to.
+  /// A label no row could hold is cut here rather than at the chip, so what is stored, what the
+  /// tool answers with and what is drawn are the same string. Sixty is what a title is cut to. The
+  /// address is not cut: a shortened one is a different page.
   static let lengthLimit = 60
 
   /// The list as the session keeps it: trimmed, the empty ones dropped, each one once — in the
@@ -18,15 +23,39 @@ enum SessionTags {
     var seen = Set<String>()
     return tags.compactMap { raw in
       let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !trimmed.isEmpty else { return nil }
-      let capped = trimmed.count > lengthLimit ? String(trimmed.prefix(lengthLimit)) : trimmed
-      return seen.insert(capped).inserted ? capped : nil
+      let (label, address) = parts(of: trimmed)
+      guard !label.isEmpty else { return nil }
+      let capped = label.count > lengthLimit ? String(label.prefix(lengthLimit)) : label
+      let tag = address.map { "\(capped) <\($0)>" } ?? capped
+      return seen.insert(tag).inserted ? tag : nil
     }
   }
+
+  /// The tag's label and its address, when it ends in one. Only `http(s)`, the same narrow half of
+  /// the scheme table a link in the transcript is held to: a chip must not conjure a tab out of
+  /// anything else. A bracketed tail that is not such an address stays part of the label.
+  private static func parts(of tag: String) -> (label: String, address: String?) {
+    guard tag.hasSuffix(">"), let open = tag.range(of: "<", options: .backwards) else {
+      return (tag, nil)
+    }
+    let address = String(tag[open.upperBound..<tag.index(before: tag.endIndex)])
+      .trimmingCharacters(in: .whitespaces)
+    guard let url = URL(string: address), ["http", "https"].contains(url.scheme?.lowercased()),
+      url.host != nil
+    else { return (tag, nil) }
+    return (tag[..<open.lowerBound].trimmingCharacters(in: .whitespaces), address)
+  }
+
+  /// The tag without its address — what is split into a kind and a value.
+  static func label(of tag: String) -> String { parts(of: tag).label }
+
+  /// The page the tag names, or nil when it names none.
+  static func url(of tag: String) -> URL? { parts(of: tag).address.flatMap(URL.init(string:)) }
 
   /// The kind and the value of one tag. Split at the first colon, so a value may carry colons of
   /// its own; a tag with nothing on one side of it has no kind and is all value.
   static func split(_ tag: String) -> (kind: String?, value: String) {
+    let tag = label(of: tag)
     guard let colon = tag.firstIndex(of: ":") else { return (nil, tag) }
     let kind = tag[..<colon].trimmingCharacters(in: .whitespaces)
     let value = tag[tag.index(after: colon)...].trimmingCharacters(in: .whitespaces)
@@ -62,7 +91,7 @@ enum SessionTags {
 
   /// What a person types into the rail's editor, and what it is pre-filled with: the tags on one
   /// line, a comma between. A comma rather than a newline because the field is a single line, and
-  /// one is rare enough inside a ticket id to give up.
+  /// one is rare enough inside a ticket id, or an address, to give up.
   static func joined(_ tags: [String]) -> String { tags.joined(separator: ", ") }
   static func parse(_ text: String) -> [String] {
     normalized(text.split(separator: ",").map(String.init))
@@ -78,8 +107,9 @@ final class TagFlowView: NSView {
 
   private let chips: [TagChip]
 
-  init(tags: [String]) {
-    chips = tags.map { TagChip(tag: $0) }
+  /// `open` is what a chip naming a page does when it is clicked.
+  init(tags: [String], open: ((URL) -> Void)? = nil) {
+    chips = tags.map { TagChip(tag: $0, open: open) }
     super.init(frame: .zero)
     chips.forEach(addSubview)
   }
@@ -130,17 +160,23 @@ final class TagChip: NSView {
 
   /// The whole tag, `kind: value` — named so because `tag` is already `NSView`'s.
   private let fullTag: String
+  /// The page the chip opens, and how; nil for a chip that names none, which is only a label.
+  let url: URL?
+  private let open: ((URL) -> Void)?
 
-  init(tag: String) {
+  init(tag: String, open: ((URL) -> Void)? = nil) {
     fullTag = tag
     let (kind, value) = SessionTags.split(tag)
     self.value = value
     color = SessionTags.color(forKind: kind)
+    url = SessionTags.url(of: tag)
+    self.open = open
     super.init(frame: .zero)
-    toolTip = tag
+    let label = SessionTags.label(of: tag)
+    toolTip = url.map { "\(label)\n\($0.absoluteString)" } ?? label
     setAccessibilityElement(true)
-    setAccessibilityRole(.staticText)
-    setAccessibilityLabel(tag)
+    setAccessibilityRole(url == nil ? .staticText : .link)
+    setAccessibilityLabel(label)
   }
 
   @available(*, unavailable)
@@ -173,4 +209,37 @@ final class TagChip: NSView {
   }
 
   override var isFlipped: Bool { true }
+
+  // MARK: Opening the page
+
+  /// The rail's outline takes every click for its selection unless the view under it says
+  /// otherwise. A chip naming a page says so, so the click opens the page rather than choosing the
+  /// row; one naming none leaves the click to the row, which is what it was before chips had pages.
+  override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?)
+    -> Bool
+  {
+    url != nil && open != nil
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    guard url != nil, open != nil else { return super.mouseDown(with: event) }
+  }
+
+  /// Opened on the release, and only over the chip — the way a button is, so a press dragged off
+  /// it is a press taken back.
+  override func mouseUp(with event: NSEvent) {
+    guard let url, let open else { return super.mouseUp(with: event) }
+    if bounds.contains(convert(event.locationInWindow, from: nil)) { open(url) }
+  }
+
+  /// A hand over a chip that opens something, as over a link in the transcript: the arrow the rest
+  /// of the row shows would say there is nothing here to press.
+  override func resetCursorRects() {
+    if url != nil, open != nil { addCursorRect(bounds, cursor: .pointingHand) }
+  }
+
+  /// What a click does, for a test or a script that cannot click.
+  func performOpen() {
+    if let url { open?(url) }
+  }
 }

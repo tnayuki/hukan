@@ -148,4 +148,51 @@ final class SessionTagsTests: XCTestCase {
       TagFlowView.height(of: tags, width: 60), one * 3 + TagFlowView.spacing.height * 2)
     XCTAssertEqual(TagFlowView.height(of: [], width: 100), 0)
   }
+
+  // MARK: - A tag's page
+
+  func testATagMayEndInTheAddressOfWhatItNames() {
+    let tag = "PR: #42 <https://github.com/o/r/pull/42>"
+    XCTAssertEqual(SessionTags.url(of: tag)?.absoluteString, "https://github.com/o/r/pull/42")
+    XCTAssertEqual(SessionTags.label(of: tag), "PR: #42")
+    XCTAssertEqual(SessionTags.split(tag).kind, "PR")
+    XCTAssertEqual(SessionTags.split(tag).value, "#42")
+    XCTAssertNil(SessionTags.url(of: "PR: #42"))
+    // Only http(s), and only an address with a host: anything else in brackets is label.
+    XCTAssertNil(SessionTags.url(of: "Doc: x <file:///etc/hosts>"))
+    XCTAssertEqual(
+      SessionTags.label(of: "Doc: x <file:///etc/hosts>"), "Doc: x <file:///etc/hosts>")
+    XCTAssertNil(SessionTags.url(of: "Note: <draft>"))
+  }
+
+  /// The label is cut to what a row can hold; the address is not, since a shortened one is a
+  /// different page.
+  func testTheLabelIsCutButTheAddressIsNot() {
+    let address = "https://example.com/" + String(repeating: "a", count: 200)
+    let long = String(repeating: "x", count: 100)
+    let tag = SessionTags.normalized(["\(long) <\(address)>"]).first
+    XCTAssertEqual(tag.map(SessionTags.label(of:))?.count, SessionTags.lengthLimit)
+    XCTAssertEqual(tag.flatMap(SessionTags.url(of:))?.absoluteString, address)
+    XCTAssertEqual(
+      SessionTags.normalized(["PR: #1   <https://a.example/1>", "PR: #1 <https://a.example/1>"]),
+      ["PR: #1 <https://a.example/1>"])
+  }
+
+  /// A chip naming a page takes the click for itself and opens it; one naming none leaves the
+  /// click to the row.
+  func testAChipNamingAPageOpensIt() {
+    var opened: [URL] = []
+    let linked = TagChip(tag: "PR: #42 <https://github.com/o/r/pull/42>") { opened.append($0) }
+    XCTAssertTrue(linked.validateProposedFirstResponder(linked, for: nil))
+    linked.performOpen()
+    XCTAssertEqual(opened.map(\.absoluteString), ["https://github.com/o/r/pull/42"])
+    XCTAssertEqual(linked.toolTip, "PR: #42\nhttps://github.com/o/r/pull/42")
+
+    let plain = TagChip(tag: "JIRA: ABC-1") { opened.append($0) }
+    XCTAssertNil(plain.url)
+    XCTAssertFalse(plain.validateProposedFirstResponder(plain, for: nil))
+    // The address does not widen the chip: only the value is drawn.
+    XCTAssertEqual(
+      TagChip.size(of: "PR: #42 <https://github.com/o/r/pull/42>"), TagChip.size(of: "PR: #42"))
+  }
 }
