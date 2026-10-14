@@ -842,10 +842,54 @@ public final class ReadingView: NSView {
   }
 
   public override func menu(for event: NSEvent) -> NSMenu? {
-    guard selectedRange.length > 0 || selectedTable?.table.selectedText() != nil else { return nil }
+    menu(at: convert(event.locationInWindow, from: nil))
+  }
+
+  /// A link under the pointer offers what its click and ⌘-click do, and its address; a selection
+  /// offers Copy whether or not the press landed on a link. The fold link is not an address and
+  /// offers nothing.
+  func menu(at point: CGPoint) -> NSMenu? {
+    let url = link(at: point)?.url ?? tableLink(at: point)
+    let pressed = url == Transcript.toolCallLinkURL ? nil : url
+    let selected = selectedRange.length > 0 || selectedTable?.table.selectedText() != nil
+    guard pressed != nil || selected else { return nil }
     let menu = NSMenu()
-    menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
+    if let pressed {
+      for (title, action) in [
+        ("Open Link", #selector(openLink(_:))),
+        ("Open Link in Default Browser", #selector(openLinkInDefaultBrowser(_:))),
+        ("Copy Link", #selector(copyLink(_:))),
+      ] {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.representedObject = pressed
+        menu.addItem(item)
+      }
+    }
+    if selected {
+      if pressed != nil { menu.addItem(.separator()) }
+      menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
+    }
     return menu
+  }
+
+  /// The click's own road, so the owner decides where a link opens here as it does for a click.
+  @objc func openLink(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    if let onOpenURL { _ = onOpenURL(url) } else { NSWorkspace.shared.open(url) }
+  }
+
+  @objc func openLinkInDefaultBrowser(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    NSWorkspace.shared.open(url)
+  }
+
+  @objc func copyLink(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(url.absoluteString, forType: .URL)
+    pasteboard.setString(url.absoluteString, forType: .string)
   }
 
   public override func becomeFirstResponder() -> Bool {

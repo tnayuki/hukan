@@ -81,6 +81,31 @@ final class AutolinkTests: XCTestCase {
     XCTAssertEqual(opened.count, 1, "the fold link stayed in the transcript")
   }
 
+  /// A right-click on a link offers what its click and ⌘-click do, and its address; Open Link takes
+  /// the click's road. Off the link with nothing selected there is no menu at all.
+  func testARightClickOnALinkOffersIt() throws {
+    _ = NSApplication.shared
+    let (scrollView, textView) = makeReadingView()
+    scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    textView.setContent(Transcript.markdown("Opened https://example.com/pr/1\n"))
+    var opened: [URL] = []
+    textView.onOpenURL = { url in
+      opened.append(url)
+      return true
+    }
+    let rect = try XCTUnwrap(textView.rects(for: NSRange(location: 10, length: 1)).first)
+    let menu = try XCTUnwrap(textView.menu(at: CGPoint(x: rect.midX, y: rect.midY)))
+    XCTAssertEqual(
+      menu.items.map(\.title), ["Open Link", "Open Link in Default Browser", "Copy Link"])
+
+    textView.openLink(menu.items[0])
+    XCTAssertEqual(opened, [URL(string: "https://example.com/pr/1")!])
+
+    let word = try XCTUnwrap(textView.rects(for: NSRange(location: 1, length: 1)).first)
+    XCTAssertNil(textView.menu(at: CGPoint(x: word.midX, y: word.midY)))
+  }
+
   /// The fold link and a real link share the `.link` attribute — the delegate tells them apart by
   /// value — so a plan whose text contains a URL must keep both working.
   func testAnOpenedPlanKeepsBothKindsOfLink() {
