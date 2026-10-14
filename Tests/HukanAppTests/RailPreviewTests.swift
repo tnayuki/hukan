@@ -54,6 +54,9 @@ final class RailPreviewTests: XCTestCase {
       session(in: files, "Search the files panel", .needsAttention, ago: 26 * 3600),
     ]
     _ = workspace.setArchived(true, for: [archived, stale])
+    workspace.sessions[0].setTags(["JIRA: HUK-128"])
+    workspace.sessions[3].setTags(["JIRA: HUK-131", "PR: #58886"])
+    workspace.sessions[5].setTags(["Issue: #42", "urgent"])
     return workspace
   }
 

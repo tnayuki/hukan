@@ -77,7 +77,9 @@ Workspace (one window)
   not a way of working, and **nothing about what hukan is**: identity is not an instruction, and the
   only behaviour it could add is the agent driving the app — what the guarded scripting verbs exist
   to stop. If hukan is ever explained to an agent, it is in the description of a tool the agent
-  calls on it, read when it is used rather than on every turn.
+  calls on it, read when it is used rather than on every turn. **The rule is a line per tool the
+  window depends on the agent calling**, not one line in total: the session's tags (below) are the
+  second, for the same reason — a tool nothing mentions is a tool the model never calls unasked.
 - **Session and Terminal are children of a Worktree, not peers of each other** — two
   implementations of one thing, a process running in this worktree. The session's conversation
   has the column beside the desk; the terminal is a tab on the desk, beside the files, commits
@@ -916,6 +918,41 @@ Workspace (one window)
   is true whoever the other one is, so the kind is read where the row is made and nowhere else.
   An absent kind is an older CLI's and reads as a session, since the kinds worth excluding are
   ones the engine names.
+- **A session carries tags, and the agent is the one who writes them.** What a row says it is
+  working on — the ticket, the issue, the pull request — is what a person scans the rail for, and
+  a title is the wrong place for it: the engine names a session once, early, from the opening
+  exchange, and nothing can rename it afterwards, while the ticket is often known only later and
+  changes as the work does. **Several, not one**, since a task's work is a ticket and its PR at
+  the least. Each is `kind: value`; **the row draws only the value and the kind picks its
+  colour** — a row of `JIRA:` prefixes would be the same word down the column, and the colour
+  still says which tracker each identifier is from. The colour is a hash of the kind over a
+  handful of system colours rather than a table, so a kind nobody planned for is coloured the
+  moment it is written, and it is a hash that does not reseed per process, since the colour is the
+  only place the kind is shown and it has to be the same one tomorrow. Two kinds can land on one
+  colour; the full tag is the chip's tooltip. **The title gives way to the chips**, never the
+  reverse: a floor under the title was tried and it squeezed the status dot and cut the ticket to
+  its first letter, which is the one thing the row was for.
+  **They are view state, not master data.** Claude Code has a `tag` record of its own — one
+  string, last one wins, carried across a resume — but nothing in the engine writes it, so using it
+  would mean hukan appending to a transcript, which it never does; and a tag exists to find a row
+  on this rail, which nothing outside hukan draws. So they ride the window's restorable state keyed
+  by session id beside the rail's order, and they live on the session object, so a repository
+  moved to another window takes them with it. The engine's `pr-link` record is pointedly not read
+  into them either: a pull request is tagged by the agent like every other tag, so there is one
+  rule for where a tag comes from rather than two.
+  **The agent sets them through a hosted tool, `set_tags`, which replaces the whole list** — the
+  agent restates the tags it keeps, rather than sending additions and removals that could drift
+  from what the row shows; the answer is the list as it now stands. It is answered by the session
+  rather than the desk, since it touches no tab, and it asks nobody: it is hukan's own state about
+  the session, reaching nothing outside it. The system prompt names the tool (the bullet on
+  `EnterWorktree` above): left to the tool's description alone, a deferred tool is seen by name
+  only, and the agent would tag a session only when told to — which would make the feature depend
+  on the person writing the instruction into their own settings. *Edit Tags…* on the row's
+  right-click is the same list by hand, one line with commas between, in a sheet: a tag is decided
+  against the ticket rather than against the rows around it, which is what keeps a group's name on
+  its row instead. One session at a time — replacing five lists with one is a different act from
+  labelling a row. The rail's filter matches the tags as it matches the title, since a ticket id is
+  exactly what gets typed into it.
 - **A session is named out of the window two ways, and both are reads.** The rail's right-click
   copies the transcript's path and the session's id — the file to read the conversation out of,
   and the id to resume it by — because what is done with either is done somewhere else: handed to

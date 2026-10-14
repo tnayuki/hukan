@@ -320,6 +320,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     rail.onStartSession = { [weak self] session in self?.startSessionFromRail(session) }
     // The rail has already confirmed — deleting unlinks the transcript, so there is no undo.
+    rail.onSetTags = { [weak self] session, tags in self?.setTags(tags, for: session) }
     rail.onDeleteSession = { [weak self] session in
       guard let self else { return }
       self.workspace.deleteSession(session)
@@ -1831,6 +1832,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     session.onEnterWorktree = { [weak self] url in self?.moveSession(session, to: url) }
     session.onExitWorktree = { [weak self] url in self?.returnSession(session, to: url) }
     session.onRecencyChange = { [weak self] in self?.scheduleRailReload() }
+    session.onTagsChange = { [weak self, weak session] in
+      guard let self, let session else { return }
+      self.tagsChanged(session)
+    }
     session.onLoginRequested = { [weak self] verb in self?.runLogin(verb, for: session) }
     // The tools hukan hosts for the engine act on the desk, which holds every worktree's tabs;
     // the session says which worktree.
@@ -1843,6 +1848,19 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     session.onNeedsStart = { [weak self] in self?.startSession(session) }
     session.onInstructed = { [weak self] in self?.unarchiveOnInstruction(session) }
+  }
+
+  /// Replace a session's tags by hand — the rail's editor, or a script.
+  func setTags(_ tags: [String], for session: AgentSession) {
+    if session.setTags(tags) { tagsChanged(session) }
+  }
+
+  /// A session's tags moved — the agent's `set_tags`, or an edit from the rail. The row redraws and
+  /// the window saves them, since nothing else records them.
+  private func tagsChanged(_ session: AgentSession) {
+    workspace.rememberTags(of: session)
+    reload()
+    window?.invalidateRestorableState()
   }
 
   /// A send takes a session out of the archive (see `Workspace.noteInstruction`), which the rail

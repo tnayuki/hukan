@@ -243,6 +243,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   var onStartSession: ((AgentSession) -> Void)?
   /// Delete a session for good — the rail has already confirmed, so the window just does it.
   var onDeleteSession: ((AgentSession) -> Void)?
+  /// Replace a session's tags with what was typed into the rail's editor.
+  var onSetTags: ((AgentSession, [String]) -> Void)?
   /// Fired whenever the query changes, so the window can re-highlight the open transcript for the
   /// new terms. Distinct from a rail reload: the rail filters itself, but the running column needs
   /// the terms to mark where a session matched.
@@ -778,7 +780,10 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     guard let workspace else { return [] }
     return workspace.sessions.compactMap { session in
       guard let worktree = workspace.worktree(id: session.worktreeID) else { return nil }
-      return (session.id, (session.title ?? "").lowercased(), worktree.url)
+      // The tags ride with the title: they are what a row is labelled with, and the ticket id a
+      // person types into this field is exactly what one of them says.
+      let label = ([session.title ?? ""] + session.tags).joined(separator: "\n")
+      return (session.id, label.lowercased(), worktree.url)
     }
   }
 
@@ -1749,6 +1754,13 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
     var trailing: [NSView] = []
+    // The tags, after the title and before anything else: what the row is working on is the thing
+    // scanned for, so the title gives way first (see `TagChip`). Read off the session at draw
+    // time, like the age below, so a change needs only a redraw. Not on a hit row, which is a
+    // snippet of the transcript rather than the session.
+    if let session = node.session, node.matchOffset == nil {
+      trailing += session.tags.map { TagChip(tag: $0) }
+    }
     if let subtitle = node.subtitle {
       // Which worktree a session sits in survives a long title: it is the thing that
       // tells two sessions of the same name apart, so the title is what gives way.
@@ -1914,8 +1926,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       }
       menu.addItem(.separator())
     }
-    // The two ways to name a session: the file to read it out of, and the id to resume it by.
-    // They sit between the lifecycle items and the Archive/Delete pair, which is where the files
+    // The ways to name a session: the tags it is labelled with, the file to read it out of, and
+    // the id to resume it by. They sit between the lifecycle items and the Archive/Delete pair, which is where the files
     // panel puts Copy Path — after what merely acts on the thing, before what destroys it — and
     // nothing may come between Archive and Delete, since the pair is read as one choice.
     if !sessions.isEmpty {
@@ -1926,6 +1938,10 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
         menu.addItem(item)
       }
       let count = sessions.count
+      // A third way to name it, and the one written by hand. One session at a time: a batch would
+      // have to say whose tags the field opens on, and replacing five lists with one is a different
+      // act from labelling a row.
+      if count == 1 { copy("Edit Tags…", #selector(editClickedTags(_:))) }
       copy(
         count == 1 ? "Copy Transcript Path" : "Copy \(count) Transcript Paths",
         #selector(copyClickedTranscriptPaths(_:)))
@@ -1999,6 +2015,34 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     let recent = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
     recent.submenu = RecentRepositoriesMenu(title: "Open Recent")
     menu.addItem(recent)
+  }
+
+  /// The tags as one line, a comma between, in a sheet: the row has no room for a field of its own,
+  /// and a tag is decided against the ticket rather than against the rows around it, which is what
+  /// keeps a group's name on its row instead.
+  @objc private func editClickedTags(_ sender: NSMenuItem) {
+    guard let session = (sender.representedObject as? [AgentSession])?.first else { return }
+    let alert = NSAlert()
+    alert.messageText = "Tags"
+    alert.informativeText =
+      "Separate tags with commas. Write each as kind: value — only the value is shown, and the "
+      + "kind picks its colour."
+    let field = NSTextField(string: SessionTags.joined(session.tags))
+    field.placeholderString = "JIRA: ABC-123, PR: #42"
+    field.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
+    alert.accessoryView = field
+    alert.addButton(withTitle: "Save")
+    alert.addButton(withTitle: "Cancel")
+    alert.window.initialFirstResponder = field
+    let apply = { [weak self] (response: NSApplication.ModalResponse) in
+      guard response == .alertFirstButtonReturn else { return }
+      self?.onSetTags?(session, SessionTags.parse(field.stringValue))
+    }
+    if let window = view.window {
+      alert.beginSheetModal(for: window, completionHandler: apply)
+    } else {
+      apply(alert.runModal())
+    }
   }
 
   @objc private func copyClickedTranscriptPaths(_ sender: NSMenuItem) {

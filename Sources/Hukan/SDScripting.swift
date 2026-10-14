@@ -504,6 +504,15 @@ final class SDSession: NSObject {
   /// exits. `held by pid` gives the owner for a scripted check.
   @objc var heldElsewhere: Bool { agentSession?.heldByPID != nil }
   @objc var heldByPID: Int { agentSession?.heldByPID.map(Int.init) ?? 0 }
+  /// The tags, one a line. Writable, through the same path the rail's editor takes, so a script
+  /// can check that a tag reaches the row and survives a relaunch without clicking at coordinates.
+  @objc var tags: String {
+    get { agentSession?.tags.joined(separator: "\n") ?? "" }
+    set {
+      guard let session = agentSession else { return }
+      controller?.setTags(newValue.components(separatedBy: .newlines), for: session)
+    }
+  }
   /// Whether the rail is showing this session below the fold — which is the flag *and* the one
   /// rule that overrides it, since a session that is working or waiting on you comes back out.
   /// What a script checking the rail wants is what the rail is doing, not what was recorded.

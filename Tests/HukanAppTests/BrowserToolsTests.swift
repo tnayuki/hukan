@@ -86,12 +86,12 @@ final class BrowserToolsTests: XCTestCase {
 
   private func reply(
     to message: [String: Any],
-    handler: @escaping BrowserMCP.Handler = { _, done in
+    handler: @escaping HukanMCP.Handler = { _, done in
       done(.text("unexpected"))
     }
   ) -> [String: Any] {
     var answer: [String: Any] = [:]
-    BrowserMCP.handle(message, handler: handler) { answer = $0 }
+    HukanMCP.handle(message, handler: handler) { answer = $0 }
     return answer
   }
 
@@ -125,10 +125,13 @@ final class BrowserToolsTests: XCTestCase {
     XCTAssertEqual(
       tools.map { $0["name"] as? String },
       [
-        "browser_tabs", "browser_open", "browser_read", "browser_navigate", "browser_screenshot",
-        "browser_run",
+        "set_tags", "browser_tabs", "browser_open", "browser_read", "browser_navigate",
+        "browser_screenshot", "browser_run",
       ])
-    for tool in tools where tool["name"] as? String != "browser_tabs" {
+    for tool in tools
+    where (tool["name"] as? String)?.hasPrefix("browser_") == true
+      && tool["name"] as? String != "browser_tabs"
+    {
       let description = tool["description"] as? String ?? ""
       XCTAssertTrue(
         description.contains("asked"), "\(tool["name"] ?? "") does not say the user is asked")
@@ -137,7 +140,7 @@ final class BrowserToolsTests: XCTestCase {
   }
 
   func testACallReachesTheHandlerAndItsOutcomeBecomesTheResult() {
-    var received: BrowserMCP.Call?
+    var received: HukanMCP.Call?
     let text = reply(
       to: [
         "jsonrpc": "2.0", "id": 3, "method": "tools/call",

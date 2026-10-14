@@ -1136,8 +1136,8 @@ final class WorktreeDeskViewController: NSViewController {
   /// `browser_tabs` answers from here; anything else names a tab and needs its grant, and a tab
   /// without one puts the card up on the session and holds the call until it is answered.
   func performBrowserTool(
-    _ call: BrowserMCP.Call, for session: AgentSession,
-    completion: @escaping (BrowserMCP.Outcome) -> Void
+    _ call: HukanMCP.Call, for session: AgentSession,
+    completion: @escaping (HukanMCP.Outcome) -> Void
   ) {
     let worktreeID = session.worktreeID
     let tabs = browserTabsByWorktree[worktreeID] ?? []
@@ -1273,8 +1273,8 @@ final class WorktreeDeskViewController: NSViewController {
   /// loading for the first time — and a navigation waits for what it loaded, and reports the
   /// error page's reason rather than the error page.
   private func run(
-    _ call: BrowserMCP.Call, on pane: BrowserPaneViewController,
-    completion: @escaping (BrowserMCP.Outcome) -> Void
+    _ call: HukanMCP.Call, on pane: BrowserPaneViewController,
+    completion: @escaping (HukanMCP.Outcome) -> Void
   ) {
     func heading() -> String {
       "\(pane.pageTitle)\n\(pane.currentURL?.absoluteString ?? "")"

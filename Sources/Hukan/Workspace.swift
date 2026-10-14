@@ -369,6 +369,9 @@ final class Workspace {
   private var restoredQueues: [String: [String]] = [:]
   /// Unsent composer drafts restored from disk, keyed by session id. Same philosophy again.
   private var restoredDrafts: [String: String] = [:]
+  /// Each session's tags, keyed by session id. View state with no owner elsewhere, like the
+  /// rail's order below — the same map-not-list rule as the drafts.
+  private var restoredTags: [String: [String]] = [:]
   /// The model roster each session last saw the engine advertise, keyed by session id. Held per
   /// session, not shared — so a restored session that has not connected yet shows the list it
   /// itself saw, and seeds its own picker with it (see `applyRestoredPrefs`) rather than borrowing
@@ -463,6 +466,12 @@ final class Workspace {
     restoredInstructedAt[id.uuidString] ?? fallback
   }
 
+  /// Keep what a session's tags became beside the restored ones, so a repository closed and opened
+  /// again in the same window brings back the tags it had rather than the ones it launched with.
+  func rememberTags(of session: AgentSession) {
+    restoredTags[session.id.uuidString] = session.tags.isEmpty ? nil : session.tags
+  }
+
   func applyRestoredPrefs(to session: AgentSession) {
     if let prefs = restoredPrefs[session.id.uuidString] {
       session.permissionMode = prefs.mode
@@ -474,6 +483,9 @@ final class Workspace {
     }
     if let draft = restoredDrafts[session.id.uuidString] {
       session.draft = draft
+    }
+    if let tags = restoredTags[session.id.uuidString] {
+      session.setTags(tags)
     }
     // Show this session's own last-seen roster until it connects and reports a fresh one (a
     // restored session stays lazy, so without this its picker would flash the fallback until the
@@ -933,6 +945,9 @@ final class Workspace {
     static let queueMessages = "queue.messages"
     static let draftSessionIDs = "draft.ids"
     static let draftTexts = "draft.texts"
+    // Each session's tags, keyed by session id; nested like `queue.messages`.
+    static let tagSessionIDs = "tags.ids"
+    static let tagValues = "tags.values"
     // The rail's order: when you last instructed each session, as seconds since the reference
     // date. Keyed by session id like the choices above.
     static let instructedSessionIDs = "instructed.ids"
@@ -1057,6 +1072,10 @@ final class Workspace {
     let withDraft = sessions.filter { !$0.draft.isEmpty }
     coder.encode(withDraft.map(\.id.uuidString) as NSArray, forKey: Key.draftSessionIDs)
     coder.encode(withDraft.map(\.draft) as NSArray, forKey: Key.draftTexts)
+
+    let withTags = sessions.filter { !$0.tags.isEmpty }
+    coder.encode(withTags.map(\.id.uuidString) as NSArray, forKey: Key.tagSessionIDs)
+    coder.encode(withTags.map { $0.tags as NSArray } as NSArray, forKey: Key.tagValues)
 
     // When you last instructed each session — the rail's sort key. Stored because it is view
     // state with no owner elsewhere; the mtime it used to be re-derived from answers a different
@@ -1208,6 +1227,13 @@ final class Workspace {
     restoredDrafts = [:]
     for (index, idString) in draftIDs.enumerated() where index < draftTexts.count {
       restoredDrafts[idString] = draftTexts[index]
+    }
+
+    let tagIDs = strings(coder, Key.tagSessionIDs)
+    let tagValues = nestedStrings(coder, Key.tagValues)
+    restoredTags = [:]
+    for (index, idString) in tagIDs.enumerated() where index < tagValues.count {
+      restoredTags[idString] = tagValues[index]
     }
 
     let instructedIDs = strings(coder, Key.instructedSessionIDs)

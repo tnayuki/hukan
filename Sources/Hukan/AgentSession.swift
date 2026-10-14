@@ -64,7 +64,7 @@ struct PendingApproval {
 }
 
 /// A browser tool call stopped on the card that asks whether the agent may have the tab. Not a
-/// `can_use_tool`: the call is one of hukan's own (`BrowserMCP`), held open on the stream until
+/// `can_use_tool`: the call is one of hukan's own (`HukanMCP`), held open on the stream until
 /// `decide` runs, which is what lets the answer be made once for the tab rather than once per call.
 struct PendingGrant {
   let tabID: UUID
@@ -316,6 +316,24 @@ final class AgentSession {
   /// every edit here; the session only stores it (and it rides the same disk path as the queue).
   var draft: String = ""
 
+  /// What the session is labelled with on the rail — `kind: value` strings, set by the agent
+  /// through the hosted `set_tags` or by hand from the rail (see `SessionTags`). View state: the
+  /// window saves it, nothing on disk outside hukan knows of it.
+  private(set) var tags: [String] = []
+  /// The agent changed the tags, so the rail has a row to redraw and the window state to save.
+  /// Only the agent's change is reported here: the window makes the others itself.
+  var onTagsChange: (() -> Void)?
+
+  /// Replace the tags with `tags`, normalised; whether that changed anything. A list that comes out
+  /// the same is not a change, so the agent re-stating its tags costs no reload.
+  @discardableResult
+  func setTags(_ tags: [String]) -> Bool {
+    let normalized = SessionTags.normalized(tags)
+    guard normalized != self.tags else { return false }
+    self.tags = normalized
+    return true
+  }
+
   /// True from the moment a message is delivered until the engine's `result`. This is the
   /// queue gate, and it is deliberately *not* `state == .running`: `start()` sets `.running`
   /// optimistically before any turn exists, so gating on it would trap the first message
@@ -438,7 +456,7 @@ final class AgentSession {
   /// The window's answer to a browser tool call: it holds the desk, and so the tabs of the
   /// worktree this session is in. Every call arrives here, on this session's own stream, which
   /// is what makes "whose tabs" a fact rather than an argument.
-  var onBrowserTool: BrowserMCP.Handler?
+  var onBrowserTool: HukanMCP.Handler?
 
   /// The agent's own task list, as last read from Claude Code's own store. Nothing of hukan's
   /// keeps it — `refreshTasks` re-reads the directory, which is what makes it survive a restart
@@ -1514,26 +1532,44 @@ final class AgentSession {
   }
 
   /// One JSON-RPC message for the server hukan hosts, arrived on this session's stream. The
-  /// handshake and the tool list are the protocol's; a call goes to the window, which has the
-  /// tabs. The reply goes to the runner that asked, not whichever is up when the answer comes —
+  /// handshake and the tool list are the protocol's; a call goes to `performTool`. The reply goes to the runner that asked, not whichever is up when the answer comes —
   /// a call waiting on a card can outlive a restart.
   private func handleMCPMessage(requestID: String, request: [String: Any]) {
-    guard let runner, request["server_name"] as? String == BrowserMCP.serverName,
+    guard let runner, request["server_name"] as? String == HukanMCP.serverName,
       let message = request["message"] as? [String: Any]
     else {
       self.runner?.declineControlRequest(id: requestID, cancelled: false)
       return
     }
-    BrowserMCP.handle(
+    HukanMCP.handle(
       message,
       handler: { [weak self] call, done in
-        guard let self, let onBrowserTool = self.onBrowserTool else {
-          done(.error("hukan has no window to answer this in"))
+        guard let self else {
+          done(.error("the session is gone"))
           return
         }
-        onBrowserTool(call, done)
+        self.performTool(call, done: done)
       },
       reply: { response in runner.respondToMCP(requestID: requestID, response: response) })
+  }
+
+  /// One call to a hosted tool. The session's own tags are the session's to answer — no tab is
+  /// involved, so neither is the window; everything else is a tab, and goes to the desk.
+  func performTool(_ call: HukanMCP.Call, done: @escaping (HukanMCP.Outcome) -> Void) {
+    if call.name == HukanMCP.setTagsTool {
+      guard let tags = call.strings("tags") else {
+        done(.error("`tags` must be a list of strings"))
+        return
+      }
+      if setTags(tags) { onTagsChange?() }
+      done(.text(self.tags.isEmpty ? "No tags." : self.tags.joined(separator: "\n")))
+      return
+    }
+    guard let onBrowserTool else {
+      done(.error("hukan has no window to answer this in"))
+      return
+    }
+    onBrowserTool(call, done)
   }
 
   /// A browser tool call needs a tab it has not been given: put the card up and hold the call.
@@ -2030,7 +2066,7 @@ final class AgentSession {
       // hukan's own tools answer their own permission: the consent that matters is the tab's
       // grant, asked for by the tool itself when it runs, and a generic Allow in front of that
       // would be the same question twice — the first of them saying nothing about which tab.
-      if toolName.hasPrefix("mcp__\(BrowserMCP.serverName)__") {
+      if toolName.hasPrefix("mcp__\(HukanMCP.serverName)__") {
         runner?.respond(requestID: requestID, allow: true, updatedInput: input)
         return
       }

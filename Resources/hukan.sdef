@@ -96,6 +96,9 @@
             <property name="held by pid" code="hPid" type="integer" access="r" description="The pid of the process holding this session, or 0 if none">
                 <cocoa key="heldByPID"/>
             </property>
+            <property name="tags" code="pTag" type="text" access="rw" description="The session's tags, one a line, each kind: value. Set it to a list of lines to replace them, empty to clear">
+                <cocoa key="tags"/>
+            </property>
             <property name="archived" code="bArc" type="boolean" access="r" description="Whether this session sits below its worktree's Archived fold. A session that is working or waiting on you reads false even when the flag is set — a pulsing row is never hidden">
                 <cocoa key="archived"/>
             </property>

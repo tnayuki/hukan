@@ -313,7 +313,7 @@ final class ClaudeSession {
     return ["--resume", ClaudeSessionStore.name(id), "--resume-session-at", rollbackTo]
   }
 
-  /// The one line hukan appends to the engine's own system prompt. A session's worktree is read
+  /// The first line hukan appends to the engine's own system prompt. A session's worktree is read
   /// off `EnterWorktree` and `ExitWorktree` results (`AgentSession`), and nothing steers the model
   /// toward those tools by itself: their descriptions never say "rather than `git worktree add`",
   /// and `EnterWorktree` is a deferred tool the model sees only by name until it goes looking. A
@@ -325,6 +325,21 @@ final class ClaudeSession {
   static let worktreeInstruction =
     "To create or enter a git worktree use the EnterWorktree tool, and leave it with ExitWorktree: "
     + "a `git worktree add` run in Bash does not move this session's working directory."
+
+  /// The second line, for the same reason as the first: a session's tags are only as good as the
+  /// agent setting them, and nothing steers it toward the tool by itself — hukan's tools are
+  /// deferred too, seen by name alone, and a name is no reason to call one unasked. The tool's own
+  /// description carries the rest (the `kind: value` shape, that the list is replaced whole), read
+  /// when it is used. The app is named only inside the tool's name, which is a fact about a tool
+  /// and not an account of what hukan is.
+  static let tagInstruction =
+    "When the work is tied to a ticket, an issue or a pull request, tag this session with it using "
+    + "`mcp__\(HukanMCP.serverName)__\(HukanMCP.setTagsTool)` (`kind: value`, e.g. `JIRA: ABC-123`, "
+    + "`PR: #58886`)."
+
+  /// What `--append-system-prompt` carries: one line per tool the window depends on the agent
+  /// calling.
+  static let systemPromptAppendix = [worktreeInstruction, tagInstruction].joined(separator: "\n")
 
   /// The engine's argv after the binary, in one place so a test can read it without launching
   /// anything. `conversationArguments` is the resume/fork/rollback slice of the same list.
@@ -371,7 +386,7 @@ final class ClaudeSession {
     }
     // Every launch, resume included: the engine rebuilds its system prompt each time and
     // remembers nothing of this one.
-    arguments += ["--append-system-prompt", Self.worktreeInstruction]
+    arguments += ["--append-system-prompt", Self.systemPromptAppendix]
     return arguments
   }
 
@@ -437,16 +452,16 @@ final class ClaudeSession {
   }
 
   /// The `initialize` request, the first thing written to a fresh engine. No hooks. What it does
-  /// register is the one MCP server hukan hosts in this process (`BrowserMCP`): named here, its
+  /// register is the one MCP server hukan hosts in this process (`HukanMCP`): named here, its
   /// messages arrive on this stream as `mcp_message` control requests from then on, and its
   /// config sets the per-call clock — a call may be waiting on a person answering a card. Both
-  /// keys read off the shipped binary; see `BrowserMCP`.
+  /// keys read off the shipped binary; see `HukanMCP`.
   static let initializeRequest: [String: Any] = [
     "subtype": "initialize",
     "hooks": [String: Any](),
-    "sdkMcpServers": [BrowserMCP.serverName],
+    "sdkMcpServers": [HukanMCP.serverName],
     "sdkMcpServerConfigs": [
-      BrowserMCP.serverName: ["timeout": BrowserMCP.toolTimeoutMilliseconds]
+      HukanMCP.serverName: ["timeout": HukanMCP.toolTimeoutMilliseconds]
     ],
   ]
 

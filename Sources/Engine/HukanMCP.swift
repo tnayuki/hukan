@@ -17,9 +17,10 @@ import Foundation
 /// from `--help`, the same footing as `--permission-prompt-tool stdio` — re-verify on upgrades.
 ///
 /// This type is the wire half only: it parses a JSON-RPC message, answers the handshake and the
-/// tool list itself, and hands a `tools/call` to whoever hosts the tabs. It knows nothing of a
-/// window or a web view, which is what keeps it in `Sources/Engine`.
-enum BrowserMCP {
+/// tool list itself, and hands a `tools/call` to whoever answers it — the session for its own
+/// tags, the desk for the tabs. It knows nothing of a window or a web view, which is what keeps it
+/// in `Sources/Engine`.
+enum HukanMCP {
   /// The server's name on the wire, and so the prefix of every tool the model sees
   /// (`mcp__hukan__browser_read`).
   static let serverName = "hukan"
@@ -46,7 +47,19 @@ enum BrowserMCP {
       guard let value = arguments[key] as? String, !value.isEmpty else { return nil }
       return value
     }
+
+    /// An array of strings, or nil when the argument is missing or anything in it is not a
+    /// string — a list half of which was dropped would be a different list from the one sent.
+    func strings(_ key: String) -> [String]? {
+      guard let values = arguments[key] as? [Any] else { return nil }
+      let strings = values.compactMap { $0 as? String }
+      return strings.count == values.count ? strings : nil
+    }
   }
+
+  /// The tool that names the session itself. Answered by the session, not the desk: it touches no
+  /// tab, so it needs no window to be asked in.
+  static let setTagsTool = "set_tags"
 
   /// What a call comes back with. Text is the usual answer; an image is a screenshot; an error is
   /// reported to the model as a failed tool result rather than as a protocol error, since it is
@@ -61,6 +74,26 @@ enum BrowserMCP {
   typealias Handler = (Call, @escaping (Outcome) -> Void) -> Void
 
   static let tools: [Tool] = [
+    Tool(
+      name: setTagsTool,
+      description:
+        "Replace this session's tags with the given list. Tags label the session on the user's "
+        + "list of sessions, so it can be found at a glance by what it is working on: write each "
+        + "as `kind: value` — `JIRA: ABC-123`, `Issue: #42`, `PR: #58886`. Only the value is shown; "
+        + "the kind picks the colour, so spell the same kind the same way every time. The list "
+        + "is the whole set, not a change to it: pass the tags to keep as well as the new one, "
+        + "and an empty list to clear them. Answers with the tags as they now stand.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "tags": [
+            "type": "array", "items": ["type": "string"],
+            "description": "Every tag the session should carry, each `kind: value`",
+          ]
+        ],
+        "required": ["tags"],
+        "additionalProperties": false,
+      ]),
     Tool(
       name: "browser_tabs",
       description:

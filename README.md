@@ -349,6 +349,15 @@ hidden — and one you send a message to leaves the fold for good, since instruc
 deciding you are not done with it. Several rows can be selected at once, so a batch of finished attempts is one gesture. A
 worktree's rows leave when git stops listing it, or when its repository is closed.
 
+A session can carry tags — the ticket, the issue, the pull request it is working on — so a row
+says what it is for at a glance. Each is written `kind: value`, `JIRA: ABC-123` or `PR: #42`; the
+row shows only the value, and the kind picks its colour, the same colour for the same kind in
+every window and after every relaunch. The agent tags its own session when the work is tied to
+one of those, and changes the tags as the work moves; *Edit Tags…* on the row's right-click does
+the same by hand, the tags on one line with a comma between. The rail's filter finds a session by
+its tags as well as its title. They are the window's, kept with it across a relaunch, and nothing
+outside hukan knows of them.
+
 The same right-click also names a session two ways, for handing to something outside the window:
 *Copy Transcript Path* gives the jsonl Claude Code is writing, and *Copy Session ID* the id it is
 writing under. Both answer for a session another process is holding, and for one that has yet to
