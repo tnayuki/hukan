@@ -99,4 +99,53 @@ final class SessionTagsTests: XCTestCase {
     restored.applyRestoredPrefs(to: again)
     XCTAssertEqual(again.tags, [])
   }
+
+  // MARK: - The rail's tag lines
+
+  /// The tags wrap at a width worked out before any row exists, from insets the source-list style
+  /// puts around a cell. Those insets are the style's, not documented anywhere, so they are held
+  /// here against the outline's own cell frames at every level the rail draws — a release that
+  /// moves them makes the counted lines and the drawn lines disagree, and that has to fail here.
+  func testTheTagWidthMatchesTheOutlinesCells() throws {
+    let rail = SessionRailViewController()
+    rail.workspace = RailPreviewTests.sampleWorkspace()
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 280, height: 600), styleMask: [.titled],
+      backing: .buffered, defer: false)
+    window.contentViewController = rail
+    rail.loadViewIfNeeded()
+    rail.reload()
+    rail.view.layoutSubtreeIfNeeded()
+    let outline = rail.outlineViewForTesting
+    XCTAssertGreaterThan(outline.numberOfRows, 4)
+    for row in 0..<outline.numberOfRows {
+      let cell = outline.frameOfCell(atColumn: 0, row: row)
+      let level = CGFloat(outline.level(forRow: row))
+      XCTAssertEqual(
+        cell.minX, SessionRailViewController.cellLeading + level * outline.indentationPerLevel,
+        "row \(row)")
+      XCTAssertEqual(
+        outline.bounds.width - cell.maxX, SessionRailViewController.cellTrailing, "row \(row)")
+    }
+
+    // A tagged row is as tall as its tags wrap to, and an untagged one keeps the rail's height.
+    let tagged = try XCTUnwrap(
+      (0..<outline.numberOfRows).first {
+        ((outline.item(atRow: $0) as? RailNode)?.session?.tags.count ?? 0) > 2
+      })
+    XCTAssertGreaterThan(outline.rect(ofRow: tagged).height, outline.rowHeight * 2)
+    let plain = try XCTUnwrap(
+      (0..<outline.numberOfRows).first {
+        (outline.item(atRow: $0) as? RailNode)?.session?.tags.isEmpty == true
+      })
+    XCTAssertEqual(outline.rect(ofRow: plain).height, outline.rowHeight)
+  }
+
+  func testChipsWrapOntoAnotherLineWhenTheyDoNotFit() {
+    let tags = ["JIRA: HUK-131", "JIRA: HUK-140", "PR: #58886"]
+    let one = TagFlowView.height(of: tags, width: 1000)
+    XCTAssertEqual(
+      TagFlowView.height(of: tags, width: 60), one * 3 + TagFlowView.spacing.height * 2)
+    XCTAssertEqual(TagFlowView.height(of: [], width: 100), 0)
+  }
 }

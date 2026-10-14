@@ -404,6 +404,10 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     outlineView.style = .sourceList
     outlineView.rowHeight = 26
     outlineView.indentationPerLevel = 10
+    outlineView.postsFrameChangedNotifications = true
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(railDidResize(_:)), name: NSView.frameDidChangeNotification,
+      object: outlineView)
     outlineView.floatsGroupRows = false
     outlineView.dataSource = self
     outlineView.delegate = self
@@ -1754,13 +1758,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
     var trailing: [NSView] = []
-    // The tags, after the title and before anything else: what the row is working on is the thing
-    // scanned for, so the title gives way first (see `TagChip`). Read off the session at draw
-    // time, like the age below, so a change needs only a redraw. Not on a hit row, which is a
-    // snippet of the transcript rather than the session.
-    if let session = node.session, node.matchOffset == nil {
-      trailing += session.tags.map { TagChip(tag: $0) }
-    }
     if let subtitle = node.subtitle {
       // Which worktree a session sits in survives a long title: it is the thing that
       // tells two sessions of the same name apart, so the title is what gives way.
@@ -1840,9 +1837,91 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       row.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: indent),
       row.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
       row.topAnchor.constraint(equalTo: cell.topAnchor),
-      row.bottomAnchor.constraint(equalTo: cell.bottomAnchor),
+      row.heightAnchor.constraint(equalToConstant: outlineView.rowHeight),
     ])
+    // The tags, on lines of their own under the title, so neither has to give way to the other.
+    // Read off the session at draw time, like the age, so a change needs only a redraw and a new
+    // height (see `heightOfRowByItem`). Not on a hit row, which is a snippet of the transcript.
+    if let tags = Self.tags(of: node) {
+      let flow = TagFlowView(tags: tags)
+      flow.translatesAutoresizingMaskIntoConstraints = false
+      cell.addSubview(flow)
+      NSLayoutConstraint.activate([
+        flow.leadingAnchor.constraint(
+          equalTo: cell.leadingAnchor, constant: indent + Self.tagLeading),
+        flow.widthAnchor.constraint(equalToConstant: tagWidth(of: node)),
+        flow.topAnchor.constraint(equalTo: cell.topAnchor, constant: Self.tagTop),
+        flow.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -Self.tagBottom),
+      ])
+    }
     return cell
+  }
+
+  // MARK: - Tag lines
+
+  /// The tags a row draws under its title, or nil when it draws none.
+  private static func tags(of node: RailNode) -> [String]? {
+    guard node.matchOffset == nil, let tags = node.session?.tags, !tags.isEmpty else { return nil }
+    return tags
+  }
+
+  /// Where the tags start, in from the row's content: under the title, past the status dot.
+  private static let tagLeading: CGFloat =
+    statusDot(symbol: "circle", tint: .labelColor, label: nil, thinking: false)
+    .intrinsicContentSize.width + 6
+  /// The first tag line's top, tucked up under the title line rather than a whole row below it.
+  private static let tagTop: CGFloat = 22
+  private static let tagBottom: CGFloat = 6
+
+  /// A tagged row is as tall as its tags wrap to at the width it has, worked out before the row is
+  /// made: the outline asks for every height to place the rows, and a row's height cannot be read
+  /// off a cell that does not exist yet. The width is the column's less the row's indent, the
+  /// outline's own per level and the rail's once.
+  func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+    guard let node = item as? RailNode, let tags = Self.tags(of: node) else {
+      return outlineView.rowHeight
+    }
+    return Self.tagTop + TagFlowView.height(of: tags, width: tagWidth(of: node)) + Self.tagBottom
+  }
+
+  /// The width a row's tags wrap in: the row's cell, less the row's own inset and the status dot.
+  /// The cell is worked out from the rail's width rather than read off the outline, which cannot be
+  /// asked for a row's frame while it is still asking for the heights that place it, and rather
+  /// than from the column's, which lags behind a resize and was still at its initial 100pt when the
+  /// first heights were asked. The cell is given exactly this width too, so the lines it draws are
+  /// the lines counted.
+  func tagWidth(of node: RailNode) -> CGFloat {
+    let level = CGFloat(max(outlineView.level(forItem: node), 0))
+    let cell =
+      outlineView.bounds.width - Self.cellLeading - level * outlineView.indentationPerLevel
+      - Self.cellTrailing
+    return cell - RailRowView.headingInset - Self.tagLeading - 4
+  }
+
+  /// Where the source-list outline puts a top-level cell, in from each edge of the rail. The
+  /// style's own insets, measured rather than documented — `SessionTagsTests` holds them against
+  /// the outline's real cell frames, so a release that moves them fails there and not on screen.
+  static let cellLeading: CGFloat = 25
+  static let cellTrailing: CGFloat = 16
+
+  /// The width the tagged rows were last measured at; a frame change that kept it is a move.
+  private var lastTagWidth: CGFloat = 0
+
+  /// The rail changed width, so a tagged row may wrap onto a different number of lines — and its
+  /// cell, which was given the old width, has to be made again.
+  @objc private func railDidResize(_ notification: Notification) {
+    guard outlineView.bounds.width != lastTagWidth else { return }
+    lastTagWidth = outlineView.bounds.width
+    let tagged = IndexSet(
+      (0..<outlineView.numberOfRows).filter {
+        (outlineView.item(atRow: $0) as? RailNode).flatMap(Self.tags(of:)) != nil
+      })
+    guard !tagged.isEmpty else { return }
+    outlineView.reloadData(forRowIndexes: tagged, columnIndexes: IndexSet(integer: 0))
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0
+      outlineView.noteHeightOfRows(withIndexesChanged: tagged)
+    }
   }
 
   /// The sessions a click on `row` acts on. The AppKit rule, spelled out because getting it wrong
@@ -2329,6 +2408,11 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       rows.remove(row)
     }
     outlineView.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0))
+    // A row's tags may have come or gone, and its height with them.
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0
+      outlineView.noteHeightOfRows(withIndexesChanged: rows)
+    }
   }
 
   private func editGroup(_ id: String) {

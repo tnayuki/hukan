@@ -55,7 +55,9 @@ final class RailPreviewTests: XCTestCase {
     ]
     _ = workspace.setArchived(true, for: [archived, stale])
     workspace.sessions[0].setTags(["JIRA: HUK-128"])
-    workspace.sessions[3].setTags(["JIRA: HUK-131", "PR: #58886"])
+    workspace.sessions[3].setTags([
+      "JIRA: HUK-131", "JIRA: HUK-140", "PR: #58886", "Issue: #1207", "urgent",
+    ])
     workspace.sessions[5].setTags(["Issue: #42", "urgent"])
     return workspace
   }

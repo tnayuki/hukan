@@ -69,17 +69,70 @@ enum SessionTags {
   }
 }
 
+/// A session row's tags, under its title: the chips in order, wrapping onto as many lines as they
+/// need. Laid out by hand rather than by a stack, because the row's height has to be known before
+/// the row exists — the rail asks for it to place every row below — and `height` is that same
+/// layout, run without the views.
+final class TagFlowView: NSView {
+  static let spacing = NSSize(width: 4, height: 3)
+
+  private let chips: [TagChip]
+
+  init(tags: [String]) {
+    chips = tags.map { TagChip(tag: $0) }
+    super.init(frame: .zero)
+    chips.forEach(addSubview)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  override var isFlipped: Bool { true }
+
+  /// Where each chip goes in `width`: along a line until the next would not fit, then down a line.
+  /// A chip wider than the whole line is cut to it rather than overrunning the row.
+  private static func frames(of sizes: [NSSize], width: CGFloat) -> [NSRect] {
+    var frames: [NSRect] = []
+    var origin = NSPoint.zero
+    for size in sizes {
+      let chipWidth = min(size.width, max(width, 0))
+      if origin.x > 0, origin.x + chipWidth > width {
+        origin = NSPoint(x: 0, y: origin.y + size.height + spacing.height)
+      }
+      frames.append(NSRect(origin: origin, size: NSSize(width: chipWidth, height: size.height)))
+      origin.x += chipWidth + spacing.width
+    }
+    return frames
+  }
+
+  /// How tall `tags` stand in `width` — what the rail asks before it has a row to measure.
+  static func height(of tags: [String], width: CGFloat) -> CGFloat {
+    let sizes = tags.map { TagChip.size(of: $0) }
+    return frames(of: sizes, width: width).last?.maxY ?? 0
+  }
+
+  override func layout() {
+    super.layout()
+    let frames = Self.frames(of: chips.map(\.intrinsicContentSize), width: bounds.width)
+    for (chip, frame) in zip(chips, frames) { chip.frame = frame }
+  }
+}
+
 /// One tag on a rail row: the value, in its kind's colour over a wash of the same. Drawn rather
-/// than set in a label so the wash can sit under the text without a layer, and capped so a long
-/// value gives way before the row's title does.
+/// than set in a label so the wash can sit under the text without a layer, and capped so a single
+/// long value cannot take a whole line.
 final class TagChip: NSView {
   private let value: String
   private let color: NSColor
   private static let font = NSFont.systemFont(ofSize: 10, weight: .medium)
   private static let inset = NSSize(width: 5, height: 1)
-  static let maximumWidth: CGFloat = 96
+  static let maximumWidth: CGFloat = 140
+
+  /// The whole tag, `kind: value` — named so because `tag` is already `NSView`'s.
+  private let fullTag: String
 
   init(tag: String) {
+    fullTag = tag
     let (kind, value) = SessionTags.split(tag)
     self.value = value
     color = SessionTags.color(forKind: kind)
@@ -88,10 +141,6 @@ final class TagChip: NSView {
     setAccessibilityElement(true)
     setAccessibilityRole(.staticText)
     setAccessibilityLabel(tag)
-    setContentHuggingPriority(.required, for: .horizontal)
-    // Above the title's, so the title is what truncates first; below required, so a row too narrow
-    // for every chip still lays out rather than spilling.
-    setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
   }
 
   @available(*, unavailable)
@@ -103,12 +152,15 @@ final class TagChip: NSView {
     return [.font: Self.font, .foregroundColor: color, .paragraphStyle: paragraph]
   }
 
-  override var intrinsicContentSize: NSSize {
-    let text = (value as NSString).size(withAttributes: attributes)
+  /// The size a chip for `tag` takes, without making one.
+  static func size(of tag: String) -> NSSize {
+    let text = (SessionTags.split(tag).value as NSString).size(withAttributes: [.font: font])
     return NSSize(
-      width: min(ceil(text.width) + Self.inset.width * 2, Self.maximumWidth),
-      height: ceil(Self.font.ascender - Self.font.descender) + Self.inset.height * 2)
+      width: min(ceil(text.width) + inset.width * 2, maximumWidth),
+      height: ceil(font.ascender - font.descender) + inset.height * 2)
   }
+
+  override var intrinsicContentSize: NSSize { Self.size(of: fullTag) }
 
   override func draw(_ dirtyRect: NSRect) {
     let path = NSBezierPath(roundedRect: bounds, xRadius: 3, yRadius: 3)

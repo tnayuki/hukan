@@ -380,8 +380,9 @@ worktree's rows leave when git stops listing it, or when its repository is close
 
 A session can carry tags — the ticket, the issue, the pull request it is working on — so a row
 says what it is for at a glance. Each is written `kind: value`, `JIRA: ABC-123` or `PR: #42`; the
-row shows only the value, and the kind picks its colour, the same colour for the same kind in
-every window and after every relaunch. The agent tags its own session when the work is tied to
+row shows the values under its title, wrapping onto further lines when there are many, and the
+kind picks each one's colour, the same colour for the same kind in every window and after every
+relaunch. The agent tags its own session when the work is tied to
 one of those, and changes the tags as the work moves; *Edit Tags…* on the row's right-click does
 the same by hand, the tags on one line with a comma between. The rail's filter finds a session by
 its tags as well as its title. They are the window's, kept with it across a relaunch, and nothing
