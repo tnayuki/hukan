@@ -659,6 +659,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     isScanning = false
     showsScanNote = false
     isSearchingTranscripts = !Self.terms(raw).isEmpty
+    collapsedResultSessions = []
     searchField.stringValue = raw
     searchGeneration += 1
     let terms = Self.terms(raw)
@@ -1036,7 +1037,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     outlineView.reloadData()
     // reloadData leaves every item collapsed, so this pass is what makes anything below the top
     // level show at all. Three defaults, one exception set each (see `collapsedRepositories`).
-    // Nothing is folded during a search — hiding a match behind a fold reads as no match. A fold
+    // A search keeps only the folds made in it (`isFolded`). A fold
     // *is* allowed to hide the selected row: the transcript column goes on showing what it was
     // showing, which is what a sidebar fold does everywhere. The time buckets needed the opposite
     // rule only because their fold was automatic — "Older" collapsed itself on every reload, so a
@@ -2208,7 +2209,12 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// Whether a heading stands folded: one default per kind of row, one exception set each (see
   /// `collapsedRepositories`).
   private func isFolded(_ node: RailNode) -> Bool {
-    guard !isSearching else { return false }
+    // A results list keeps one fold, a matched session's hit rows, folded by the reader. Nothing
+    // else is folded there — hiding a match behind a fold reads as no match — and asking the
+    // tree's sets first is what kept this one from ever applying.
+    if isSearching {
+      return node.session.map { collapsedResultSessions.contains($0.id) } ?? false
+    }
     if let id = node.groupID { return workspace?.collapsedGroups.contains(id) ?? false }
     if node.isRepositoryHeading, let repositoryID = node.repositoryID {
       return collapsedRepositories.contains(repositoryID)
@@ -2222,8 +2228,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       case .worktrees: return collapsedWorktreeSections.contains(key)
       }
     }
-    // A matched session's hit rows in results mode, folded by the reader.
-    if let session = node.session { return collapsedResultSessions.contains(session.id) }
     return false
   }
 
