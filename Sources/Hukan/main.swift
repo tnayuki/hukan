@@ -499,6 +499,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   }
 }
 
+// Started by the Claude desktop app as its MCP server, the executable is not the app at all: it
+// speaks stdio and forwards each call to the copy that is running (see `ExternalMCP`).
+if CommandLine.arguments.dropFirst().first == ExternalMCP.launchArgument { ExternalMCP.serve() }
+
 let application = NSApplication.shared
 let appDelegate = AppDelegate()
 application.delegate = appDelegate

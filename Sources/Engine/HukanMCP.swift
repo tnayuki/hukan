@@ -36,6 +36,9 @@ enum HukanMCP {
     let name: String
     let description: String
     let inputSchema: [String: Any]
+    /// MCP's behaviour hints (`readOnlyHint` and the rest), which a client may use to decide which
+    /// calls to ask its user about. Nil sends none.
+    var annotations: [String: Any]? = nil
   }
 
   /// A `tools/call` as the host receives it.
@@ -182,8 +185,17 @@ enum HukanMCP {
   ]
 
   /// What a `tools/list` answers with.
-  static var toolList: [[String: Any]] {
-    tools.map { ["name": $0.name, "description": $0.description, "inputSchema": $0.inputSchema] }
+  static var toolList: [[String: Any]] { listing(tools) }
+
+  /// Any set of tools as a `tools/list` carries them.
+  static func listing(_ tools: [Tool]) -> [[String: Any]] {
+    tools.map { tool in
+      var entry: [String: Any] = [
+        "name": tool.name, "description": tool.description, "inputSchema": tool.inputSchema,
+      ]
+      if let annotations = tool.annotations { entry["annotations"] = annotations }
+      return entry
+    }
   }
 
   /// One JSON-RPC message in, one reply out — through `reply`, which is called exactly once, on
@@ -192,8 +204,12 @@ enum HukanMCP {
   ///
   /// A notification carries no id and expects no reply, but the control request that delivered
   /// it does: the SDK answers one with an empty result under id 0, and so does this.
+  ///
+  /// `tools` and `instructions` are what the outside server (`ExternalMCP`) swaps in: the wire is
+  /// the same JSON-RPC whichever end of hukan it is spoken from, and only what is offered differs.
   static func handle(
-    _ message: [String: Any], handler: Handler, reply: @escaping ([String: Any]) -> Void
+    _ message: [String: Any], tools: [[String: Any]] = toolList, instructions: String? = nil,
+    handler: Handler, reply: @escaping ([String: Any]) -> Void
   ) {
     let id = message["id"]
     guard let method = message["method"] as? String else {
@@ -207,18 +223,17 @@ enum HukanMCP {
     let params = message["params"] as? [String: Any] ?? [:]
     switch method {
     case "initialize":
-      reply(
-        response(
-          id: id,
-          result: [
-            "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
-            "capabilities": ["tools": [String: Any]()],
-            "serverInfo": ["name": serverName, "version": "1"],
-          ]))
+      var result: [String: Any] = [
+        "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
+        "capabilities": ["tools": [String: Any]()],
+        "serverInfo": ["name": serverName, "version": "1"],
+      ]
+      if let instructions { result["instructions"] = instructions }
+      reply(response(id: id, result: result))
     case "ping":
       reply(response(id: id, result: [:]))
     case "tools/list":
-      reply(response(id: id, result: ["tools": toolList]))
+      reply(response(id: id, result: ["tools": tools]))
     case "tools/call":
       guard let name = params["name"] as? String else {
         reply(response(id: id, error: -32602, "tools/call names no tool"))

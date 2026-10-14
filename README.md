@@ -334,6 +334,34 @@ finishing is silent.
 
 **Scripting.** The whole surface is reachable from AppleScript.
 
+**From an MCP client.** The app's own executable is also an MCP server, so a chat in which you
+keep track of your work as a whole can ask what the sessions here are doing — which are working,
+which are waiting on you and for what, what each was asked and what it last answered — and send
+one a message, or start a new one in any worktree open here, as if you had typed it into that
+session yourself. A session started that way joins the rail without taking the selection, so
+nothing you are typing here lands in it. Any client that starts a local server over stdio takes
+the same command and argument; in the Claude desktop app, add it to
+`~/Library/Application Support/Claude/claude_desktop_config.json` and restart it:
+
+```json
+{
+  "mcpServers": {
+    "hukan": {
+      "command": "/Applications/Hukan.app/Contents/MacOS/Hukan",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+A message to a working session waits for its turn to end, and one to a stopped session resumes
+it; the transcript notes where it came from — the name the client gives itself, and the app it
+runs under. What it cannot do is decide anything for you: a session waiting on an approval or a
+question is refused, since that answer is yours to give here, and nothing there can stop a
+session. It answers while hukan is running and never launches it, and the first call asks macOS to
+let the client's app reach hukan — allow it, or later under System Settings ▸ Privacy & Security ▸
+Automation.
+
 ### Session lifetime
 
 Nothing leaves the rail by age, and nothing is deleted from disk except by asking — Delete

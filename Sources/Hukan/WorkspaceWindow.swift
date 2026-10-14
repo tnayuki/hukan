@@ -1660,8 +1660,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
   }
 
+  /// `selecting` is off for a session made from outside the window (`ExternalMCP`): the person may
+  /// be typing into another session right now, and taking the selection — and with it the
+  /// composer's focus — would send what they type next somewhere they did not aim it.
   @discardableResult
-  private func createSession(in worktree: Worktree) -> AgentSession {
+  private func createSession(in worktree: Worktree, selecting: Bool = true) -> AgentSession {
     let session = AgentSession(worktreeID: worktree.id)
     // Creating a session is an explicit act, not merely looking at one, so seed its sort key to
     // now — otherwise it sorts as never-instructed (`.distantPast`) and the freshest row sinks
@@ -1669,8 +1672,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     session.lastInstructedAt = Date()
     attach(session)
     workspace.sessions.append(session)
-    workspace.selectedWorktreeID = worktree.id
-    workspace.selectedSessionID = session.id
+    if selecting {
+      workspace.selectedWorktreeID = worktree.id
+      workspace.selectedSessionID = session.id
+    }
     // Unlike a merely-restored session, a New Session spawns `claude` now rather than on the first
     // send: this is the one path that eager-starts, so the model picker fills from the engine's own
     // roster before you type — a fresh session has none remembered to seed, it learns its own.
@@ -1680,7 +1685,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     session.start(at: worktree.url, holdIdle: true)
     reload()
     // So you can start typing the moment you press it.
-    window?.makeFirstResponder(running.inputField)
+    if selecting { window?.makeFirstResponder(running.inputField) }
     return session
   }
 
@@ -1763,8 +1768,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// Scripting seam: create a session in an explicit worktree and hand it back, so the
   /// `new session` command can return the real object rather than reaching for the last-appended
   /// one. Goes through the same path as the `+` button, selection and start included.
-  func makeSession(in worktree: Worktree) -> AgentSession {
-    createSession(in: worktree)
+  func makeSession(in worktree: Worktree, selecting: Bool = true) -> AgentSession {
+    createSession(in: worktree, selecting: selecting)
   }
 
   /// Wire a merely-restored session to the window the first time it is selected — but do NOT

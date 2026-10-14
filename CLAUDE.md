@@ -350,6 +350,36 @@ Workspace (one window)
   reaches. That is the whole reason it is asked for, and the reason the hidden `browser` verb's
   loading half is guarded now — a session's agent reaches `osascript` with no prompt in the way,
   and that verb steered a logged-in tab with no card in front of it.
+- **A client outside hukan reaches the sessions over stdio, from the executable the bundle
+  already ships.** It was built for the Claude desktop app, which is where a person keeps track of
+  their work as a whole, and what this window knows — which session is working, which is waiting on
+  you, what each was asked — is the part of that work it cannot see. But nothing in it knows which
+  client is asking: any MCP client that starts a local server is the same case, and a script
+  speaking the Apple event is too. The client starts the app's own executable as its MCP server,
+  and that copy hands each call to the one running, which answers from its own model: the turns
+  are read the way the transcript pane reads them, so the two cannot disagree. **No port**: a
+  listener on localhost is open to every process on the machine and to any page the browser loads,
+  so it would need a token kept somewhere anything could read it, and it would stand open whether
+  or not anyone was asking — where the Apple event's caller is decided once, by the person, in the
+  automation grant. **Registered by hand, in the client's config, not as a `.mcpb`**: the bundle is
+  the Claude app's intended road, but an organization's desktop-extension allowlist refuses a
+  bundle it has not listed, and the work machine this is for is likely behind one. **It speaks to
+  a session, and decides nothing**: a message — to a session, or the first one of a new session —
+  is what the person would otherwise have typed, and the session's own permission mode still
+  stands between it and the worktree — bypass included, since directing a bypass session from
+  there is a use this was wanted for. An approval or a question is a decision already put to the
+  person, so it is never answered from there, and a message is refused to a session waiting on
+  one, because a send cuts that turn and drops the decision — a deny by another name. **What
+  arrives this way says where from**, because the client may be a chat that reads mail and
+  documents carrying instructions of their own, and a message nobody typed here should not read as
+  one somebody did. Where from is two answers put together: the name the client gives itself in
+  the handshake says what is calling but nothing checks it, and the app the sending process runs
+  under is the kernel's answer but, for a client in a terminal, only the terminal. A session started
+  from there **does not take the selection**: the person may be typing into another one, and the
+  composer's focus going with the new row would send what they type next somewhere they never aimed
+  it. **Not offered to Claude Code**: its sessions run inside this window, and a session reading or
+  steering its neighbours is the agent driving the app, which is what the guarded verbs exist to
+  stop.
 - **The whole strip comes back after a relaunch, at the tab that was showing.** Each tab is saved
   as what identifies it and nothing more — a worktree and a relative path, an oid, a directory
   and a scrollback, and for a web tab WebKit's own `interactionState` (the back/forward list and where

@@ -319,6 +319,18 @@
             <result type="text"/>
         </command>
 
+        <command name="mcp call" code="HuknMcpC" hidden="yes" description="Answer one tool call for the MCP server the app's executable serves over stdio with --mcp">
+            <cocoa class="MCPCallCommand"/>
+            <direct-parameter type="text" description="The tool's name"/>
+            <parameter name="with arguments" code="McpA" type="text" optional="yes" description="The call's arguments, as a JSON object">
+                <cocoa key="arguments"/>
+            </parameter>
+            <parameter name="from client" code="McpN" type="text" optional="yes" description="The name the MCP client gave itself in its handshake">
+                <cocoa key="clientName"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
         <command name="completions" code="HuknCplt" hidden="yes" description="Report the composer's completion list — slash commands, or past prompts — or drive it, for automated checks">
             <cocoa class="CompletionsCommand"/>
             <parameter name="typing" code="Typg" type="text" optional="yes" description="replace the composer's text with this, as typing would">
