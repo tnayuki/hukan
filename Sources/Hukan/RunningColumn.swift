@@ -19,6 +19,11 @@ final class RunningColumnViewController: NSViewController {
   private let input = ComposerInput()
   var inputField: NSView { input.focusTarget }
 
+  /// A column beside this one is sliding: keep the transcript wrapped where it is until the
+  /// slide lands (see `ReadingView.holdWrap`).
+  func holdTranscriptWrap() { textView.holdWrap() }
+  func releaseTranscriptWrap() { textView.releaseWrap() }
+
   /// Where the keyboard goes when a session is dived into: whatever is asking. A question's own
   /// Other row while its card is up, the composer otherwise — the two mean different things now,
   /// the card answering the question and the composer cutting the turn short.

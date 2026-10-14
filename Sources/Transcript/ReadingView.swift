@@ -64,13 +64,40 @@ public final class ReadingView: NSView {
 
   public var length: Int { segments.last.map { $0.start + $0.length } ?? 0 }
 
-  /// The width the text is wrapped to: the container's, which is the frame's less the inset.
+  /// The width the text is wrapped to: the container's, which is the frame's less the inset —
+  /// or, while the wrap is held, the width it was held at.
   public var wrapWidth: CGFloat {
+    if let heldWrapWidth { return heldWrapWidth }
     // A view with no frame yet lays out at a nominal width rather than at one point; the real
     // width re-lays everything out the moment it arrives.
     let width = frame.width - textContainerInset.width * 2
     return width > 1 ? width : 320
   }
+
+  /// Keep the text wrapped where it is while the frame moves through widths nobody will read
+  /// at — a column sliding open or shut beside this one — and re-wrap once, at the width it
+  /// lands on. Every width between costs a layout of everything loaded and moves every line
+  /// under the eye, so a slide re-wrapped per frame both stutters and reads as the text being
+  /// rescaled. A text wider than the frame for those frames is clipped by the scroll view, which
+  /// is the column beside it sliding over the text. Counted, since two slides can overlap.
+  public func holdWrap() {
+    if wrapHolds == 0 { heldWrapWidth = wrapWidth }
+    wrapHolds += 1
+  }
+
+  public func releaseWrap() {
+    guard wrapHolds > 0 else { return }
+    wrapHolds -= 1
+    guard wrapHolds == 0, let held = heldWrapWidth else { return }
+    heldWrapWidth = nil
+    if wrapWidth != held {
+      relayoutAll()
+      onRewrap?()
+    }
+  }
+
+  private var wrapHolds = 0
+  private var heldWrapWidth: CGFloat?
   private var textWidth: CGFloat { wrapWidth - lineFragmentPadding * 2 }
   /// Where the segments' container coordinates sit in the view.
   private var containerOrigin: CGPoint {
@@ -300,12 +327,12 @@ public final class ReadingView: NSView {
     reindex()
   }
 
-  /// A width change re-wraps every line; the height then follows from the segments, never from
-  /// the size the frame was asked for.
+  /// A width change re-wraps every line — unless the wrap is held (`holdWrap`); the height then
+  /// follows from the segments, never from the size the frame was asked for.
   public override func setFrameSize(_ newSize: NSSize) {
-    let widthChanged = newSize.width != frame.width
+    let wrappedAt = wrapWidth
     super.setFrameSize(newSize)
-    if widthChanged {
+    if wrapWidth != wrappedAt {
       relayoutAll()
       onRewrap?()
     } else if newSize.height != documentHeight {

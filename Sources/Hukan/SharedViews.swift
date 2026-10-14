@@ -422,6 +422,28 @@ extension RunState {
   }
 }
 
+extension NSAnimationContext {
+  /// A change of layout — a column or a section folding, a line opening under a field — run
+  /// the way AppKit runs it, unless Reduce Motion is on, when it lands at once. The HIG's reading
+  /// of that setting is that what slides or grows stops doing so; a change of opacity is not
+  /// motion and is left alone (`setThinkingPulse`). Read at every call rather than watched: a
+  /// setting changed mid-session applies from the next fold. `duration` is for the few that set
+  /// their own; nil keeps AppKit's.
+  static func runLayoutChange(
+    duration: TimeInterval? = nil, _ changes: () -> Void, completion: (() -> Void)? = nil
+  ) {
+    runAnimationGroup(
+      { context in
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+          context.duration = 0
+        } else if let duration {
+          context.duration = duration
+        }
+        changes()
+      }, completionHandler: completion)
+  }
+}
+
 extension NSView {
   /// A slow opacity breathe, used to mark a session that is actively thinking. An explicit
   /// layer animation rather than an SF Symbol effect: the symbol effect never reliably started

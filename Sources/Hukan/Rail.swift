@@ -162,10 +162,16 @@ final class RailRowView: NSTableRowView {
 final class RailOutlineView: NSOutlineView {
   var onActivate: (() -> Void)?
   /// ← or → asked for a fold: the item, and whether it is to be collapsed. Handed to the rail
-  /// rather than done here with `collapseItem`, which AppKit refuses on an outline whose
-  /// disclosure cell is hidden — this one's is, in favour of the chevron drawn into each heading.
-  /// The rail folds the way its chevrons do: it writes the fold down and rebuilds.
+  /// rather than done here with `collapseItem`, because a fold is the rail's to write down — in
+  /// the exception sets every reload reads — before the outline is moved to match.
   var onFold: ((Any, Bool) -> Void)?
+
+  /// AppKit's disclosure triangle, kept and given no room. The heading draws its own chevron, so
+  /// the triangle must not show — but an outline told not to show it at all
+  /// (`shouldShowOutlineCellForItem`) also refuses `collapseItem` and `expandItem` outright,
+  /// which leaves a rebuild as the only way to fold and so no slide. A zero frame is neither
+  /// drawn nor clicked, and leaves every row's indent exactly where it was (measured).
+  override func frameOfOutlineCell(atRow row: Int) -> NSRect { .zero }
 
   override func keyDown(with event: NSEvent) {
     // 36 = Return, 76 = keypad Enter, 123/124 = ← and →. Everything else (↑↓, first-letter jump)
@@ -185,10 +191,8 @@ final class RailOutlineView: NSOutlineView {
   /// ← and → on the selected row, the way a source list behaves everywhere: → opens a folded row
   /// and steps into an open one, ← closes an open row and steps out of a closed one.
   ///
-  /// Written out rather than left to AppKit, which was the assumption and was wrong: NSOutlineView
-  /// hangs its own arrow handling off the disclosure triangle, and the rail suppresses that
-  /// (`shouldShowOutlineCellForItem`) in favour of the chevron drawn into each heading — which
-  /// also makes `collapseItem` a no-op, so the fold itself is the rail's (`onFold`).
+  /// Written out rather than left to AppKit, because the fold has to be written down before it is
+  /// shown (`onFold`), and AppKit's own arrow handling would move the outline and nothing else.
   ///
   /// Returns whether the key was used; false falls through, so ← at the top level still does
   /// whatever AppKit would have done with it.
@@ -304,12 +308,12 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// leaves the session on the list (with its count) while giving the space back. Transient —
   /// a new query is a new result set, so it starts fresh.
   private var collapsedResultSessions: Set<UUID> = []
-  /// Everything that decides which rows are *open*, as of the last reload. A reload whose tree
-  /// has the same shape but a different arrangement still has to rebuild: `collapseItem` is
-  /// refused on an outline whose disclosure cell is hidden, which this one's is, so the only way
-  /// to apply a fold is `reloadData()` — which collapses everything — and then not expanding the
-  /// row. Read off the workspace on each reload rather than flagged by whoever wrote a fold, so a
-  /// set changed from anywhere — a chevron, a key, a script, a restore — is seen the same way.
+  /// Everything that decides which rows are *open*, as of the last time the outline was made to
+  /// match it. A fold made on the rail is applied in place, with AppKit's slide
+  /// (`applyFoldsInPlace`), and says so here; a set changed anywhere else — a script, a restore —
+  /// is seen by the next reload as an arrangement it has not applied, and rebuilds. Read off the
+  /// workspace each time rather than flagged by whoever wrote a fold, so every writer is seen the
+  /// same way.
   private struct Arrangement: Equatable {
     var groups: Set<String>
     var repositories: Set<String>
@@ -388,11 +392,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// rail is on screen, and stops when it is not. A minute, since that is the finest unit shown
   /// past the first one; the seconds a fresh session counts through are not worth a tick apiece.
   private var ageTick: Timer?
-
-  /// Set across the reload a drop triggers, so the reorder cross-fade stays out of it. That fade
-  /// exists to make a row that rose *on its own* register as motion; a row you just dragged needs
-  /// no such announcement, and fading the whole list under the cursor reads as a glitch.
-  private var isApplyingDrop = false
 
   override func loadView() {
     let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("rail"))
@@ -529,8 +528,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   private func showSearchHint(_ shown: Bool) {
     guard isViewLoaded else { return }
     hintLabel.isHidden = !shown
-    NSAnimationContext.runAnimationGroup { context in
-      context.duration = 0.12
+    NSAnimationContext.runLayoutChange(duration: 0.12) {
       hintHeight.animator().constant = shown ? 18 : 0
     }
   }
@@ -1035,17 +1033,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       outlineView.selectedRowIndexes.compactMap { selectionKey(of: outlineView.item(atRow: $0)) })
     let priorAnchorKey = anchorRow.flatMap { selectionKey(of: outlineView.item(atRow: $0)) }
 
-    // The rows moved but the set is the same (a session rose or sank in the order): cross-fade
-    // the reload so the reshuffle registers as motion rather than an instant jump. Restricted
-    // to a pure reorder — a row appearing or disappearing is a different event and updates
-    // plainly, and the first population (empty `before`) has nothing to animate from.
-    if !isApplyingDrop, !before.isEmpty, before != after, Set(before) == Set(after) {
-      let transition = CATransition()
-      transition.type = .fade
-      transition.duration = 0.22
-      outlineView.layer?.add(transition, forKey: "reorder")
-    }
-
     outlineView.reloadData()
     // reloadData leaves every item collapsed, so this pass is what makes anything below the top
     // level show at all. Three defaults, one exception set each (see `collapsedRepositories`).
@@ -1054,31 +1041,12 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     // showing, which is what a sidebar fold does everywhere. The time buckets needed the opposite
     // rule only because their fold was automatic — "Older" collapsed itself on every reload, so a
     // session selected inside it was folded away again by the next background refresh, without
-    // anyone having asked. Every fold left is an explicit one.
-    func isCollapsed(_ node: RailNode) -> Bool {
-      guard !isSearching else { return false }
-      if let id = node.groupID { return workspace.collapsedGroups.contains(id) }
-      if node.isRepositoryHeading, let repositoryID = node.repositoryID {
-        return collapsedRepositories.contains(repositoryID)
-      }
-      if node.isWorktreeHeading, let worktree = node.worktree {
-        return collapsedWorktrees.contains(worktree.id.uuidString)
-      }
-      if let section = node.section, let key = node.sectionKey {
-        switch section {
-        case .archived: return !expandedArchives.contains(key)
-        case .worktrees: return collapsedWorktreeSections.contains(key)
-        }
-      }
-      // A matched session's hit rows in results mode, folded by the reader.
-      if let session = node.session { return collapsedResultSessions.contains(session.id) }
-      return false
-    }
+    // anyone having asked. Every fold left is an explicit one (`isFolded`).
     // A folded node's children still get their state applied — expanding it later must reveal them
     // in the shape they were left, not a fresh-from-reloadData collapse.
     func applyNode(_ node: RailNode) {
       guard node.isGroupHeading || !node.children.isEmpty else { return }
-      if !isCollapsed(node) { outlineView.expandItem(node) }
+      if !isFolded(node) { outlineView.expandItem(node) }
       for child in node.children { applyNode(child) }
     }
     for node in nodes { applyNode(node) }
@@ -1202,11 +1170,10 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     false
   }
 
-  // Suppress AppKit's own disclosure triangle: every heading carries its own chevron. This also
-  // makes `collapseItem` a no-op — AppKit ties collapsibility to the cell — which is why every
-  // fold here goes through the exception sets and a rebuild (see `Arrangement`).
+  // Shown, so the outline will fold — AppKit ties collapsibility to the cell — and given no room
+  // (`RailOutlineView.frameOfOutlineCell`), since every heading carries its own chevron.
   func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool {
-    false
+    true
   }
 
   // MARK: - Reordering repositories
@@ -1310,8 +1277,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       return false
     }
     guard changed else { return false }
-    isApplyingDrop = true
-    defer { isApplyingDrop = false }
     onReorderRepositories?()
     return true
   }
@@ -2209,7 +2174,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   }
 
   /// A fold from the keyboard (see `RailOutlineView.onFold`): written into whichever exception
-  /// set speaks for the row, then applied by a rebuild — the same path the chevrons take.
+  /// set speaks for the row, then applied in place — the same path the chevrons take.
   private func setFold(_ item: Any, collapsed: Bool) {
     guard let node = item as? RailNode else { return }
     func write(_ set: inout Set<String>, _ key: String, _ present: Bool) {
@@ -2240,10 +2205,68 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     reloadAfterFold()
   }
 
-  /// A fold moved: reload — which rebuilds, the arrangement having changed — and record it.
+  /// Whether a heading stands folded: one default per kind of row, one exception set each (see
+  /// `collapsedRepositories`).
+  private func isFolded(_ node: RailNode) -> Bool {
+    guard !isSearching else { return false }
+    if let id = node.groupID { return workspace?.collapsedGroups.contains(id) ?? false }
+    if node.isRepositoryHeading, let repositoryID = node.repositoryID {
+      return collapsedRepositories.contains(repositoryID)
+    }
+    if node.isWorktreeHeading, let worktree = node.worktree {
+      return collapsedWorktrees.contains(worktree.id.uuidString)
+    }
+    if let section = node.section, let key = node.sectionKey {
+      switch section {
+      case .archived: return !expandedArchives.contains(key)
+      case .worktrees: return collapsedWorktreeSections.contains(key)
+      }
+    }
+    // A matched session's hit rows in results mode, folded by the reader.
+    if let session = node.session { return collapsedResultSessions.contains(session.id) }
+    return false
+  }
+
+  /// A fold moved: open or shut the rows it names where they stand, with AppKit's own slide —
+  /// the files panel's tree folds the same way — then reload, which finds the arrangement already
+  /// applied and only redraws (the chevrons turn), and record it.
   private func reloadAfterFold() {
+    applyFoldsInPlace()
     reload()
     view.window?.invalidateRestorableState()
+  }
+
+  /// Move the outline to the fold the sets now describe, row by row rather than by rebuilding.
+  /// Only while the rows on screen are the rows `nodes` holds — a reload still owed (the tree
+  /// changed shape underneath) is left to rebuild, which applies every fold anyway. The selection
+  /// is the rail's bookkeeping by *row*, and a fold moves every row below it, so the rows are
+  /// re-read by identity afterwards; a selected row the fold hid simply drops out of the
+  /// selection, and the transcript goes on showing what it was showing, as a sidebar does.
+  private func applyFoldsInPlace() {
+    guard lastArrangement != nil, lastArrangement != arrangement, !nodes.isEmpty,
+      outlineView.numberOfRows > 0, outlineView.item(atRow: 0) as AnyObject? === nodes.first
+    else { return }
+    let anchorKey = anchorRow.flatMap { selectionKey(of: outlineView.item(atRow: $0)) }
+    isUpdatingSelection = true
+    NSAnimationContext.runLayoutChange {
+      func apply(_ node: RailNode) {
+        guard node.isGroupHeading || !node.children.isEmpty else { return }
+        let folded = isFolded(node)
+        if folded, outlineView.isItemExpanded(node) {
+          outlineView.animator().collapseItem(node)
+        } else if !folded, !outlineView.isItemExpanded(node) {
+          outlineView.animator().expandItem(node)
+        }
+        for child in node.children { apply(child) }
+      }
+      for node in nodes { apply(node) }
+    }
+    isUpdatingSelection = false
+    selectedRows = outlineView.selectedRowIndexes
+    anchorRow = anchorKey.flatMap { key in
+      selectedRows.first { selectionKey(of: outlineView.item(atRow: $0)) == key }
+    }
+    lastArrangement = arrangement
   }
 
   private var editingGroupID: String?

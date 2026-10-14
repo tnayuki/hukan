@@ -4,11 +4,11 @@ import XCTest
 @testable import Hukan
 
 /// The rail's keys, driven through an outline in a real window — without one, NSOutlineView
-/// neither extends a selection nor folds, so nothing here can be exercised headless. Two things
-/// are pinned: that ← and → fold and unfold (AppKit's own arrow handling hangs off the disclosure
-/// cell the rail hides, so the keys are the rail's), and that a ⇧-range keeps growing across the
-/// reloads that run underneath it, which is only true while a reload leaves AppKit's selection
-/// alone.
+/// neither extends a selection nor folds, so nothing here can be exercised headless. Three things
+/// are pinned: that ← and → fold and unfold (the keys are the rail's, since a fold is written
+/// down before it is shown), that the fold moves the rows where they stand rather than rebuilding
+/// them — the only way it can slide — and that a ⇧-range keeps growing across the reloads that
+/// run underneath it, which is only true while a reload leaves AppKit's selection alone.
 final class RailKeyboardTests: XCTestCase {
   private var window: NSWindow?
 
@@ -88,6 +88,30 @@ final class RailKeyboardTests: XCTestCase {
     XCTAssertEqual(outline.selectedRow, 1)
     press(outline, .left)
     XCTAssertEqual(outline.selectedRow, 0)
+  }
+
+  /// A rebuild hands the outline fresh items, which is a jump; folding the item already on screen
+  /// is what AppKit animates. So the heading row must be the same object across the fold — and
+  /// the rows the fold did not touch keep their place in the selection's bookkeeping.
+  func testAFoldMovesTheRowsWhereTheyStandRatherThanRebuilding() {
+    let (rail, workspace, _) = rail(sessionCount: 3)
+    let outline = rail.outlineViewForTesting
+    outline.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+    let heading = outline.item(atRow: 0) as AnyObject?
+
+    press(outline, .left)
+    XCTAssertEqual(outline.numberOfRows, 1)
+    XCTAssertTrue(outline.item(atRow: 0) as AnyObject? === heading, "folded in place")
+    press(outline, .right)
+    XCTAssertEqual(outline.numberOfRows, 4)
+    XCTAssertTrue(outline.item(atRow: 0) as AnyObject? === heading, "and unfolded in place")
+    XCTAssertEqual(outline.selectedRow, 0, "the heading stays selected through both")
+
+    // A fold written somewhere other than the rail — a script, a restore — has no row to slide
+    // and is applied by the next reload as before.
+    workspace.collapsedRepositories = ["/repo/main"]
+    rail.reload()
+    XCTAssertEqual(outline.numberOfRows, 1)
   }
 
   func testLeftAndRightFoldAGroupAndPreserveItsRepositoryFold() {

@@ -376,7 +376,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     loadViewIfNeeded()
     isHistoryFoldedByHand = !historyItem.isCollapsed
     isAdjustingHistory = true
-    historyItem.animator().isCollapsed = isHistoryFoldedByHand
+    NSAnimationContext.runLayoutChange {
+      historyItem.animator().isCollapsed = isHistoryFoldedByHand
+    }
     isAdjustingHistory = false
   }
 
@@ -840,8 +842,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   private func showSearchHint(_ shown: Bool) {
     guard isViewLoaded else { return }
     hintLabel.isHidden = !shown
-    NSAnimationContext.runAnimationGroup { context in
-      context.duration = 0.12
+    NSAnimationContext.runLayoutChange(duration: 0.12) {
       hintHeight.animator().constant = shown ? 18 : 0
     }
   }

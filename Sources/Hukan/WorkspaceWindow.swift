@@ -104,7 +104,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   private var deskItem: NSSplitViewItem!
   /// The window's split: the rail, then everything else. Two items, not three, because only the
   /// rail is meant to rise through the titlebar — see `columnsController`.
-  private let splitController = NSSplitViewController()
+  private let splitController = WindowSplitViewController()
   /// The transcript/desk split, one level down and hung below the toolbar. Its dividers are the
   /// reason it is nested: a divider view is as tall as the split view holding it, and the outer
   /// one spans the titlebar (`.fullSizeContentView`, which the full-height rail needs), so a
@@ -251,6 +251,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     splitController.addSplitViewItem(columnsItem)
     splitController.addSplitViewItem(filesPanelItem)
     window.contentViewController = splitController
+    splitController.onToggleSidebar = { [weak self] sender in self?.toggleRail(sender) }
 
     // The toolbar attaches only after the split view is in the window: the files separator
     // below tracks the desk/panel divider, and a tracking item built before its split view has
@@ -1897,8 +1898,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
   /// Recency moves per streamed fragment, so mid-turn the rail's order goes stale — a session
   /// speaking now can sit below one quiet for minutes, and nothing reorders until a state
-  /// change. Coalesce the storm into one rail-only reload: cheap enough to run mid-turn, and
-  /// the rail's cross-fade makes the rise read as motion.
+  /// change. Coalesce the storm into one rail-only reload, cheap enough to run mid-turn.
   private var railReloadPending = false
   private func scheduleRailReload() {
     guard !railReloadPending else { return }
@@ -1983,8 +1983,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     workspace.selectedSession?.resolveApproval(allow: false)
   }
 
-  /// View ▸ Show/Hide Sidebar. Routed through NSSplitViewController's own toggle so the
-  /// collapse animates and the divider state stays consistent.
+  /// View ▸ Show/Hide Sidebar, and the toolbar's sidebar button, which the split controller
+  /// hands here (`WindowSplitViewController`) — its own toggle would skip ending the mode below,
+  /// and fold outside `foldColumns`.
   @objc func toggleRail(_ sender: Any?) {
     // Arranging a column by hand ends the maximized mode: the memento would otherwise put this
     // column back the next time the layout is restored, undoing what was just asked for. The
@@ -1992,7 +1993,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // reads "Show Sidebar" while the mode has it folded. Maximizing again re-reads whatever is
     // showing then.
     forgetMaximizedLayout()
-    splitController.toggleSidebar(sender)
+    foldColumns { railItem.animator().isCollapsed = !railItem.isCollapsed }
     // The collapse animates, so the item's fate is read once it has landed rather than from the
     // state the click started in.
     DispatchQueue.main.async { [weak self] in self?.updateRailToolbarItem() }
@@ -2428,9 +2429,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// last one can land a fraction short of the final width.
   private func setFilesPanelCollapsed(_ collapsed: Bool) {
     isRevealingFilesPanel = !collapsed
-    NSAnimationContext.runAnimationGroup { _ in
+    foldColumns {
       filesPanelItem.animator().isCollapsed = collapsed
-    } completionHandler: { [weak self] in
+    } completion: { [weak self] in
       guard let self else { return }
       self.isRevealingFilesPanel = false
       self.updateFilesToolbarItem()
@@ -2473,7 +2474,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     let collapsed = isDeskEmpty
     guard deskItem.isCollapsed != collapsed else { return }
     if animated {
-      NSAnimationContext.runAnimationGroup { _ in deskItem.animator().isCollapsed = collapsed }
+      foldColumns { deskItem.animator().isCollapsed = collapsed }
     } else {
       deskItem.isCollapsed = collapsed
     }
@@ -2561,7 +2562,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     let desk = hasArrangedColumns && isDeskEmpty
     guard runningItem.isCollapsed != before.running || deskItem.isCollapsed != desk
     else { return }
-    NSAnimationContext.runAnimationGroup { _ in
+    foldColumns {
       runningItem.animator().isCollapsed = before.running
       deskItem.animator().isCollapsed = desk
     }
@@ -2572,12 +2573,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// settle, for the reason `setFilesPanelCollapsed` gives.
   private func setColumnsCollapsed(rail: Bool, running: Bool, desk: Bool, panel: Bool) {
     isRevealingFilesPanel = !panel
-    NSAnimationContext.runAnimationGroup { _ in
+    foldColumns {
       railItem.animator().isCollapsed = rail
       runningItem.animator().isCollapsed = running
       deskItem.animator().isCollapsed = desk
       filesPanelItem.animator().isCollapsed = panel
-    } completionHandler: { [weak self] in
+    } completion: { [weak self] in
       guard let self else { return }
       self.isRevealingFilesPanel = false
       self.updateRailToolbarItem()
@@ -2585,6 +2586,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     updateRailToolbarItem()
     updateFilesToolbarItem()
+  }
+
+  /// Every fold of the window's columns, so they all run alike: AppKit's slide, or none under
+  /// Reduce Motion (`runLayoutChange`). The transcript's wrap is held for the length of the slide
+  /// and re-wrapped once where it lands (`ReadingView.holdWrap`) — whichever column is moving,
+  /// since the outer split hands the rail's width to the pair holding the transcript too. With
+  /// no slide there is no in-between to skip, so nothing is held.
+  private func foldColumns(_ changes: () -> Void, completion: (() -> Void)? = nil) {
+    let holds = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    if holds { running.holdTranscriptWrap() }
+    NSAnimationContext.runLayoutChange(changes) { [weak self] in
+      if holds { self?.running.releaseTranscriptWrap() }
+      completion?()
+    }
   }
 
   /// The toolbar's ± — scope the panel's tree and its content search to the worktree's changed
@@ -2603,7 +2618,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   private func revealRail() {
     forgetMaximizedLayout()
     guard railItem.isCollapsed else { return }
-    splitController.toggleSidebar(nil)
+    foldColumns { railItem.animator().isCollapsed = false }
     DispatchQueue.main.async { [weak self] in self?.updateRailToolbarItem() }
   }
 
@@ -2776,5 +2791,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     default:
       return true
     }
+  }
+}
+
+/// The window's outer split, which is the content view controller and so the first to answer
+/// the toolbar's sidebar button (`toggleSidebar:` travels the responder chain). It hands the
+/// toggle to the window, which ends the maximized mode and folds the rail the way every other
+/// column folds; without one it toggles as AppKit would.
+final class WindowSplitViewController: NSSplitViewController {
+  var onToggleSidebar: ((Any?) -> Void)?
+
+  override func toggleSidebar(_ sender: Any?) {
+    guard let onToggleSidebar else { return super.toggleSidebar(sender) }
+    onToggleSidebar(sender)
   }
 }
