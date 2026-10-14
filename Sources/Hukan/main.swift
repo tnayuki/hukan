@@ -427,6 +427,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     sessionMenu.addItem(
       withTitle: "Go to Next Pending",
       action: #selector(WorkspaceWindowController.focusNextPending(_:)), keyEquivalent: "\r")
+    // Where the rail has been. ⌃⌘←/→, Xcode's keys for its navigation history: ⌘[ / ⌘] are the
+    // web tab's, and a focused web view claims every ⌘-key put to it, so the two cannot share one
+    // pair and be told apart by the focus. ⌃⌘ is already the family of what the window shows.
+    let back = sessionMenu.addItem(
+      withTitle: "Back", action: #selector(WorkspaceWindowController.goBackInSessions(_:)),
+      keyEquivalent: String(UnicodeScalar(NSLeftArrowFunctionKey)!))
+    back.keyEquivalentModifierMask = [.command, .control]
+    let forward = sessionMenu.addItem(
+      withTitle: "Forward", action: #selector(WorkspaceWindowController.goForwardInSessions(_:)),
+      keyEquivalent: String(UnicodeScalar(NSRightArrowFunctionKey)!))
+    forward.keyEquivalentModifierMask = [.command, .control]
     sessionMenu.addItem(.separator())
     let allow = sessionMenu.addItem(
       withTitle: "Allow",

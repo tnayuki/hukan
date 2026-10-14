@@ -11,6 +11,7 @@ extension NSToolbarItem.Identifier {
   static let filesFilter = NSToolbarItem.Identifier("filesFilter")
   static let filesScope = NSToolbarItem.Identifier("filesScope")
   static let filesSeparator = NSToolbarItem.Identifier("filesSeparator")
+  static let sessionHistory = NSToolbarItem.Identifier("sessionHistory")
 }
 
 /// Hangs its content below the titlebar inside a window whose content view runs full size.
@@ -693,7 +694,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // window and none of it in full screen, where they are gone, so without the space the row
     // slid left by that much and the toggle stood in the middle of the rail.
     [
-      .sessionFilter, .flexibleSpace, .toggleSidebar, .sidebarTrackingSeparator, .status,
+      .sessionFilter, .flexibleSpace, .toggleSidebar, .sidebarTrackingSeparator,
+      .sessionHistory, .status,
       .flexibleSpace, .appUpdate, .usage, .systemUsage, .filesSeparator, .filesFilter,
       .flexibleSpace, .filesScope, .toggleHistory, .toggleFiles,
     ]
@@ -720,6 +722,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     case .systemUsage:
       let item = NSToolbarItem(itemIdentifier: identifier)
       item.view = systemUsageLabel
+      return item
+    case .sessionHistory:
+      // The content section's leading edge, not the rail's: the rail's row is spent to the
+      // point on its filter, and two buttons there would take its floor up by their width.
+      // Over the conversation is also where Finder and Xcode put theirs — first in the column
+      // whose contents they change.
+      //
+      // One item hosting both, not an image item each: the bar gives every image item a 44pt
+      // slot whatever its glyph, and two chevrons 12pt wide came out 88pt — wider than the
+      // worktree name beside them. A view item is as wide as its view. It is also not
+      // autovalidated, so whether there is anywhere to go is written in `reload`.
+      let item = NSToolbarItem(itemIdentifier: identifier)
+      item.label = "Back/Forward"
+      item.view = sessionHistoryControl
       return item
     case .sessionFilter:
       // A plain view item, unlike the files filter's `NSSearchToolbarItem`: a search item placed
@@ -1475,6 +1491,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   // MARK: - Refresh
 
   func reload() {
+    // Every change of selection ends here, whichever of the dozen routes made it, so this is the
+    // one place the history has to listen.
+    recordSelection()
+    sessionBackButton.isEnabled = selectionTarget(-1) != nil
+    sessionForwardButton.isEnabled = selectionTarget(1) != nil
     rail.reload()
     // Opening a session under an active filter should land on the first match — hand the running
     // column the terms before it attaches so its own highlight pass has them.
@@ -1524,6 +1545,82 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     isStatusToolbarItemVisible = visible
     statusToolbarItem?.isHidden = !visible
     if visible { statusView.invalidateIntrinsicContentSize() }
+  }
+
+  // MARK: - Selection history
+
+  private var selectionHistory = SelectionHistory()
+
+  private lazy var sessionBackButton = sessionHistoryButton(
+    "chevron.backward", "Back", "Back to the previous session", #selector(goBackInSessions(_:)))
+  private lazy var sessionForwardButton = sessionHistoryButton(
+    "chevron.forward", "Forward", "Forward to the next session",
+    #selector(goForwardInSessions(_:)))
+
+  private lazy var sessionHistoryControl: NSView = {
+    let stack = NSStackView(views: [sessionBackButton, sessionForwardButton])
+    stack.spacing = 0
+    return stack
+  }()
+
+  /// A bare glyph with a hit area of its own, the size the panel's row draws its glyphs at.
+  private func sessionHistoryButton(
+    _ symbol: String, _ description: String, _ toolTip: String, _ action: Selector
+  ) -> NSButton {
+    let button = NSButton(
+      image: Self.barGlyph(symbol, description: description, accented: false) ?? NSImage(),
+      target: self, action: action)
+    button.isBordered = false
+    button.toolTip = toolTip
+    button.isEnabled = false
+    button.widthAnchor.constraint(equalToConstant: 24).isActive = true
+    return button
+  }
+
+  /// What the rail is showing, as a place: the session when one was named and is in the
+  /// selected worktree, the worktree row otherwise.
+  private var currentPlace: SelectionHistory.Place? {
+    if let session = workspace.selectedSession, session.id == workspace.selectedSessionID {
+      return .session(session.id)
+    }
+    return workspace.selectedWorktreeID.map { .worktree($0) }
+  }
+
+  private func recordSelection() {
+    guard let place = currentPlace else { return }
+    selectionHistory.visit(place)
+  }
+
+  private func selectionTarget(_ direction: Int) -> Int? {
+    selectionHistory.target(direction) { [workspace] place in
+      switch place {
+      case .session(let id): workspace.sessions.contains { $0.id == id }
+      case .worktree(let id): workspace.worktree(id: id) != nil
+      }
+    }
+  }
+
+  /// Session ▸ Back / Forward, and the two chevrons over the conversation. Being sent to a
+  /// session ends the maximized mode, as a tapped notification does: where you were going back
+  /// to is on the rail and in the transcript.
+  @objc func goBackInSessions(_ sender: Any?) { stepSelection(-1) }
+  @objc func goForwardInSessions(_ sender: Any?) { stepSelection(1) }
+
+  private func stepSelection(_ direction: Int) {
+    guard let target = selectionTarget(direction) else { return }
+    selectionHistory.move(to: target)
+    setMaximized(nil)
+    switch selectionHistory.places[target] {
+    case .session(let id):
+      guard let session = workspace.sessions.first(where: { $0.id == id }) else { return }
+      workspace.selectedWorktreeID = session.worktreeID
+      workspace.selectedSessionID = id
+    case .worktree(let id):
+      workspace.selectedWorktreeID = id
+      workspace.selectedSessionID = nil
+    }
+    resumeSelectedSessionIfNeeded()
+    reload()
   }
 
   // MARK: - Actions
@@ -2595,6 +2692,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       return files.hasActiveTerminal
     case #selector(find(_:)):
       return canFindInSession || files.canFind
+    case #selector(goBackInSessions(_:)):
+      return selectionTarget(-1) != nil
+    case #selector(goForwardInSessions(_:)):
+      return selectionTarget(1) != nil
     case #selector(browserGoBack(_:)):
       return files.canBrowserGoBack
     case #selector(browserGoForward(_:)):

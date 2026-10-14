@@ -125,6 +125,20 @@ Workspace (one window)
   take them — and which surface they mean is where the focus is, the rule ⌘F and ⌃⌘M already
   read: a web tab's page, or an image's magnification. They are the only two things on the desk
   with a size to change; source is the size it is set at, and a terminal's is the terminal's.
+- **The rail has a history, and Back and Forward walk it.** A step is wherever the selection
+  lands, by any route — a click, a key, a tapped notification, a search hit — because the rail is
+  the window's navigation and the question "where was I a moment ago" does not care how you got
+  there. A place is the session, not the worktree it stood in: an agent's `EnterWorktree` moves a
+  session without anyone choosing anything, so it is no step, and going back reaches the
+  conversation wherever it now lives. What has gone since — a deleted session, a worktree git
+  stopped listing — is stepped over rather than removed, so the order around it holds. Per window
+  and never saved, the reader's place in the transcript's rule: a restored window has no reader to
+  have been anywhere. **The chevrons open the content section, not the rail's**: the rail's row is
+  spent to the point on its filter, which is what a 4pt shortfall there already cost, and over the
+  conversation is where Finder and Xcode put theirs — first in the column whose contents they
+  change. **The keys are ⌃⌘←/→, Xcode's, and not the browser's ⌘[ / ⌘]**, which the web tab holds:
+  a focused web view answers yes to every ⌘-key put to it, so one pair could not be split between
+  the two by where the focus is, and ⌃⌘ is already the family of what the window is showing.
 - **The web tab's one field is an address bar and a search box, and the text decides which** — a
   scheme, a slash or a dot makes it an address; anything else is a search. The files panel's field
   splits its two jobs by *gesture* because one of them costs far more than the other and a person

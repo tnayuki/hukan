@@ -210,5 +210,11 @@ final class ToolbarRowFitsTests: XCTestCase {
       visible.contains(.sessionFilter),
       "the rail's filter was dropped into the overflow menu at the rail's minimum width in "
         + "\(labelled ? "Icon and Text" : "Icon Only")")
+    // The session history's chevrons open the content section, which is squeezed hardest when
+    // both edge columns sit on their floors.
+    XCTAssertTrue(
+      visible.contains(.sessionHistory),
+      "the session history was dropped into the overflow menu in "
+        + "\(labelled ? "Icon and Text" : "Icon Only")")
   }
 }

@@ -39,6 +39,12 @@ full height, Mail-fashion, and the toolbar is cut into sections that follow them
 column can have the window to itself: double-click a lasting tab, or the conversation's own
 header, and everything else folds away until the same gesture puts it back.
 
+**Back and forward.** The two chevrons over the conversation walk where the rail has been, the
+way a browser walks pages: each session or worktree selected, however it was reached, is a step,
+and going back to a session takes its worktree's desk with it. A session deleted since, or a
+worktree git no longer lists, is stepped over. The history is the window's and is not kept across
+a relaunch.
+
 **Agents.** `claude -p` kept resident per session, talking both ways: text token by token, tool
 calls as they are made, several sessions at once with the rail showing each one's state. Escape
 or the composer's stop button interrupts a turn. A line sent while the agent is working waits

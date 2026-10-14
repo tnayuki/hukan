@@ -12,14 +12,14 @@ final class MenuKeyTests: XCTestCase {
   /// character lowercased with the shift an uppercase one implies folded into the modifiers, so
   /// ⌘N and ⌘⇧N read as the two different keys they are.
   private func keyedItems(of menu: NSMenu) -> [(
-    key: String, mask: NSEvent.ModifierFlags, item: String
+    key: String, mask: NSEvent.ModifierFlags, item: String, action: Selector?
   )] {
-    menu.items.flatMap { item -> [(String, NSEvent.ModifierFlags, String)] in
+    menu.items.flatMap { item -> [(String, NSEvent.ModifierFlags, String, Selector?)] in
       var found = item.submenu.map(keyedItems) ?? []
       guard !item.keyEquivalent.isEmpty else { return found }
       var mask = item.keyEquivalentModifierMask
       if item.keyEquivalent != item.keyEquivalent.lowercased() { mask.insert(.shift) }
-      found.append((item.keyEquivalent.lowercased(), mask, item.title))
+      found.append((item.keyEquivalent.lowercased(), mask, item.title, item.action))
       return found
     }
   }
@@ -40,16 +40,40 @@ final class MenuKeyTests: XCTestCase {
   /// The web tab's four, on the keys they have everywhere else — ⌘[ / ⌘] for the history, ⌘R for
   /// the reload a page needs because it is the one surface on the desk that FSEvents does not
   /// re-read for you, and ⌘L for the address field.
+  ///
+  /// Picked out by action rather than by title: Session ▸ Back and Forward share the words and
+  /// walk the rail's history on keys of their own.
   func testTheBrowserKeepsABrowsersKeys() {
-    let found = keyedItems(of: AppDelegate.makeMainMenu())
-      .filter { ["Back", "Forward", "Reload", "Open Location…"].contains($0.item) }
-      .map { "\($0.item) \($0.key)" }
-      .sorted()
-    XCTAssertEqual(found, ["Back [", "Forward ]", "Open Location… l", "Reload r"])
+    let browser: [Selector] = [
+      #selector(WorkspaceWindowController.browserGoBack(_:)),
+      #selector(WorkspaceWindowController.browserGoForward(_:)),
+      #selector(WorkspaceWindowController.browserReload(_:)),
+      #selector(WorkspaceWindowController.browserFocusAddress(_:)),
+    ]
+    let items = keyedItems(of: AppDelegate.makeMainMenu())
+      .filter { $0.action.map(browser.contains) == true }
+    XCTAssertEqual(
+      items.map { "\($0.item) \($0.key)" }.sorted(),
+      ["Back [", "Forward ]", "Open Location… l", "Reload r"])
     XCTAssertTrue(
-      keyedItems(of: AppDelegate.makeMainMenu())
-        .filter { ["Back", "Forward", "Reload", "Open Location…"].contains($0.item) }
-        .allSatisfy { $0.mask == [.command] },
-      "plain ⌘, the way a browser has them")
+      items.allSatisfy { $0.mask == [.command] }, "plain ⌘, the way a browser has them")
+  }
+
+  /// The rail's history on Xcode's keys, ⌃⌘←/→ — the browser holds ⌘[ / ⌘], and a focused web
+  /// view claims every ⌘-key, so the two could not share a pair split by the focus.
+  func testTheRailsHistoryTakesXcodesKeys() {
+    let history: [Selector] = [
+      #selector(WorkspaceWindowController.goBackInSessions(_:)),
+      #selector(WorkspaceWindowController.goForwardInSessions(_:)),
+    ]
+    let items = keyedItems(of: AppDelegate.makeMainMenu())
+      .filter { $0.action.map(history.contains) == true }
+    XCTAssertEqual(
+      Set(items.map(\.key)),
+      [
+        String(UnicodeScalar(NSLeftArrowFunctionKey)!),
+        String(UnicodeScalar(NSRightArrowFunctionKey)!),
+      ])
+    XCTAssertTrue(items.allSatisfy { $0.mask == [.command, .control] })
   }
 }
