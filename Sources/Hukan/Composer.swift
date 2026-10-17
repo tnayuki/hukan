@@ -513,7 +513,10 @@ final class ComposerInput: LayerSurface {
   /// editing, which brings back what was attached to it rather than losing it.
   func attach(_ paths: [String]) {
     for path in paths where !attachments.contains(where: { $0.path == path }) {
-      let image = NSImage(contentsOfFile: path)
+      // Decided by the image pane's table, not by whether `NSImage` will load it: `NSImage`
+      // loads a `.pdf` too, and an image block of one is its first page as pixels — no text and
+      // no other page. A PDF goes as its path, which the agent's Read opens whole.
+      let image = ImageFile.covers(path: path) ? NSImage(contentsOfFile: path) : nil
       attachments.append(Attachment(path: path, isImage: image != nil))
       attachmentsStack.addArrangedSubview(makeChip(path: path, image: image))
     }
