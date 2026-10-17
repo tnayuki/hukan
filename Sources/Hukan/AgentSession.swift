@@ -1152,16 +1152,20 @@ final class AgentSession {
   /// open a turn (`deliver`) and the one that jumps a queued line straight to the engine
   /// mid-turn (`sendQueuedNow`), which is why it does not touch turn state itself.
   private func recordAndSend(_ text: String, attachments: [Attachment] = []) {
+    // A file that is not an image goes to the engine as its path in text, so the path is what
+    // the message says — and what it reads as when the transcript is read back.
+    let said = ([text] + attachments.filter { !$0.isImage }.map(\.path))
+      .filter { !$0.isEmpty }.joined(separator: "\n")
     if title == nil {
       // The same shape the store gives a title read back off disk, so a session's row does not
       // change form when it is restored (see `ClaudeSessionStore.titleLine`).
-      let guess = ClaudeSessionStore.titleLine(from: text)
+      let guess = ClaudeSessionStore.titleLine(from: said)
       title = guess.isEmpty ? (attachments.isEmpty ? "" : "画像") : guess
     }
     hasSent = true
     appendUserMessage(
       Transcript.userMessage(
-        text, imagePaths: attachments.filter(\.isImage).map(\.path),
+        said, imagePaths: attachments.filter(\.isImage).map(\.path),
         forkAnchor: lastRecordUUID))
     runner?.send(text, attachments: attachments)
   }

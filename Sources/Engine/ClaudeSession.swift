@@ -1465,10 +1465,14 @@ enum ClaudeSessionStore {
     case "user":
       guard record["isMeta"] as? Bool != true, let message = record["message"] as? [String: Any]
       else { return out }
-      for text in userTexts(in: message["content"]) {
+      // One message is one bubble, however many text blocks it was sent as: a file attached
+      // beside the words rides in as a block of its own holding its path, and drawn apart it
+      // read as two messages where the one sent here was drawn as one.
+      let texts = userTexts(in: message["content"])
+      if !texts.isEmpty {
         out.records.append(
           HistoryRecord(
-            kind: .userText(text), stamp: at, forkAnchor: forkAnchor,
+            kind: .userText(texts.joined(separator: "\n")), stamp: at, forkAnchor: forkAnchor,
             messageUUID: record["uuid"] as? String))
       }
 
