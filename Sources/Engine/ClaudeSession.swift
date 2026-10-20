@@ -1407,13 +1407,18 @@ enum ClaudeSessionStore {
   ///
   /// Nothing is dropped from disk by a rollback, so nothing here is a deletion: the abandoned
   /// branch is still in the file, simply no longer reachable from its tip.
-  private static func liveBranch(inTranscript data: Data) -> [[String: Any]] {
+  ///
+  /// `sidechain` reads a subagent's own file, where every record is marked as one — the mark that
+  /// in a session's file says "a subagent's, not this conversation's".
+  private static func liveBranch(inTranscript data: Data, sidechain: Bool = false) -> [[String:
+    Any]]
+  {
     var byUUID: [String: [String: Any]] = [:]
     var tip: String?
     for line in data.split(separator: 0x0a) {
       guard let record = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
         // Subagent chatter, which the live stream never surfaces either.
-        record["isSidechain"] as? Bool != true,
+        (record["isSidechain"] as? Bool == true) == sidechain,
         let type = record["type"] as? String, conversationTypes.contains(type),
         let uuid = record["uuid"] as? String
       else { continue }
@@ -1445,7 +1450,22 @@ enum ClaudeSessionStore {
   /// `Transcript.render` styles these records. One record per rendered block, each carrying its
   /// timestamp, so the renderer can place separators exactly where the parse saw a pause.
   static func history(id: UUID, worktree: URL) -> History? {
-    let url = transcriptURL(id: id, worktree: worktree)
+    history(at: transcriptURL(id: id, worktree: worktree))
+  }
+
+  /// The transcript of the subagent launched by the tool call `toolUseID` of session `id`, read the
+  /// way a session's is — the engine writes a subagent's conversation in the same format, beside
+  /// the session's own under `subagents/`. Nil when no record names that call.
+  static func subagentHistory(of id: UUID, toolUseID: String, worktree: URL) -> History? {
+    guard
+      let agent = subagents(of: id, worktree: worktree).first(where: { $0.toolUseID == toolUseID })
+    else { return nil }
+    let url = directory(for: worktree).appendingPathComponent(name(id))
+      .appendingPathComponent("subagents").appendingPathComponent("agent-\(agent.agentID).jsonl")
+    return history(at: url, sidechain: true)
+  }
+
+  static func history(at url: URL, sidechain: Bool = false) -> History? {
     guard let data = try? Data(contentsOf: url) else { return nil }
 
     var records: [HistoryRecord] = []
@@ -1461,7 +1481,7 @@ enum ClaudeSessionStore {
     // it is read separately rather than from the walk below.
     title = aiTitle(inTranscript: data)
 
-    let branch = liveBranch(inTranscript: data)
+    let branch = liveBranch(inTranscript: data, sidechain: sidechain)
     for record in branch {
       let read = parsed(record)
       records.append(contentsOf: read.records)
@@ -1541,7 +1561,8 @@ enum ClaudeSessionStore {
             HistoryRecord(
               kind: .toolUse(
                 name: block["name"] as? String ?? "tool",
-                input: block["input"] as? [String: Any] ?? [:]), stamp: at))
+                input: block["input"] as? [String: Any] ?? [:]), stamp: at,
+              toolUseID: block["id"] as? String))
         default:
           continue
         }

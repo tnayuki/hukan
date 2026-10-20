@@ -23,12 +23,20 @@ public final class ToolCallToken {
   /// The opened block renders `full` as markdown rather than a monospace code slab — for a tool
   /// whose payload is prose to read (ExitPlanMode's plan), not a command to glance at.
   public let rendersMarkdown: Bool
+  /// For an `Agent` call, the conversation of the subagent it launched, rendered — asked for when
+  /// the call is opened, since that is the one moment it is read, and nil when there is none (an
+  /// engine that kept no record of it, or a call that has not started one yet).
+  public let subagent: (() -> NSAttributedString?)?
 
-  public init(name: String, summary: String, full: String, rendersMarkdown: Bool = false) {
+  public init(
+    name: String, summary: String, full: String, rendersMarkdown: Bool = false,
+    subagent: (() -> NSAttributedString?)? = nil
+  ) {
     self.name = name
     self.summary = summary
     self.full = full
     self.rendersMarkdown = rendersMarkdown
+    self.subagent = subagent
   }
 }
 
@@ -878,7 +886,18 @@ public enum Transcript {
     name == "AskUserQuestion" || name == "TaskCreate" || name == "TaskUpdate"
   }
 
-  public static func toolUse(name: String, input: [String: Any]) -> NSAttributedString {
+  /// The tools that launch a subagent — `Agent`, and `Task`, its name in engines before it.
+  public static func launchesSubagent(tool name: String) -> Bool {
+    name == "Agent" || name == "Task"
+  }
+
+  /// `subagent`, for a call that launches one, is where its conversation is read from when the call
+  /// is opened (see `ToolCallToken.subagent`). A subagent is no row on the rail, so the call that
+  /// sent it is where what it did is read — in the conversation that sent it, at the point it was
+  /// sent.
+  public static func toolUse(
+    name: String, input: [String: Any], subagent: (() -> NSAttributedString?)? = nil
+  ) -> NSAttributedString {
     // Nothing at all for a call that has a card — and nothing rather than a filter in `render`,
     // so the time separators land in exactly the same places whether a conversation is rendered
     // whole or in slices (see `render`).
@@ -902,8 +921,11 @@ public enum Transcript {
     // Both forms get the same top and bottom breathing room, so a tool call sits apart from the
     // prose around it and from the next call instead of crowding against them.
     let result = NSMutableAttributedString(attributedString: spacer(7))
-    if let argument, argument.full != argument.summary {
-      let token = ToolCallToken(name: name, summary: argument.summary, full: argument.full)
+    // A subagent's conversation is something to open whatever the prompt's length.
+    let child = launchesSubagent(tool: name) ? subagent : nil
+    if let argument, argument.full != argument.summary || child != nil {
+      let token = ToolCallToken(
+        name: name, summary: argument.summary, full: argument.full, subagent: child)
       result.append(toolCallLinkRun(token))
     } else {
       result.append(
@@ -961,9 +983,35 @@ public enum Transcript {
       ])
     result.append(NSAttributedString(string: "\n", attributes: [.font: mono]))
     result.append(codeBlock(token.full.components(separatedBy: "\n")))
+    if let child = token.subagent?(), child.length > 0 {
+      result.append(subagentBlock(child))
+    }
     result.addAttributes(
       [toolTokenKey: token, toolExpandedKey: true],
       range: NSRange(location: 0, length: result.length))
+    return result
+  }
+
+  /// A subagent's conversation inside the call that launched it, under a line saying whose it is.
+  /// Read-only through and through: the folds and links of its own tool calls are taken off, since
+  /// a click inside the opened call already means "fold the call", and a call inside it that also
+  /// answered to a click would leave which one the click meant to chance. Its messages lose the
+  /// marks a fork or a rollback hangs off, too — that conversation is not this session's to cut.
+  static func subagentBlock(_ child: NSAttributedString) -> NSAttributedString {
+    let result = NSMutableAttributedString(attributedString: spacer(4))
+    result.append(
+      NSAttributedString(
+        string: "Subagent's transcript\n",
+        attributes: [
+          .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+          .foregroundColor: NSColor.tertiaryLabelColor,
+        ]))
+    let body = NSMutableAttributedString(attributedString: child)
+    let whole = NSRange(location: 0, length: body.length)
+    for key in [NSAttributedString.Key.link, toolTokenKey, toolExpandedKey] {
+      body.removeAttribute(key, range: whole)
+    }
+    result.append(body)
     return result
   }
 

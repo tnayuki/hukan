@@ -28,12 +28,19 @@ struct HistoryRecord {
   /// record before a message, while `rewind_conversation` is told the message itself. Carried
   /// only for `userText`, the one kind either verb can be aimed at.
   let messageUUID: String?
+  /// A tool call's own id, which is what names the subagent an `Agent` call launched in the
+  /// engine's record of it (`toolUseId`). Carried only for `toolUse`.
+  let toolUseID: String?
 
-  init(kind: Kind, stamp: Date?, forkAnchor: String? = nil, messageUUID: String? = nil) {
+  init(
+    kind: Kind, stamp: Date?, forkAnchor: String? = nil, messageUUID: String? = nil,
+    toolUseID: String? = nil
+  ) {
     self.kind = kind
     self.stamp = stamp
     self.forkAnchor = forkAnchor
     self.messageUUID = messageUUID
+    self.toolUseID = toolUseID
   }
 }
 
@@ -48,8 +55,12 @@ extension Transcript {
   /// `render(rest, previousStamp: prefix's last stamp)` are the same text, so a transcript
   /// loaded tail-first ends up byte-identical to one loaded whole, and every offset computed
   /// against a full render (the rail's search hits) stays true once the prefix lands.
+  ///
+  /// `subagent` is how an opened `Agent` call finds the conversation of the subagent it launched:
+  /// given the call's id, the rendering of that conversation, asked for when the call is opened.
   static func render(
-    _ records: [HistoryRecord], previousStamp: Date? = nil
+    _ records: [HistoryRecord], previousStamp: Date? = nil,
+    subagent: ((String) -> NSAttributedString?)? = nil
   ) -> NSAttributedString {
     let result = NSMutableAttributedString()
     var previous = previousStamp
@@ -72,7 +83,8 @@ extension Transcript {
         result.append(error(body))
         result.append(text("\n"))
       case .toolUse(let name, let input):
-        result.append(toolUse(name: name, input: input))
+        let child = record.toolUseID.flatMap { id in subagent.map { find in { find(id) } } }
+        result.append(toolUse(name: name, input: input, subagent: child))
       }
     }
     return result

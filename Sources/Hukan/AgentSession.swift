@@ -371,6 +371,27 @@ final class AgentSession {
   /// git still lists is the workspace's to answer.
   private(set) var subagentWorktrees: [URL] = []
 
+  /// The conversation of the subagent the tool call `toolUseID` launched, rendered for its place
+  /// inside that call: read from the engine's record of it when the call is opened, which is the
+  /// one moment it is wanted. Its first message is the prompt the call already shows above it, so
+  /// it is left out; and its messages carry no fork or rollback anchor, that conversation not
+  /// being this session's to cut.
+  func subagentTranscript(forToolUseID toolUseID: String) -> NSAttributedString? {
+    guard let home = lastKnownWorktree,
+      let history = ClaudeSessionStore.subagentHistory(of: id, toolUseID: toolUseID, worktree: home)
+    else { return nil }
+    var records = history.records.map {
+      HistoryRecord(kind: $0.kind, stamp: $0.stamp, toolUseID: $0.toolUseID)
+    }
+    if case .userText = records.first?.kind { records.removeFirst() }
+    return Transcript.render(records)
+  }
+
+  /// What a render of this session's conversation hands an `Agent` call to open its subagent with.
+  private var subagentRenderer: (String) -> NSAttributedString? {
+    { [weak self] toolUseID in self?.subagentTranscript(forToolUseID: toolUseID) }
+  }
+
   /// Read the subagents' records again, off the main thread.
   func refreshSubagents() {
     guard let home = lastKnownWorktree else { return }
@@ -685,6 +706,7 @@ final class AgentSession {
     guard !hasLoadedHistory else { return }
     hasLoadedHistory = true
     let id = self.id
+    let subagent = subagentRenderer
     DispatchQueue.global(qos: .userInitiated).async {
       guard let history = ClaudeSessionStore.history(id: id, worktree: worktreeURL),
         !history.records.isEmpty
@@ -693,7 +715,7 @@ final class AgentSession {
       let cut = max(0, records.count - Self.historySliceCount)
       let prefix = Array(records[..<cut])
       let rendered = Transcript.render(
-        Array(records[cut...]), previousStamp: Self.lastStamp(of: prefix))
+        Array(records[cut...]), previousStamp: Self.lastStamp(of: prefix), subagent: subagent)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.pendingPrefix = prefix
@@ -776,7 +798,8 @@ final class AgentSession {
   /// uses, threaded through `lastStamp` so a pause the holder took draws its separator exactly
   /// where a whole-file render would have put one.
   private func appendFollowed(_ records: [HistoryRecord]) {
-    let rendered = Transcript.render(records, previousStamp: lastStamp)
+    let rendered = Transcript.render(
+      records, previousStamp: lastStamp, subagent: subagentRenderer)
     guard rendered.length > 0 else { return }
     append(rendered)
     if let stamp = records.compactMap(\.stamp).last { lastStamp = stamp }
@@ -867,8 +890,10 @@ final class AgentSession {
     let cut = all ? 0 : max(0, pendingPrefix.count - Self.historySliceCount)
     let remaining = Array(pendingPrefix[..<cut])
     let slice = Array(pendingPrefix[cut...])
+    let subagent = subagentRenderer
     DispatchQueue.global(qos: .userInitiated).async {
-      let rendered = Transcript.render(slice, previousStamp: Self.lastStamp(of: remaining))
+      let rendered = Transcript.render(
+        slice, previousStamp: Self.lastStamp(of: remaining), subagent: subagent)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.pendingPrefix = remaining
@@ -2035,7 +2060,9 @@ final class AgentSession {
         // replayed conversation reading the same way as a live one.
         guard !Transcript.hasOwnCard(tool: name) else { continue }
         markTime()
-        append(Transcript.toolUse(name: name, input: input))
+        let renderer = subagentRenderer
+        let subagent = (block["id"] as? String).map { id in { renderer(id) } }
+        append(Transcript.toolUse(name: name, input: input, subagent: subagent))
       }
 
     case "user":

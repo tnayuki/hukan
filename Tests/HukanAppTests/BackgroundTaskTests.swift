@@ -127,4 +127,48 @@ final class SubagentRowTests: XCTestCase {
     XCTAssertEqual(made.description, "Create sub.txt and commit")
     XCTAssertNil(found.first { $0.agentID == "c1d2" }?.worktree)
   }
+
+  /// Opening the `Agent` call that launched a subagent reads the subagent's own conversation into
+  /// it — a file whose every record is marked as a sidechain, the mark a session's own file is read
+  /// past — under the prompt, which its first message would only repeat, and with nothing in it
+  /// that answers a click.
+  func testOpeningAnAgentCallReadsItsSubagentsConversationIntoIt() throws {
+    let checkout = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let session = AgentSession(worktreeID: UUID())
+    let store = ClaudeSessionStore.directory(for: checkout)
+    let directory = store.appendingPathComponent(ClaudeSessionStore.name(session.id))
+      .appendingPathComponent("subagents")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: store) }
+    try Data(#"{"description":"Write tests","toolUseId":"toolu_01"}"#.utf8).write(
+      to: directory.appendingPathComponent("agent-a0b7.meta.json"))
+    let lines = [
+      #"{"type":"user","isSidechain":true,"uuid":"u1","parentUuid":null,"#
+        + #""message":{"role":"user","content":"Write the tag tests"}}"#,
+      #"{"type":"assistant","isSidechain":true,"uuid":"a1","parentUuid":"u1","#
+        + #""message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_09","#
+        + #""name":"Bash","input":{"command":"swift test"}}]}}"#,
+      #"{"type":"assistant","isSidechain":true,"uuid":"a2","parentUuid":"a1","#
+        + #""message":{"role":"assistant","content":[{"type":"text","text":"All tests pass."}]}}"#,
+    ]
+    try Data((lines.joined(separator: "\n") + "\n").utf8).write(
+      to: directory.appendingPathComponent("agent-a0b7.jsonl"))
+    session.loadHistoryIfNeeded(at: checkout)
+
+    let child = try XCTUnwrap(session.subagentTranscript(forToolUseID: "toolu_01"))
+    XCTAssertTrue(child.string.contains("All tests pass."), child.string)
+    XCTAssertTrue(child.string.contains("Bash"), "its own tool calls are there too")
+    XCTAssertFalse(child.string.contains("Write the tag tests"), "the prompt is shown once, above")
+    XCTAssertNil(session.subagentTranscript(forToolUseID: "toolu_99"), "a call with no record")
+
+    let token = ToolCallToken(
+      name: "Agent", summary: "Write the tag tests", full: "Write the tag tests",
+      subagent: { child })
+    let opened = Transcript.toolCallExpandedRun(token)
+    XCTAssertTrue(opened.string.contains("Subagent's transcript"))
+    let body = (opened.string as NSString).range(of: "All tests pass.")
+    XCTAssertNil(
+      opened.attribute(.link, at: body.location, effectiveRange: nil),
+      "nothing inside answers a click, which belongs to the call around it")
+  }
 }

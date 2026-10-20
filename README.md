@@ -93,7 +93,8 @@ right-click; the window keeps its choice across a relaunch. A session whose agen
 subagents off says so on its row, a line for each one working — what it was sent to do and the
 last tool it used, three at most and the rest counted — and a
 worktree a subagent made (`isolation: "worktree"`) is listed under the branch of the session that
-sent it, with what has changed in it.
+sent it, with what has changed in it. What a subagent did is read in the transcript: opening the
+`Agent` call that sent it shows the subagent's own conversation under its prompt.
 A worktree is not a row of its own, so one with no session in it is not on the rail. An agent
 moving worktree (`EnterWorktree`) takes its session, and its desk, with it, and leaving it
 (`ExitWorktree`) brings the session back to the worktree it was started from; the row stays where

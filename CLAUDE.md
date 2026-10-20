@@ -880,6 +880,14 @@ Workspace (one window)
   record beside the transcript (`subagents/*.meta.json`) — the record and not the worktree's
   `agent-<id>` name, which is a convention. Read when one starts or reports and when the session
   is opened, so a session never opened in this window says nothing of what its subagents left.
+  **What a subagent did is read inside the call that sent it.** Opening an `Agent` line in the
+  transcript puts the subagent's own conversation under its prompt — the engine's file for it,
+  `subagents/agent-<id>.jsonl`, found by the call's id in the record, and read when the line is
+  opened, the one moment it is wanted. That file is all sidechain, the mark a session's own file is
+  read past, so it is read with the mark rather than without. Inside, nothing answers a click: a
+  click in an opened call already means fold the call, and a nested call that also took one would
+  leave which was meant to chance; and its messages carry no fork or rollback mark, that
+  conversation not being the session's to cut.
   **The order is the window's choice of three, and only an order.** When you last instructed a
   session is the default and the one the ages down the trailing edge read in; by branch, and by
   the value of one *kind* of tag, are the other two — the kind because a session carries several
