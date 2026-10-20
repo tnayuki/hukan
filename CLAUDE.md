@@ -988,7 +988,10 @@ Workspace (one window)
   handful of system colours rather than a table, so a kind nobody planned for is coloured the
   moment it is written, and it is a hash that does not reseed per process, since the colour is the
   only place the kind is shown and it has to be the same one tomorrow. Two kinds can land on one
-  colour; the full tag is the chip's tooltip. **The chips go on lines of their own under the
+  colour; the full tag is the chip's tooltip. **Every row draws its chips in one order**, by kind
+  and then by value, so a kind stands in the same place down the column whatever order each list
+  was written in — the drawing only, the list being kept as the agent or the editor wrote it, or a
+  rewrite and the editor's text would disagree with what is stored. **The chips go on lines of their own under the
   title, wrapping onto as many as they need.** On the title's line one of the two had to give
   way: the chips taking precedence left a session with a ticket and a PR showing two letters of
   its title, and a floor under the title squeezed the status dot and cut the ticket to its first

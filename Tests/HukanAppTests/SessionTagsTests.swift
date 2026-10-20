@@ -148,6 +148,14 @@ final class SessionTagsTests: XCTestCase {
     XCTAssertEqual(outline.rect(ofRow: heading).height, outline.rowHeight)
   }
 
+  /// Every row draws its tags in one order — by kind, then by value, a tag with no kind last — so
+  /// the same kind stands in the same place down the rail, whatever order each list was written in.
+  func testARowDrawsItsTagsByKindThenValue() {
+    XCTAssertEqual(
+      SessionTags.displayOrder(["urgent", "PR: #58", "JIRA: HUK-10", "jira: HUK-9"]),
+      ["jira: HUK-9", "JIRA: HUK-10", "PR: #58", "urgent"])
+  }
+
   func testChipsWrapOntoAnotherLineWhenTheyDoNotFit() {
     let tags = ["JIRA: HUK-131", "JIRA: HUK-140", "PR: #58886"]
     let one = TagFlowView.height(of: tags, width: 1000)

@@ -52,6 +52,26 @@ enum SessionTags {
   /// The page the tag names, or nil when it names none.
   static func url(of tag: String) -> URL? { parts(of: tag).address.flatMap(URL.init(string:)) }
 
+  /// The order a row draws its tags in: by kind, then by value, so the same kind stands in the
+  /// same place on every row and a column of them reads down; a tag with no kind after the rest.
+  /// Only the drawing — the list is kept as it was written, by the agent or in the editor, so a
+  /// rewrite of it and the text in the editor never disagree with what was stored.
+  static func displayOrder(_ tags: [String]) -> [String] {
+    tags.enumerated().sorted { a, b in
+      let (x, y) = (split(a.element), split(b.element))
+      switch (x.kind, y.kind) {
+      case (let p?, let q?):
+        let kind = p.localizedStandardCompare(q)
+        if kind != .orderedSame { return kind == .orderedAscending }
+      case (.some, nil): return true
+      case (nil, .some): return false
+      case (nil, nil): break
+      }
+      let value = x.value.localizedStandardCompare(y.value)
+      return value == .orderedSame ? a.offset < b.offset : value == .orderedAscending
+    }.map(\.element)
+  }
+
   /// The kind and the value of one tag. Split at the first colon, so a value may carry colons of
   /// its own; a tag with nothing on one side of it has no kind and is all value.
   static func split(_ tag: String) -> (kind: String?, value: String) {

@@ -396,7 +396,8 @@ repository's rows leave when it is closed.
 
 A session can carry tags — the ticket, the issue, the pull request it is working on — so a row
 says what it is for at a glance. Each is written `kind: value`, `JIRA: ABC-123` or `PR: #42`; the
-row shows the values under its title, wrapping onto further lines when there are many, and the
+row shows the values under its title, wrapping onto further lines when there are many, in the
+same order on every row — by kind, then by value — and the
 kind picks each one's colour, the same colour for the same kind in every window and after every
 relaunch. A tag can carry the address of what it names, and then clicking it opens that page on
 the session's desk — ⌘-click sends it to the default browser, as a link in the transcript does.

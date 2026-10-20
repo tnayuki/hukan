@@ -1686,14 +1686,15 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       return RowDetail(
         branch: .init(
           name: gone.branch ?? gone.url.lastPathComponent, isGone: true, path: gone.url.path),
-        tags: session.tags)
+        tags: SessionTags.displayOrder(session.tags))
     }
     guard let worktree = workspace?.worktree(id: session.worktreeID) ?? node.worktree else {
       return nil
     }
     let stat = worktree.diffstat
     return RowDetail(
-      branch: .init(name: worktree.displayName, path: worktree.url.path), tags: session.tags,
+      branch: .init(name: worktree.displayName, path: worktree.url.path),
+      tags: SessionTags.displayOrder(session.tags),
       changes: stat.added + stat.removed > 0
         ? Self.changes(added: stat.added, removed: stat.removed) : nil)
   }
