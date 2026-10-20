@@ -212,6 +212,33 @@ final class DeskOwnershipTests: XCTestCase {
     XCTAssertEqual(restored.takeRestoredTabSelection(), [:])
   }
 
+  /// A session stranded by its worktree going comes back after a relaunch: its transcript is
+  /// under the gone checkout, which no listing of the worktrees there are reaches, so the mark it
+  /// carries is what discovery looks there by.
+  func testAStrandedSessionComesBackAfterARelaunch() throws {
+    let main = worktreeRoot([]).resolvingSymlinksInPath()
+    let gone = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let id = UUID()
+    transcript(id, at: gone.path)
+
+    let workspace = Workspace()
+    let home = workspace.addWorktree(main)
+    let session = AgentSession(id: id, worktreeID: home.id, isDetached: true)
+    session.goneWorktree = GoneWorktree(url: gone, branch: "feature")
+    workspace.sessions = [session]
+
+    let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+    workspace.encodeState(to: archiver)
+    archiver.finishEncoding()
+    let restored = Workspace()
+    restored.decodeState(from: try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData))
+
+    let back = try XCTUnwrap(restored.session(id: id), "discovery found it under the gone checkout")
+    XCTAssertEqual(back.goneWorktree, GoneWorktree(url: gone, branch: "feature"))
+    XCTAssertEqual(restored.worktree(id: back.worktreeID)?.url.path, main.path)
+    XCTAssertEqual(restored.transcriptHome(of: back), gone)
+  }
+
   /// A desk that took only its own worktree's tabs keeps the order and the showing tab as they
   /// were saved.
   func testALegacyStateKeepsTheOrderOfADeskThatTookOnlyItsOwn() throws {

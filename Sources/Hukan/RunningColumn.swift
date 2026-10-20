@@ -734,8 +734,8 @@ final class RunningColumnViewController: NSViewController {
     // from the engine's store rather than restored from anything hukan saved. Unlike the
     // history this is not once-only: the store moves under a session nobody is watching (a
     // second window, an engine hukan does not own), so every open re-reads it.
-    if let session, let worktree = workspace?.worktree(id: session.worktreeID) {
-      session.loadHistoryIfNeeded(at: worktree.url)
+    if let session, let home = workspace?.transcriptHome(of: session) {
+      session.loadHistoryIfNeeded(at: home)
       session.refreshTasks()
       // Opening a session held by another process is what makes its file worth watching: from
       // here on the pane is behind whatever that process writes unless the file is followed.

@@ -200,9 +200,9 @@ final class RailKeyboardTests: XCTestCase {
 
   /// The rows are redrawn in place when the tree's shape is unchanged, so what a row shows still
   /// follows the model — the redraw must not be skipped along with the rebuild.
-  /// The linked worktrees sit under a `Worktrees` section of their own, which folds like the
-  /// other headings and is remembered.
-  func testLinkedWorktreesSitUnderAWorktreesSectionThatFolds() {
+  /// A linked worktree is no row of its own: its session stands under the repository heading
+  /// beside main's, and a worktree with no session there adds nothing to the rail at all.
+  func testALinkedWorktreesSessionStandsUnderTheHeadingBesideMains() {
     let (rail, workspace, _) = rail(sessionCount: 1)
     let repo = workspace.repositories[0]
     let linked = Worktree(
@@ -210,18 +210,18 @@ final class RailKeyboardTests: XCTestCase {
     repo.worktrees.append(linked)
     rail.reload()
     let outline = rail.outlineViewForTesting
-    // Rows: heading, main's session, Worktrees, the linked worktree.
-    XCTAssertEqual(outline.numberOfRows, 4)
-    let section = outline.item(atRow: 2) as? RailNode
-    XCTAssertEqual(section?.section, .worktrees)
-    XCTAssertEqual((outline.item(atRow: 3) as? RailNode)?.worktree?.id, linked.id)
+    XCTAssertEqual(
+      outline.numberOfRows, 2, "heading and main's session — the empty worktree adds none")
 
-    // A label, not a destination: → from main's session steps past nothing selectable, so the
-    // fold is driven from the section row selected programmatically.
-    workspace.collapsedWorktreeSections = [repo.id]
+    let there = AgentSession(worktreeID: linked.id)
+    there.lastInstructedAt = Date()
+    workspace.sessions.append(there)
     rail.reload()
-    XCTAssertEqual(outline.numberOfRows, 3, "folded, the linked worktree is gone from the rows")
-    XCTAssertEqual(rail.outlineViewForTesting.isItemExpanded(outline.item(atRow: 2)!), false)
+    XCTAssertEqual(outline.numberOfRows, 3)
+    let row = outline.item(atRow: 1) as? RailNode
+    XCTAssertEqual(row?.session?.id, there.id, "newest instruction first, at the heading's level")
+    XCTAssertEqual(outline.level(forRow: 1), outline.level(forRow: 2))
+    XCTAssertEqual(rail.detail(of: row!)?.branch.name, "feature", "and it says where it stands")
   }
 
   func testAnInPlaceReloadStillRedrawsWhatARowShows() {

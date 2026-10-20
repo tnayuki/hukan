@@ -1,6 +1,13 @@
 import AppKit
 import Foundation
 
+/// A worktree git no longer lists, as a session that stood in it remembers it: where it was, and
+/// the branch it had.
+struct GoneWorktree: Equatable {
+  let url: URL
+  let branch: String?
+}
+
 /// One window is one Workspace, holding several worktrees.
 final class Workspace {
   /// The open repositories, each owning the worktrees git enumerates for it. This is the one
@@ -252,13 +259,10 @@ final class Workspace {
   /// The rail's disclosure state, held here (not on the rail view) so it survives a restart the
   /// same way the column widths and selection do — it is display state a reload rebuilds, so the
   /// choices have to outlive both the reload and the process. Each set is an exception to one
-  /// default, which is what a single default buys: a repository, a worktree and a Worktrees
-  /// section stand open unless listed, an Archived section stays folded unless listed. Keyed by
-  /// repository id, worktree id, worktree id and repository id respectively.
+  /// default, which is what a single default buys: a repository stands open unless listed, its
+  /// Archived section stays folded unless listed. Both keyed by repository id.
   var collapsedRepositories: Set<String> = []
-  var collapsedWorktrees: Set<String> = []
   var expandedArchives: Set<String> = []
-  var collapsedWorktreeSections: Set<String> = []
 
   /// The sessions you archived — put below the fold because you are done with them. Held here
   /// rather than on `AgentSession` for the reason the rail's order is: sessions are rebuilt from
@@ -291,18 +295,12 @@ final class Workspace {
     return !session.isWorking && session.state != .needsAttention
   }
 
-  /// Only main's sessions can be archived. A linked worktree *is* the task: when it lands, the
-  /// `git worktree remove` that ends it takes the worktree off the rail and its sessions with it,
-  /// so nothing accumulates there to need putting away. The long tail is main's alone — the
-  /// one-shot questions and the attempts that went nowhere, asked where you happened to be
-  /// standing — which is the only place the fold earns its keep.
-  ///
-  /// A flag on a session that has since moved into a worktree (`EnterWorktree`) goes inert rather
-  /// than being cleared: it is still true that you archived it, and coming home is what makes it
-  /// mean something again.
-  func canArchive(_ session: AgentSession) -> Bool {
-    worktree(id: session.worktreeID)?.isMain == true
-  }
+  /// Any session can be archived. It was main's alone while the rail was arranged by worktree,
+  /// on the grounds that a linked worktree *is* the task and its `git worktree remove` took the
+  /// sessions off the rail with it; now that a worktree going leaves its conversations standing
+  /// (see `strandSessions`), the long tail grows wherever the work was, and the fold has to be
+  /// able to reach all of it.
+  func canArchive(_ session: AgentSession) -> Bool { true }
 
   /// Archive or unarchive, and say whether anything moved. Unarchiving a session that only *looks*
   /// unarchived because it is awake still clears the flag, which is why this reads the set rather
@@ -518,6 +516,48 @@ final class Workspace {
 
   func session(id: UUID) -> AgentSession? { sessions.first { $0.id == id } }
 
+  /// The checkout a session's transcript is filed under in Claude Code's store — its worktree's,
+  /// or, for a session whose worktree git stopped listing, that worktree's still: `EnterWorktree`
+  /// moved the transcript there and nothing moves it back. Every read of a transcript asks this,
+  /// so a stranded session's conversation reads, searches and names itself like any other.
+  func transcriptHome(of session: AgentSession) -> URL? {
+    session.goneWorktree?.url ?? worktree(id: session.worktreeID)?.url
+  }
+
+  /// A stranded session's mark as the restorable state carries it across a relaunch: the
+  /// worktree that went, the checkout the session was put on, and that checkout's repository for
+  /// when the id has not come back.
+  struct Stranding {
+    let worktree: GoneWorktree
+    let home: UUID
+    let repositoryID: String
+  }
+  /// The strandings decoded from restorable state, keyed by session id. Discovery reads them every
+  /// rebuild — a stranded session's transcript is in no listed worktree, so this is the only way
+  /// it is found — and the encoder writes back only those whose session is still here.
+  var restoredStrandings: [UUID: Stranding] = [:]
+
+  /// The repository's main checkout — where a session whose worktree is gone carries on.
+  func mainWorktree(ofRepository repositoryID: String) -> Worktree? {
+    worktrees.first { $0.repositoryID == repositoryID && $0.isMain }
+  }
+
+  /// git stopped listing `worktree` while sessions stood in it — the `git worktree remove` a task
+  /// ends with, run from a shell rather than through `ExitWorktree`. The conversations are not over
+  /// because the checkout is, so they do not leave with it: each is put on the main checkout, where
+  /// a resumed engine carries on (it says the worktree is gone and clears its binding), and keeps
+  /// the worktree as a mark on its row. An engine still running there is stopped, its directory
+  /// being gone. Nothing is stranded where there is no main checkout to stand on.
+  func strandSessions(in worktree: Worktree) {
+    guard let main = mainWorktree(ofRepository: worktree.repositoryID), main.id != worktree.id
+    else { return }
+    for session in sessions(inWorktree: worktree.id) {
+      if session.isRunning { session.stop() }
+      session.goneWorktree = GoneWorktree(url: worktree.url, branch: worktree.branch)
+      session.worktreeID = main.id
+    }
+  }
+
   /// A desk is a session's: its tabs go where the session goes, which is what lets the worktree
   /// stop being the thing the window is arranged under.
   func terminals(inDesk deskID: UUID) -> [TerminalSession] {
@@ -561,11 +601,9 @@ final class Workspace {
     let archived: [RailEntry]
   }
 
-  /// A repository for the rail: its main worktree folded into the heading itself (the default,
-  /// the common dir's parent) plus its linked worktrees, each a heading of its own — and each a
-  /// *child* of the repository rather than a top-level row beside it, which is what lets the
-  /// outline own the fold, the indent and the drag, and what leaves nothing for the gutter's
-  /// hairline to say.
+  /// A repository for the rail: its sessions, whichever worktree each stands in, and the ones you
+  /// archived — and, for the readers that report on worktrees (`hukan status`, the outside
+  /// client's session list), the same sessions split by worktree, main first.
   struct RailRepository {
     let repositoryID: String
     let repositoryName: String
@@ -574,19 +612,26 @@ final class Workspace {
     /// Main first, then the linked ones — for the readers that want the worktrees without caring
     /// which is which (`hukan status`, and anything counting).
     var worktrees: [RailWorktree] { (main.map { [$0] } ?? []) + linked }
+    /// What the rail lists under the heading: every session of the repository, newest instruction
+    /// first. The worktree is no level of the rail's — it is where a session stands now, which an
+    /// agent's `EnterWorktree` changes without anyone choosing anything — so it rides on the row.
+    var sessions: [RailEntry] { Self.ordered(worktrees.flatMap(\.sessions)) }
+    var archived: [RailEntry] { Self.ordered(worktrees.flatMap(\.archived)) }
+
+    static func ordered(_ entries: [RailEntry]) -> [RailEntry] {
+      entries.sorted { lhs, rhs in
+        if lhs.session.lastInstructedAt != rhs.session.lastInstructedAt {
+          return lhs.session.lastInstructedAt > rhs.session.lastInstructedAt
+        }
+        return lhs.session.id.uuidString < rhs.session.id.uuidString
+      }
+    }
   }
 
   var railRepositories: [RailRepository] {
     func railWorktree(_ worktree: Worktree) -> RailWorktree {
-      let entries =
-        sessions(inWorktree: worktree.id)
-        .sorted { lhs, rhs in
-          if lhs.lastInstructedAt != rhs.lastInstructedAt {
-            return lhs.lastInstructedAt > rhs.lastInstructedAt
-          }
-          return lhs.id.uuidString < rhs.id.uuidString
-        }
-        .map { RailEntry(session: $0, worktree: worktree) }
+      let entries = RailRepository.ordered(
+        sessions(inWorktree: worktree.id).map { RailEntry(session: $0, worktree: worktree) })
       let archived = entries.filter { isArchived($0.session) }
       let plain = entries.filter { !isArchived($0.session) }
       return RailWorktree(worktree: worktree, sessions: plain, archived: archived)
@@ -616,15 +661,12 @@ final class Workspace {
     let terminals: [TerminalSession]
     let archivedSessionIDs: Set<UUID>
     let collapsedRepositories: Set<String>
-    let collapsedWorktrees: Set<String>
     let expandedArchives: Set<String>
-    let collapsedWorktreeSections: Set<String>
   }
 
   func detachRepository(_ id: String) -> DetachedRepository? {
     guard let repository = repositories.first(where: { $0.id == id }) else { return nil }
     let worktreeIDs = Set(repository.worktrees.map(\.id))
-    let keys = Set(worktreeIDs.map(\.uuidString))
     let movingSessions = sessions.filter { worktreeIDs.contains($0.worktreeID) }
     let sessionIDs = Set(movingSessions.map(\.id))
     let detached = DetachedRepository(
@@ -632,17 +674,13 @@ final class Workspace {
       terminals: terminals.filter { sessionIDs.contains($0.deskID) },
       archivedSessionIDs: archivedSessionIDs.intersection(sessionIDs),
       collapsedRepositories: collapsedRepositories.intersection([id]),
-      collapsedWorktrees: collapsedWorktrees.intersection(keys),
-      expandedArchives: expandedArchives.intersection(keys),
-      collapsedWorktreeSections: collapsedWorktreeSections.intersection([id]))
+      expandedArchives: expandedArchives.intersection([id]))
     repositories.removeAll { $0.id == id }
     sessions.removeAll { worktreeIDs.contains($0.worktreeID) }
     terminals.removeAll { sessionIDs.contains($0.deskID) }
     archivedSessionIDs.subtract(sessionIDs)
     collapsedRepositories.remove(id)
-    collapsedWorktrees.subtract(keys)
-    expandedArchives.subtract(keys)
-    collapsedWorktreeSections.remove(id)
+    expandedArchives.remove(id)
     for i in groups.indices { groups[i].repositoryIDs.removeAll { $0 == id } }
     railOrder.removeAll { $0 == "r:" + id }
     if selectedWorktreeID.map({ worktreeIDs.contains($0) }) == true {
@@ -664,9 +702,7 @@ final class Workspace {
     terminals.append(contentsOf: detached.terminals)
     archivedSessionIDs.formUnion(detached.archivedSessionIDs)
     collapsedRepositories.formUnion(detached.collapsedRepositories)
-    collapsedWorktrees.formUnion(detached.collapsedWorktrees)
     expandedArchives.formUnion(detached.expandedArchives)
-    collapsedWorktreeSections.formUnion(detached.collapsedWorktreeSections)
     for session in detached.sessions {
       session.onHeldChange = { [weak self] in self?.onSessionsChanged?() }
     }
@@ -735,8 +771,16 @@ final class Workspace {
     for repository in repositories { repository.worktrees.removeAll { doomed.contains($0.id) } }
     syncWatchers()
     if let selected = selectedWorktreeID, doomed.contains(selected) {
-      selectedWorktreeID = worktrees.first?.id
-      selectedSessionID = nil
+      // A session stranded out of the worktree is still the one being looked at: the selection
+      // follows it onto the checkout it now stands in, rather than letting go of it.
+      if let session = selectedSessionID.flatMap(session(id:)),
+        !doomed.contains(session.worktreeID)
+      {
+        selectedWorktreeID = session.worktreeID
+      } else {
+        selectedWorktreeID = worktrees.first?.id
+        selectedSessionID = nil
+      }
     }
   }
 
@@ -751,6 +795,7 @@ final class Workspace {
   func returnSession(_ session: AgentSession, to url: URL) -> Bool {
     guard let home = worktree(atRoot: url) else { return false }
     session.worktreeID = home.id
+    session.goneWorktree = nil
     return true
   }
 
@@ -770,7 +815,7 @@ final class Workspace {
   @discardableResult
   func deleteSession(_ session: AgentSession) -> Bool {
     guard session.heldByPID == nil else { return false }
-    guard let worktree = worktree(id: session.worktreeID) else { return false }
+    guard let home = transcriptHome(of: session) else { return false }
     sessions.removeAll { $0 === session }
     // The archive flag goes with it. Nothing would read a flag for an id that no longer resolves,
     // but leaving it would keep the id in the stored set for as long as the window lives.
@@ -781,7 +826,7 @@ final class Workspace {
     // Held off `sessions` but held: the wait below is the app-quit teardown's business too.
     closingSessions.append(session)
     session.stop { [weak self] in
-      ClaudeSessionStore.delete(id: session.id, worktree: worktree.url)
+      ClaudeSessionStore.delete(id: session.id, worktree: home)
       self?.closingSessions.removeAll { $0 === session }
     }
     onSessionsChanged?()
@@ -937,9 +982,9 @@ final class Workspace {
     static let railOrder = "rail.order"
     static let collapsedGroups = "rail.collapsedGroups"
     static let collapsedRepositories = "rail.collapsedRepositories"
-    static let collapsedWorktrees = "rail.collapsedWorktrees"
+    // Keyed by repository id since the rail lists sessions under the repository alone; a key
+    // saved by worktree id names nothing now and leaves its Archived folded, which is its default.
     static let expandedArchives = "rail.expandedArchives"
-    static let collapsedWorktreeSections = "rail.collapsedWorktreeSections"
     // The sessions you put below the fold, by session id — the one piece of the rail's state
     // that is a decision rather than a disclosure. Strings like every other per-session map
     // here: secure restorable state keeps strings, numbers and arrays, and at a UUID apiece a
@@ -958,6 +1003,13 @@ final class Workspace {
     static let draftSessionIDs = "draft.ids"
     static let draftTexts = "draft.texts"
     // Each session's tags, keyed by session id; nested like `queue.messages`.
+    // Sessions whose worktree git stopped listing: the worktree, for the row's mark and for where
+    // the transcript is filed, and the checkout the session was put on.
+    static let strandedIDs = "stranded.ids"
+    static let strandedPaths = "stranded.paths"
+    static let strandedBranches = "stranded.branches"
+    static let strandedHomes = "stranded.homes"
+    static let strandedRepositories = "stranded.repositories"
     static let tagSessionIDs = "tags.ids"
     static let tagValues = "tags.values"
     // The rail's order: when you last instructed each session, as seconds since the reference
@@ -1050,10 +1102,7 @@ final class Workspace {
     coder.encode(columnWidths.map(NSNumber.init(value:)) as NSArray, forKey: Key.columnWidths)
     coder.encode(historyHeight, forKey: Key.historyHeight)
     coder.encode(Array(collapsedRepositories) as NSArray, forKey: Key.collapsedRepositories)
-    coder.encode(Array(collapsedWorktrees) as NSArray, forKey: Key.collapsedWorktrees)
     coder.encode(Array(expandedArchives) as NSArray, forKey: Key.expandedArchives)
-    coder.encode(
-      Array(collapsedWorktreeSections) as NSArray, forKey: Key.collapsedWorktreeSections)
     // Archived ids worth keeping: the live sessions that carry the flag, plus the ids no
     // discovery has claimed — those belong to repositories this window has not opened, and
     // dropping them would silently unarchive a whole repository the next time it is opened.
@@ -1094,6 +1143,29 @@ final class Workspace {
     let withDraft = sessions.filter { !$0.draft.isEmpty }
     coder.encode(withDraft.map(\.id.uuidString) as NSArray, forKey: Key.draftSessionIDs)
     coder.encode(withDraft.map(\.draft) as NSArray, forKey: Key.draftTexts)
+
+    // A stranding is kept while its session is here, and carried forward untouched while its
+    // repository is not open in this window — the archive flags' rule (see `unresolvedArchived`).
+    var strandings: [UUID: Stranding] = [:]
+    let openRepositories = Set(repositories.map(\.id))
+    for (id, mark) in restoredStrandings where !openRepositories.contains(mark.repositoryID) {
+      strandings[id] = mark
+    }
+    for session in sessions {
+      guard let mark = session.goneWorktree else { continue }
+      strandings[session.id] = Stranding(
+        worktree: mark, home: session.worktreeID,
+        repositoryID: worktree(id: session.worktreeID)?.repositoryID ?? "")
+    }
+    let stranded = strandings.sorted { $0.key.uuidString < $1.key.uuidString }
+    coder.encode(stranded.map(\.key.uuidString) as NSArray, forKey: Key.strandedIDs)
+    coder.encode(
+      stranded.map(\.value.worktree.url.path) as NSArray, forKey: Key.strandedPaths)
+    coder.encode(
+      stranded.map { $0.value.worktree.branch ?? "" } as NSArray, forKey: Key.strandedBranches)
+    coder.encode(stranded.map(\.value.home.uuidString) as NSArray, forKey: Key.strandedHomes)
+    coder.encode(
+      stranded.map(\.value.repositoryID) as NSArray, forKey: Key.strandedRepositories)
 
     let withTags = sessions.filter { !$0.tags.isEmpty }
     coder.encode(withTags.map(\.id.uuidString) as NSArray, forKey: Key.tagSessionIDs)
@@ -1209,9 +1281,7 @@ final class Workspace {
       (coder.decodeArrayOfObjects(ofClass: NSNumber.self, forKey: Key.columnWidths) ?? [])
       .map(\.doubleValue)
     collapsedRepositories = Set(strings(coder, Key.collapsedRepositories))
-    collapsedWorktrees = Set(strings(coder, Key.collapsedWorktrees))
     expandedArchives = Set(strings(coder, Key.expandedArchives))
-    collapsedWorktreeSections = Set(strings(coder, Key.collapsedWorktreeSections))
     // Both forms: the parsed set is what the rail reads, the raw strings are the
     // carry-forward for ids no session has claimed yet (see `unresolvedArchived`).
     let archived = strings(coder, Key.archivedSessionIDs)
@@ -1247,6 +1317,26 @@ final class Workspace {
     restoredDrafts = [:]
     for (index, idString) in draftIDs.enumerated() where index < draftTexts.count {
       restoredDrafts[idString] = draftTexts[index]
+    }
+
+    // Before discovery, which is what reads them: a stranded session is found nowhere else.
+    let strandedIDs = strings(coder, Key.strandedIDs)
+    let strandedPaths = strings(coder, Key.strandedPaths)
+    let strandedBranches = strings(coder, Key.strandedBranches)
+    let strandedHomes = strings(coder, Key.strandedHomes)
+    let strandedRepositories = strings(coder, Key.strandedRepositories)
+    restoredStrandings = [:]
+    for (index, idString) in strandedIDs.enumerated()
+    where index < strandedPaths.count && index < strandedHomes.count
+      && index < strandedRepositories.count
+    {
+      guard let id = UUID(uuidString: idString), let home = UUID(uuidString: strandedHomes[index])
+      else { continue }
+      let branch = index < strandedBranches.count ? strandedBranches[index] : ""
+      restoredStrandings[id] = Stranding(
+        worktree: GoneWorktree(
+          url: URL(fileURLWithPath: strandedPaths[index]), branch: branch.isEmpty ? nil : branch),
+        home: home, repositoryID: strandedRepositories[index])
     }
 
     let tagIDs = strings(coder, Key.tagSessionIDs)

@@ -2,7 +2,7 @@ import Foundation
 
 /// Where the rail has been, in the order it went there — what Back and Forward walk.
 ///
-/// A place is the session that was showing, or the worktree row when no session was named. A
+/// A place is the session that was showing, or the repository heading when none was named. A
 /// session is kept by its own id and not by the worktree it stood in: an agent's `EnterWorktree`
 /// moves a session without anyone choosing anything, and going back to it means going back to the
 /// conversation wherever it now lives, not to the checkout it left. That is also why the move

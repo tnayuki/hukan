@@ -29,16 +29,14 @@ final class RailNode: NSObject {
   private(set) var worktree: Worktree?
   private(set) var session: AgentSession?
   var children: [RailNode]
-  /// The two sub-headings a repository's rows carry. Both are labels over a run of rows rather
-  /// than destinations — selecting one selects nothing — and both fold, each against its own
-  /// default: `Worktrees` stands open unless its repository is in `collapsedWorktreeSections`,
-  /// `Archived` stays folded unless its worktree is in `expandedArchives`.
+  /// The sub-heading a repository's rows can carry: a label over a run of rows rather than a
+  /// destination — selecting it selects nothing — that stays folded unless its repository is in
+  /// `expandedArchives`.
   enum Section {
-    case worktrees, archived
+    case archived
   }
   let section: Section?
-  /// What the section's fold is remembered under: the repository id for `Worktrees`, the
-  /// worktree id for `Archived`.
+  /// What the section's fold is remembered under: its repository's id.
   let sectionKey: String?
 
   /// Take `other`'s state, keeping this instance. `other` was built for the same row — the same
@@ -66,15 +64,8 @@ final class RailNode: NSObject {
   var isSectionHeading: Bool { section != nil }
   /// The repository heading. It still carries main (selecting it selects main, so the row is a
   /// destination and not a bare label — an unselectable row here is what the selection restore's
-  /// fallback used to land on and stick to), but main now has a row of its own beneath it and
-  /// carries main's sessions. Told apart by `groupRepositoryID`.
+  /// fallback used to land on and stick to). Told apart by `groupRepositoryID`.
   var isRepositoryHeading: Bool { groupRepositoryID != nil && session == nil }
-  /// A worktree's heading, over its own sessions and reachable even when it has none. Every
-  /// worktree gets one, main included — that is what makes a repository's children homogeneous,
-  /// so the outline can own the indent and the fold instead of the rail drawing them.
-  var isWorktreeHeading: Bool {
-    worktree != nil && session == nil && groupRepositoryID == nil && section == nil
-  }
 
   /// A stable identity for this row across reloads — a session by its id, a group by its
   /// repository, an empty worktree by its own id. The rail compares these before and after a
@@ -94,16 +85,8 @@ final class RailNode: NSObject {
   var repositoryID: String? { groupRepositoryID ?? worktree?.repositoryID }
   private let groupRepositoryID: String?
 
-  /// Whether a heading's branch label would only repeat its directory name — the
-  /// `git worktree add ../<repo>-<branch>` shape, where the two strings say one thing twice.
-  /// A suffix, not a substring: "main" inside "domain" is a coincidence, not the convention.
-  static func branchRepeatsDirectory(directory: String, branch: String) -> Bool {
-    if directory == branch { return true }
-    return ["-", "_", "."].contains { directory.hasSuffix($0 + branch) }
-  }
-
   /// Whether this row is the one to land on when the prior selection is gone: the workspace's
-  /// session if it has one, else that session's — or the selected worktree's — heading. Both
+  /// session if it has one, else the selected worktree's repository heading. Both
   /// pointers are unwrapped before anything is compared, because `worktree?.id == worktreeID`
   /// matched nil against nil and so picked the first row carrying no worktree, which is a time
   /// section heading: a label `shouldSelectItem` refuses, that a programmatic `selectRowIndexes`
@@ -235,8 +218,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// rearranged; this only asks the window to redraw and re-record its state.
   var onReorderRepositories: (() -> Void)?
   var onNewSession: ((String) -> Void)?
-  /// A linked worktree heading's `+`: start a session in that specific worktree (the repository
-  /// heading's `+` starts one in main).
+  /// The heading's New Session In: start a session in that specific worktree (the heading's `+`
+  /// starts one in main).
   var onNewSessionInWorktree: ((UUID) -> Void)?
   /// A file row folded into the rail was picked (a single click): open it as a preview tab, the one
   /// reused by the next pick so tabs do not pile up.
@@ -321,9 +304,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   private struct Arrangement: Equatable {
     var groups: Set<String>
     var repositories: Set<String>
-    var worktrees: Set<String>
     var archives: Set<String>
-    var worktreeSections: Set<String>
     var results: Set<UUID>
     /// A results list and the tree never share a shape, but they can share a key sequence (a
     /// results list of main's sessions reads like the tree minus its heading), so the mode is
@@ -334,9 +315,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   private var arrangement: Arrangement {
     Arrangement(
       groups: workspace?.collapsedGroups ?? [], repositories: collapsedRepositories,
-      worktrees: collapsedWorktrees,
-      archives: expandedArchives, worktreeSections: collapsedWorktreeSections,
-      results: collapsedResultSessions, searching: isSearching)
+      archives: expandedArchives, results: collapsedResultSessions, searching: isSearching)
   }
   /// reloadData() clears the selection, and restoring it fires the selection-changed
   /// delegate. That runs onSelectWorktree, which reloads the window, which lands back here —
@@ -361,25 +340,17 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   private var lastAppliedSessionID: UUID?
   /// The rail's disclosure state lives on the workspace (so it rides the window's restorable
   /// state across a restart) — these bridge to it, leaving the rest of the rail's code unchanged.
-  /// Each is the exception set to one default: a repository and a worktree stand open unless
-  /// listed, an Archived section stays folded unless listed. One default apiece is what keeps
-  /// these one set each — the time buckets needed two, because a bucket's default depended on
-  /// which bucket it was.
+  /// Each is the exception set to one default: a repository stands open unless listed, an
+  /// Archived section stays folded unless listed. One default apiece is what keeps these one set
+  /// each — the time buckets needed two, because a bucket's default depended on which bucket it
+  /// was.
   private var collapsedRepositories: Set<String> {
     get { workspace?.collapsedRepositories ?? [] }
     set { workspace?.collapsedRepositories = newValue }
   }
-  private var collapsedWorktrees: Set<String> {
-    get { workspace?.collapsedWorktrees ?? [] }
-    set { workspace?.collapsedWorktrees = newValue }
-  }
   private var expandedArchives: Set<String> {
     get { workspace?.expandedArchives ?? [] }
     set { workspace?.expandedArchives = newValue }
-  }
-  private var collapsedWorktreeSections: Set<String> {
-    get { workspace?.collapsedWorktreeSections ?? [] }
-    set { workspace?.collapsedWorktreeSections = newValue }
   }
 
   /// Up while the rail is telling the window where the selection went. The window answers by
@@ -785,11 +756,11 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   private func searchRequests() -> [(id: UUID, title: String, url: URL)] {
     guard let workspace else { return [] }
     return workspace.sessions.compactMap { session in
-      guard let worktree = workspace.worktree(id: session.worktreeID) else { return nil }
+      guard let home = workspace.transcriptHome(of: session) else { return nil }
       // The tags ride with the title: they are what a row is labelled with, and the ticket id a
       // person types into this field is exactly what one of them says.
       let label = ([session.title ?? ""] + session.tags).joined(separator: "\n")
-      return (session.id, label.lowercased(), worktree.url)
+      return (session.id, label.lowercased(), home)
     }
   }
 
@@ -899,80 +870,43 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     }
     let before = flattenedKeys(nodes)
     let previous = nodes
-    // `subtitled` tags the row with its worktree — wanted only in search results, where matched
-    // sessions from every worktree sit in one flat list. In the tree the session already hangs
-    // under its worktree's heading, so repeating the branch on every row said nothing.
-    func node(for entry: Workspace.RailEntry, subtitled: Bool = false) -> RailNode {
+    // Where a session stands rides on its own row, under the title — the worktree is no level of
+    // the rail's (see `RailRepository.sessions`) — so a row reads the same in the tree and in a
+    // results list, and is drawn from the session at draw time rather than kept on the node.
+    func node(for entry: Workspace.RailEntry) -> RailNode {
       let (session, worktree) = (entry.session, entry.worktree)
       return RailNode(
         title: session.title ?? "New session",
-        subtitle: subtitled ? worktree.displayName : nil,
         state: session.state,
         isDetached: session.isDetached,
         heldElsewhere: session.heldByPID != nil,
         worktree: worktree,
         session: session)
     }
-    // A worktree's rows: its sessions plainly, then the Archived section if it holds anything.
-    // There is no "Sessions" label over the plain ones — a worktree's rows *are* its sessions, so
-    // the label would name the obvious and charge an indent for it. The section below them names
-    // something the rows do not say, which is the difference.
-    func worktreeChildren(_ railWorktree: Workspace.RailWorktree) -> [RailNode] {
-      var rows = railWorktree.sessions.map { node(for: $0) }
-      guard !railWorktree.archived.isEmpty else { return rows }
-      rows.append(
-        RailNode(
-          title: "Archived",
-          children: railWorktree.archived.map { node(for: $0) },
-          section: .archived, sectionKey: railWorktree.worktree.id.uuidString))
-      return rows
-    }
-    // A linked worktree's heading, over its own rows. It names its directory then its branch —
-    // whoever ran `git worktree add` chose the directory and git chose the branch, so the two
-    // drift, and a path in an agent's output has to match something on screen. Main has no heading
-    // of its own: it is the repository heading, which says its branch there.
-    func worktreeNode(_ railWorktree: Workspace.RailWorktree) -> RailNode {
-      let worktree = railWorktree.worktree
-      return RailNode(
-        title: worktree.url.lastPathComponent, subtitle: worktree.branch,
-        worktree: worktree,
-        children: worktreeChildren(railWorktree))
-    }
     // A live query turns the rail into a results list (see `resultsNodes`); otherwise it is the
-    // worktree-first tree: the repository heading is its main worktree, carrying main's rows, and
-    // each linked worktree a heading beneath it with its own.
-    func resultRow(_ entry: Workspace.RailEntry) -> RailNode { node(for: entry, subtitled: true) }
+    // repository's sessions under its heading, then the Archived section if it holds anything.
     if isSearching {
-      nodes = resultsNodes(resultRow)
+      nodes = resultsNodes(node(for:))
     } else {
-      // Linked worktrees are *children* of the repository heading. They used to stand beside it as
-      // top-level rows, which meant a repository was a run of rows rather than one item, and the
-      // three things an outline does for a tree all had to be done by hand: the fold (collapsing
-      // the heading hid only its own children), the indent (a linked worktree's sessions were at
-      // level 1, the same as main's, so which parent a row had was unreadable to the outline) and
-      // the drag (a drop had to snap back to the start of a block). A hairline down the gutter was
-      // drawn in place of the level that was missing — and that was the level's real absence, not
-      // the fact that a repository's children are two kinds. As children they sit under the
-      // heading already, so there is nothing left for a rule to say.
+      // The rail used to be arranged by worktree — main's sessions under the heading, each linked
+      // worktree a heading of its own over its sessions — and the arrangement was the desk's: a
+      // desk belonged to a worktree, so the worktree was what a row was chosen under. A desk is a
+      // session's now, and an agent moving its session between worktrees moved a row from heading
+      // to heading under a reader who had chosen nothing. So the sessions stand under the
+      // repository alone, in the order you last instructed them, and say where they are.
       let repositoryNodes = workspace.railRepositories.map { repo in
-        // The linked worktrees under a heading of their own, beneath main's rows. A repository's
-        // children are two kinds — main's sessions and its worktrees — and the label is what tells
-        // the block of worktree rows from the session rows above it. Only when there are any: a
-        // repository with one checkout has no section, not an empty one.
-        var children = repo.main.map(worktreeChildren) ?? []
-        if !repo.linked.isEmpty {
+        // No "Sessions" label over the plain rows — a repository's rows *are* its sessions, so the
+        // label would name the obvious and charge an indent for it. The section below them names
+        // something the rows do not say, which is the difference.
+        var children = repo.sessions.map(node(for:))
+        if !repo.archived.isEmpty {
           children.append(
             RailNode(
-              title: "Worktrees", children: repo.linked.map(worktreeNode),
-              section: .worktrees, sectionKey: repo.repositoryID))
+              title: "Archived", children: repo.archived.map(node(for:)),
+              section: .archived, sectionKey: repo.repositoryID))
         }
         return RailNode(
           title: repo.repositoryName,
-          // Main's branch, after the project name — the heading *is* the main worktree, and the
-          // linked worktrees all name their branch on their own headings, so the root says its the
-          // same way. `branch` directly, not displayName: its fallback is the folder name, which
-          // would just repeat the heading.
-          subtitle: repo.main?.worktree.branch,
           worktree: repo.main?.worktree,
           children: children,
           groupRepositoryID: repo.repositoryID)
@@ -1064,7 +998,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     for node in nodes { applyNode(node) }
 
     // Put the rail's highlighted rows back. reloadData() cleared them; the rows to restore are the
-    // ones the user was on — sessions, but also a worktree heading, which `selectedSessionID`
+    // ones the user was on — sessions, but also a repository heading, which `selectedSessionID`
     // cannot describe. A pick from elsewhere overrides that (see `applyExternalPick`).
     var targetRows = IndexSet()
     var targetAnchor: Int?
@@ -1077,7 +1011,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     }
     if targetRows.isEmpty, outlineView.selectedRowIndexes.isEmpty {
       // The prior selection is gone (its session closed, its row folded away): fall back to
-      // whatever the workspace points at — the session, else its worktree heading. Nothing selected
+      // whatever the workspace points at — the session, else its repository heading. Nothing selected
       // at all (a window restored with an empty pointer) leaves the rail unhighlighted, which is
       // the honest answer; see `isFallbackSelection`.
       if let row = (0..<outlineView.numberOfRows).first(where: { index in
@@ -1363,9 +1297,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   }
 
   func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-    // A repository or worktree heading is a destination — selecting it selects that worktree and
-    // shows its desk, so a worktree with no session is still reachable. Only the two section
-    // headings are pure labels.
+    // A repository heading is a destination — selecting it selects the main checkout, so its file
+    // tree is reachable with no session named. Only the Archived heading is a pure label.
     guard let node = item as? RailNode else { return false }
     return !node.isSectionHeading
   }
@@ -1389,30 +1322,22 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   {
     guard let node = item as? RailNode else { return nil }
     let cell = NSTableCellView()
-    // One inset for every row: the outline's own `indentationPerLevel` does the rest, because the
-    // tree is now a real one — HUKAN at 12, its worktrees at 22, their sessions at 32, an Archived
-    // section beside the sessions and its rows at 42. This used to have to be worked out by
-    // walking up the tree, since a session under a linked worktree and one under the repository
-    // heading were both at level 1 and the outline could not tell them apart.
+    // One inset for every row: the outline's own `indentationPerLevel` does the rest — HUKAN at
+    // 12, its sessions at 22, the Archived section beside them and its rows at 32.
     let indent = RailRowView.headingInset
 
-    if let section = node.section, let sectionKey = node.sectionKey {
-      // A section heading — Worktrees over the linked worktrees, Archived at the foot of main's
-      // sessions. Plain case and dimmed, so it never reads like the uppercased repository heading
-      // above it. No count: what is in it is one click away, and a number beside every label is
-      // a second thing to read on a row whose job is to be one word. No `+` either: nothing new
-      // is ever made here.
+    if node.section == .archived, let sectionKey = node.sectionKey {
+      // The Archived heading at the foot of a repository's sessions. Plain case and dimmed, so it
+      // never reads like the uppercased repository heading above it. No count: what is in it is
+      // one click away, and a number beside every label is a second thing to read on a row whose
+      // job is to be one word. No `+` either: nothing new is ever made here.
       let label = NSTextField(labelWithString: node.title)
       label.font = .systemFont(ofSize: 11, weight: .medium)
       label.textColor = .tertiaryLabelColor
       label.translatesAutoresizingMaskIntoConstraints = false
       cell.addSubview(label)
 
-      let expanded: Bool
-      switch section {
-      case .archived: expanded = expandedArchives.contains(sectionKey)
-      case .worktrees: expanded = !collapsedWorktreeSections.contains(sectionKey)
-      }
+      let expanded = expandedArchives.contains(sectionKey)
       let disclose = NSButton()
       disclose.translatesAutoresizingMaskIntoConstraints = false
       disclose.isBordered = false
@@ -1425,8 +1350,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       disclose.contentTintColor = .tertiaryLabelColor
       disclose.toolTip = expanded ? "Collapse" : "Expand"
       disclose.identifier = NSUserInterfaceItemIdentifier(sectionKey)
-      // Which section rides on `tag`, so one action serves both headings.
-      disclose.tag = section == .archived ? 0 : 1
       disclose.target = self
       disclose.action = #selector(toggleSection(_:))
       cell.addSubview(disclose)
@@ -1535,25 +1458,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
         label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: indent),
         label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
       ])
-      // Main's branch, after the project name. Plain case (branch names are case-sensitive;
-      // uppercasing is the project name's own dress) and quieter weight, so the pair reads as
-      // name-then-detail. It truncates before the name does — the project tells you where you are,
-      // the branch is the refinement.
-      var branchLabel: NSTextField?
-      if let branch = node.subtitle {
-        let detail = NSTextField(labelWithString: branch)
-        detail.font = .systemFont(ofSize: 11)
-        detail.textColor = .quaternaryLabelColor
-        detail.lineBreakMode = .byTruncatingTail
-        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        detail.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(detail)
-        NSLayoutConstraint.activate([
-          detail.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 6),
-          detail.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-        ])
-        branchLabel = detail
-      }
+      // No branch after the name: every session row says which branch it stands on, so the
+      // heading saying main's would be the same word again over the rows that already carry it.
       if let repositoryID = node.repositoryID {
         // Our own disclosure, always visible rather than AppKit's hover-only Show/Hide (which
         // is suppressed by returning false from isGroupItem). Because it is a fixed control,
@@ -1604,118 +1510,11 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
           add.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
           add.widthAnchor.constraint(equalToConstant: 16),
           add.heightAnchor.constraint(equalToConstant: 16),
-          // The rightmost text — the branch when it shows, else the name — stops short of the
-          // controls, so a long branch truncates rather than running under the `+`.
-          (branchLabel ?? label).trailingAnchor.constraint(
-            lessThanOrEqualTo: add.leadingAnchor, constant: -6),
+          // The name stops short of the controls, so a long one truncates rather than running
+          // under the `+`.
+          label.trailingAnchor.constraint(lessThanOrEqualTo: add.leadingAnchor, constant: -6),
         ])
       }
-      return cell
-    }
-
-    if node.isWorktreeHeading, let worktree = node.worktree {
-      // A linked worktree's heading — plain case, medium, dimmed, so it sits between the
-      // uppercased repository above and the session rows below. It carries its own `+` so a
-      // session can start in this worktree, stays selectable (its files reachable) even with no
-      // session under it, and folds: a worktree you are not on is a block of rows you are not
-      // reading. Main has no such row — it is the repository heading, which folds the same way.
-      let label = NSTextField(labelWithString: node.title)
-      label.font = .systemFont(ofSize: 11, weight: .medium)
-      label.textColor = .tertiaryLabelColor
-      // Truncated at the head, not the tail. These names share a prefix and differ at the end
-      // (`hukan-worktree-heading`, `hukan-files-panel`), so tail truncation dropped exactly the
-      // half that identifies the worktree and left three rows all reading `hukan-worktree-…`.
-      label.lineBreakMode = .byTruncatingHead
-      label.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-      label.translatesAutoresizingMaskIntoConstraints = false
-      // Whatever the row had to shorten stays readable here, the branch included even when it
-      // has no label of its own.
-      label.toolTip = [node.title, node.subtitle].compactMap { $0 }.joined(separator: " — ")
-      cell.addSubview(label)
-
-      // Directory then branch, for a linked worktree — git names the branch but whoever created
-      // the worktree named the directory, so the two drift, and a path in an agent's output has to
-      // match something on screen. Main carries no branch label because its title already *is* its
-      // branch (see `worktreeNode`). Read as name-then-detail rather than a level of its own.
-      //
-      // Unless the directory name already ends in the branch, which is what `git worktree add
-      // ../<repo>-<branch>` produces and so the common case: past the source-list inset, the
-      // indent and the `+`, a 200pt rail leaves this row about 117pt, and the directory name
-      // alone wants more than that. Spending it on the same string twice squeezed the branch to
-      // nothing and truncated the name as well, so the half that repeats is the half to drop.
-      var branchLabel: NSTextField?
-      if let branch = node.subtitle,
-        !RailNode.branchRepeatsDirectory(directory: node.title, branch: branch)
-      {
-        let detail = NSTextField(labelWithString: branch)
-        detail.font = .systemFont(ofSize: 11)
-        detail.textColor = .quaternaryLabelColor
-        detail.lineBreakMode = .byTruncatingTail
-        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        detail.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(detail)
-        NSLayoutConstraint.activate([
-          detail.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 6),
-          detail.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-        ])
-        branchLabel = detail
-      }
-
-      let add = NSButton()
-      add.translatesAutoresizingMaskIntoConstraints = false
-      add.isBordered = false
-      add.bezelStyle = .regularSquare
-      add.imagePosition = .imageOnly
-      add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New session")
-      add.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
-      add.contentTintColor = .tertiaryLabelColor
-      add.toolTip = "New session"
-      add.identifier = NSUserInterfaceItemIdentifier(worktree.id.uuidString)
-      add.target = self
-      add.action = #selector(newSessionInWorktree(_:))
-      cell.addSubview(add)
-
-      // Its own chevron, the way the repository heading carries one — the rail suppresses AppKit's
-      // triangle, so this is what folds a worktree by mouse. A worktree with nothing under it
-      // shows none: a control that would do nothing is worse than no control.
-      var disclose: NSButton?
-      if !node.children.isEmpty {
-        let collapsed = collapsedWorktrees.contains(worktree.id.uuidString)
-        let button = NSButton()
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.isBordered = false
-        button.bezelStyle = .regularSquare
-        button.imagePosition = .imageOnly
-        button.image = NSImage(
-          systemSymbolName: collapsed ? "chevron.forward" : "chevron.down",
-          accessibilityDescription: collapsed ? "Expand" : "Collapse")
-        button.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
-        button.contentTintColor = .tertiaryLabelColor
-        button.toolTip = collapsed ? "Expand" : "Collapse"
-        button.identifier = NSUserInterfaceItemIdentifier(worktree.id.uuidString)
-        button.target = self
-        button.action = #selector(toggleWorktree(_:))
-        cell.addSubview(button)
-        NSLayoutConstraint.activate([
-          button.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-          button.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-          button.widthAnchor.constraint(equalToConstant: 16),
-          button.heightAnchor.constraint(equalToConstant: 16),
-        ])
-        disclose = button
-      }
-
-      NSLayoutConstraint.activate([
-        label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: indent),
-        label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-        disclose.map { add.trailingAnchor.constraint(equalTo: $0.leadingAnchor, constant: -4) }
-          ?? add.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-        add.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-        add.widthAnchor.constraint(equalToConstant: 16),
-        add.heightAnchor.constraint(equalToConstant: 16),
-        (branchLabel ?? label).trailingAnchor.constraint(
-          lessThanOrEqualTo: add.leadingAnchor, constant: -6),
-      ])
       return cell
     }
 
@@ -1760,19 +1559,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
     var trailing: [NSView] = []
-    if let subtitle = node.subtitle {
-      // Which worktree a session sits in survives a long title: it is the thing that
-      // tells two sessions of the same name apart, so the title is what gives way.
-      // Capped so the reverse cannot happen either.
-      let worktree = NSTextField(labelWithString: subtitle)
-      worktree.font = .systemFont(ofSize: 11)
-      worktree.textColor = .tertiaryLabelColor
-      worktree.lineBreakMode = .byTruncatingTail
-      worktree.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-      worktree.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-      worktree.widthAnchor.constraint(lessThanOrEqualToConstant: 90).isActive = true
-      trailing.append(worktree)
-    }
     // In results mode a session header carries its hit count, so the list reads as "N matches
     // here" before it is even expanded. Its children are hit rows; a title-only match has none.
     if isSearching, node.children.first?.isHit == true, let session = node.session {
@@ -1823,9 +1609,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       label.setContentCompressionResistancePriority(.required, for: .horizontal)
       age = label
     }
-    // No diffstat here — it lives in the top bar for the selected worktree. In the rail the
-    // state dot is the signal; the change size would just crowd the row.
-
     let row = NSStackView(views: [dot, name] + trailing)
     row.orientation = .horizontal
     row.alignment = .centerY
@@ -1841,39 +1624,87 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       row.topAnchor.constraint(equalTo: cell.topAnchor),
       row.heightAnchor.constraint(equalToConstant: outlineView.rowHeight),
     ])
-    // The tags, on lines of their own under the title, so neither has to give way to the other.
-    // Read off the session at draw time, like the age, so a change needs only a redraw and a new
-    // height (see `heightOfRowByItem`). Not on a hit row, which is a snippet of the transcript.
-    if let tags = Self.tags(of: node), let session = node.session {
-      let flow = TagFlowView(tags: tags) { [weak self] url in self?.openTag(url, of: session) }
+    // The line under the title: the branch the session stands on, then its tags, wrapping as far
+    // as they need, with what has moved in that worktree at the trailing edge — under the age,
+    // so the column of numbers on the right reads as the row's facts. Read off the session at
+    // draw time, like the age, so a change needs only a redraw and a new height (see
+    // `heightOfRowByItem`). Not on a hit row, which is a snippet of the transcript.
+    if let detail = detail(of: node), let session = node.session {
+      let flow = TagFlowView(tags: detail.tags, branch: detail.branch) { [weak self] url in
+        self?.openTag(url, of: session)
+      }
       flow.translatesAutoresizingMaskIntoConstraints = false
       cell.addSubview(flow)
       NSLayoutConstraint.activate([
         flow.leadingAnchor.constraint(
           equalTo: cell.leadingAnchor, constant: indent + Self.tagLeading),
-        flow.widthAnchor.constraint(equalToConstant: tagWidth(of: node)),
+        flow.widthAnchor.constraint(equalToConstant: detailWidth(of: node, detail)),
         flow.topAnchor.constraint(equalTo: cell.topAnchor, constant: Self.tagTop),
         flow.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -Self.tagBottom),
       ])
+      if let changes = detail.changes {
+        let label = NSTextField(labelWithAttributedString: changes)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.toolTip = "Changed since HEAD in this worktree"
+        cell.addSubview(label)
+        NSLayoutConstraint.activate([
+          label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+          label.topAnchor.constraint(equalTo: cell.topAnchor, constant: Self.tagTop),
+        ])
+      }
     }
     return cell
   }
 
-  // MARK: - Tag lines
+  // MARK: - The line under the title
 
   /// A chip naming a page was clicked. The page is the task's, so it opens on the desk of the
-  /// session it labels, and the session is selected first, since the desk shows only the selected
-  /// worktree's tabs. ⌘ sends the page out to the default browser instead and leaves the rail
+  /// session it labels, and the session is selected first, since the desk on screen is the
+  /// selected session's. ⌘ sends the page out to the default browser instead and leaves the rail
   /// where it was — the transcript's link rule, read the same way here.
   private func openTag(_ url: URL, of session: AgentSession) {
     if !NSEvent.modifierFlags.contains(.command) { selectSessions([session.id]) }
     onOpenTag?(url, session)
   }
 
-  /// The tags a row draws under its title, or nil when it draws none.
-  private static func tags(of node: RailNode) -> [String]? {
-    guard node.matchOffset == nil, let tags = node.session?.tags, !tags.isEmpty else { return nil }
-    return tags
+  /// What a session row draws under its title.
+  struct RowDetail {
+    var branch: BranchMark.Content
+    var tags: [String]
+    /// What has moved in the worktree, `+added −removed`, when anything has — nil on a worktree
+    /// with nothing uncommitted, and on one that is gone, which has nothing left to measure.
+    var changes: NSAttributedString?
+  }
+
+  /// The line under a session row's title, or nil on a row that has none — a hit, or a heading.
+  /// Every session row has one, since every session stands on some branch.
+  func detail(of node: RailNode) -> RowDetail? {
+    guard node.matchOffset == nil, let session = node.session else { return nil }
+    if let gone = session.goneWorktree {
+      return RowDetail(
+        branch: .init(
+          name: gone.branch ?? gone.url.lastPathComponent, isGone: true, path: gone.url.path),
+        tags: session.tags)
+    }
+    guard let worktree = workspace?.worktree(id: session.worktreeID) ?? node.worktree else {
+      return nil
+    }
+    let stat = worktree.diffstat
+    return RowDetail(
+      branch: .init(name: worktree.displayName, path: worktree.url.path), tags: session.tags,
+      changes: stat.added + stat.removed > 0
+        ? Self.changes(added: stat.added, removed: stat.removed) : nil)
+  }
+
+  /// `+12 −3`, green then red, in the digits the age beside it uses.
+  static func changes(added: Int, removed: Int) -> NSAttributedString {
+    let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+    let text = NSMutableAttributedString(
+      string: "+\(added)", attributes: [.font: font, .foregroundColor: NSColor.systemGreen])
+    text.append(
+      NSAttributedString(
+        string: " −\(removed)", attributes: [.font: font, .foregroundColor: NSColor.systemRed]))
+    return text
   }
 
   /// Where the tags start, in from the row's content: under the title, past the status dot.
@@ -1889,10 +1720,19 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// off a cell that does not exist yet. The width is the column's less the row's indent, the
   /// outline's own per level and the rail's once.
   func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
-    guard let node = item as? RailNode, let tags = Self.tags(of: node) else {
+    guard let node = item as? RailNode, let detail = detail(of: node) else {
       return outlineView.rowHeight
     }
-    return Self.tagTop + TagFlowView.height(of: tags, width: tagWidth(of: node)) + Self.tagBottom
+    let line = TagFlowView.height(
+      of: detail.tags, branch: detail.branch, width: detailWidth(of: node, detail))
+    return Self.tagTop + line + Self.tagBottom
+  }
+
+  /// The width the line under the title wraps in: the row's, less the changes at its trailing
+  /// edge, which stand on the first line and are kept clear of every line below it too.
+  func detailWidth(of node: RailNode, _ detail: RowDetail) -> CGFloat {
+    let changes = detail.changes.map { ceil($0.size().width) + 6 } ?? 0
+    return tagWidth(of: node) - changes
   }
 
   /// The width a row's tags wrap in: the row's cell, less the row's own inset and the status dot.
@@ -1925,7 +1765,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     lastTagWidth = outlineView.bounds.width
     let tagged = IndexSet(
       (0..<outlineView.numberOfRows).filter {
-        (outlineView.item(atRow: $0) as? RailNode).flatMap(Self.tags(of:)) != nil
+        (outlineView.item(atRow: $0) as? RailNode).flatMap(detail(of:)) != nil
       })
     guard !tagged.isEmpty else { return }
     outlineView.reloadData(forRowIndexes: tagged, columnIndexes: IndexSet(integer: 0))
@@ -1965,6 +1805,22 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     }
     if node == nil { menu.addItem(groupItem("New Group", #selector(createClickedGroup(_:)), nil)) }
     if let node, node.isRepositoryHeading, let id = node.repositoryID, let workspace {
+      // A worktree is no row of its own, so this is where a session is started in one that has
+      // none — the heading's `+` is main's. Only when there is more than main to choose from.
+      let worktrees = workspace.worktrees.filter { $0.repositoryID == id }
+      if worktrees.count > 1 {
+        let submenu = NSMenu(title: "New Session In")
+        for worktree in worktrees {
+          let item = groupItem(
+            worktree.displayName, #selector(newSessionInClickedWorktree(_:)), worktree.id)
+          item.toolTip = worktree.url.path
+          submenu.addItem(item)
+        }
+        let start = NSMenuItem(title: "New Session In", action: nil, keyEquivalent: "")
+        start.submenu = submenu
+        menu.addItem(start)
+        menu.addItem(.separator())
+      }
       let submenu = NSMenu(title: "Move to Group")
       for group in workspace.orderedGroups {
         let item = groupItem(group.name, #selector(moveClickedRepository(_:)), [id, group.id])
@@ -2159,8 +2015,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   func transcriptPaths(of sessions: [AgentSession]) -> [String] {
     guard let workspace else { return [] }
     return sessions.compactMap { session in
-      guard let worktree = workspace.worktree(id: session.worktreeID) else { return nil }
-      return ClaudeSessionStore.transcriptURL(id: session.id, worktree: worktree.url).path
+      guard let home = workspace.transcriptHome(of: session) else { return nil }
+      return ClaudeSessionStore.transcriptURL(id: session.id, worktree: home).path
     }
   }
 
@@ -2326,14 +2182,9 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       write(&workspace.collapsedGroups, id, collapsed)
     } else if node.isRepositoryHeading, let repositoryID = node.repositoryID {
       write(&collapsedRepositories, repositoryID, collapsed)
-    } else if node.isWorktreeHeading, let worktree = node.worktree {
-      write(&collapsedWorktrees, worktree.id.uuidString, collapsed)
-    } else if let section = node.section, let key = node.sectionKey {
-      switch section {
+    } else if node.section == .archived, let key = node.sectionKey {
       // The one set written the other way round: absence means folded.
-      case .archived: write(&expandedArchives, key, !collapsed)
-      case .worktrees: write(&collapsedWorktreeSections, key, collapsed)
-      }
+      write(&expandedArchives, key, !collapsed)
     } else {
       return
     }
@@ -2353,14 +2204,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     if node.isRepositoryHeading, let repositoryID = node.repositoryID {
       return collapsedRepositories.contains(repositoryID)
     }
-    if node.isWorktreeHeading, let worktree = node.worktree {
-      return collapsedWorktrees.contains(worktree.id.uuidString)
-    }
-    if let section = node.section, let key = node.sectionKey {
-      switch section {
-      case .archived: return !expandedArchives.contains(key)
-      case .worktrees: return collapsedWorktreeSections.contains(key)
-      }
+    if node.section == .archived, let key = node.sectionKey {
+      return !expandedArchives.contains(key)
     }
     return false
   }
@@ -2530,36 +2375,14 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     reloadAfterFold()
   }
 
-  /// A worktree heading's disclosure. One exception set against one default (worktrees stand
-  /// open), so the flip is a plain membership toggle — no second set and no per-row default to
-  /// carry on the button, which is what a bucket needed.
-  @objc private func toggleWorktree(_ sender: NSButton) {
-    guard let worktreeID = sender.identifier?.rawValue else { return }
-    if collapsedWorktrees.contains(worktreeID) {
-      collapsedWorktrees.remove(worktreeID)
-    } else {
-      collapsedWorktrees.insert(worktreeID)
-    }
-    reloadAfterFold()
-  }
-
-  /// A section heading's disclosure. `Archived` is the one set written the other way round — a
-  /// section nobody has opened stays folded, which is the whole point of putting anything in it —
-  /// while `Worktrees` stands open like the headings do. The section rides on the button's `tag`.
+  /// The Archived heading's disclosure — the one set written the other way round: a section
+  /// nobody has opened stays folded, which is the whole point of putting anything in it.
   @objc private func toggleSection(_ sender: NSButton) {
     guard let key = sender.identifier?.rawValue else { return }
-    if sender.tag == 0 {
-      if expandedArchives.contains(key) {
-        expandedArchives.remove(key)
-      } else {
-        expandedArchives.insert(key)
-      }
+    if expandedArchives.contains(key) {
+      expandedArchives.remove(key)
     } else {
-      if collapsedWorktreeSections.contains(key) {
-        collapsedWorktreeSections.remove(key)
-      } else {
-        collapsedWorktreeSections.insert(key)
-      }
+      expandedArchives.insert(key)
     }
     reloadAfterFold()
   }
@@ -2572,16 +2395,15 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     newSession(inRepository: repositoryID)
   }
 
-  @objc private func newSessionInWorktree(_ sender: NSButton) {
-    guard let raw = sender.identifier?.rawValue, let worktreeID = UUID(uuidString: raw) else {
-      return
-    }
+  /// The heading's New Session In: a session in that one worktree.
+  @objc private func newSessionInClickedWorktree(_ sender: NSMenuItem) {
+    guard let worktreeID = sender.representedObject as? UUID else { return }
     onNewSessionInWorktree?(worktreeID)
   }
 
   /// Return/Enter in the rail: dive into the session navigation is on — the anchor, not the top of
   /// a range, which is what makes Return mean the same thing whether one row is selected or five.
-  /// A heading or an empty-worktree row has no composer to focus, so it is a no-op.
+  /// A heading has no composer to focus, so it is a no-op.
   private func activateSelectedSession() {
     guard let row = anchorRow, let node = outlineView.item(atRow: row) as? RailNode,
       node.session != nil

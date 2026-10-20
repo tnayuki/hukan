@@ -122,17 +122,21 @@ final class WorktreeSyncTests: XCTestCase {
 
     XCTAssertTrue(reportedChange, "a worktree leaving has to redraw the window")
     XCTAssertEqual(openPaths(workspace), [main.path])
-    XCTAssertTrue(workspace.sessions.isEmpty, "the worktree's sessions leave with it")
-    XCTAssertEqual(workspace.selectedWorktreeID, workspace.worktree(atPath: main.path)?.id)
-    XCTAssertNil(workspace.selectedSessionID)
+    let home = workspace.worktree(atPath: main.path)?.id
+    XCTAssertEqual(
+      workspace.sessions.map(\.id), [session.id], "the worktree goes, the conversation does not")
+    XCTAssertEqual(session.worktreeID, home, "it stands on the main checkout now")
+    XCTAssertEqual(session.goneWorktree?.url.path, linked.path)
+    XCTAssertEqual(workspace.selectedWorktreeID, home)
+    XCTAssertEqual(workspace.selectedSessionID, session.id, "and is still the one selected")
   }
 
   /// The case the exit is followed for at all. An `ExitWorktree` with `remove` is git ceasing to
   /// list a worktree while the session that was in it lives on, back where it started — and a
-  /// worktree leaving takes its sessions with it (above). Unless the session has already gone
-  /// home by the time the enumeration is re-read, the reconcile stops the one process that just
-  /// finished its task. Driven through the engine's own events, since the result text is the
-  /// whole of what the window learns from.
+  /// session still in a worktree that leaves is stranded onto main, its engine stopped (above).
+  /// Unless the session has already gone home by the time the enumeration is re-read, the
+  /// reconcile stops the one process that just finished its task. Driven through the engine's own
+  /// events, since the result text is the whole of what the window learns from.
   func testASessionThatExitedItsWorktreeSurvivesItsRemoval() throws {
     let (main, linked) = try makeRepositoryWithWorktree()
     let workspace = Workspace()
@@ -542,7 +546,8 @@ final class WorktreeSyncTests: XCTestCase {
 
     wait(for: [left], timeout: 20)
     XCTAssertEqual(openPaths(workspace), [main.path])
-    XCTAssertTrue(workspace.sessions.isEmpty, "the worktree's sessions leave with it")
+    XCTAssertEqual(workspace.sessions.map(\.id), [session.id], "the conversation stays")
+    XCTAssertEqual(session.worktreeID, workspace.worktree(atPath: main.path)?.id)
   }
 
   /// The other direction, and the one that looks as though it were already covered: a

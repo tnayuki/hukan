@@ -31,7 +31,13 @@ Workspace (one window)
 - **Repository identity is `git rev-parse --git-common-dir`'s parent** — something git
   computes, not a folder someone nominated. Worktrees are enumerated from git, never opened or
   closed individually; they arrive with the repository and leave when git stops listing one —
-  the `git worktree remove` a session runs once its task has landed, noticed as it is run.
+  the `git worktree remove` a session runs once its task has landed, noticed as it is run. **A
+  worktree leaving does not take its sessions with it**: the checkout is over, not the
+  conversation, so each session that stood there is put on the main checkout — where a resumed
+  engine carries on, having said the worktree is gone and cleared its binding (measured) — and
+  its row keeps the branch, struck through. Its transcript stays where `EnterWorktree` filed it,
+  under the gone checkout, so that is where every read of it looks, and the mark rides the
+  window's restorable state, since no listing of the worktrees there are will reach it again.
   Closing the repository takes the rest, the main checkout included: git will not remove that
   one, so nothing but a decision can.
 - **What was open and is not is a list, not a row.** Open Recent — in the File menu, on the rail's
@@ -67,10 +73,11 @@ Workspace (one window)
   record of that, and hukan reads both — in, to a worktree it registers on arrival; out, only onto
   a worktree already open. The original directory is where the session was started, a worktree
   root the window holds, so nothing else is ever registered: a Worktree git does not list is what
-  the next reconcile drops, and it takes the worktree's sessions with it. That is why the exit had
-  to be followed at all — an `ExitWorktree` with `remove` is git ceasing to list a worktree while
-  the session in it lives on, and until the session had gone home first, the reconcile stopped the
-  one process that had just finished its task. Nothing steers the model toward those tools by
+  the next reconcile drops, and a session still standing in it is stranded onto main with its
+  engine stopped (see the repository bullet). That is why the exit had to be followed at all — an
+  `ExitWorktree` with `remove` is git ceasing to list a worktree while the session in it lives on,
+  and until the session had gone home first, the reconcile stopped the one process that had just
+  finished its task. Nothing steers the model toward those tools by
   itself: a `git worktree add` in Bash reaches the rail, since git lists it, but the engine's
   directory never moves and the desk goes on measuring the checkout the session left. So hukan
   appends one line to the system prompt saying to use them. One line, a fact about the tools and
@@ -841,30 +848,24 @@ Workspace (one window)
   and the per-delta patch that was already being built answers what they were asked for. All of it
   now costs about what the reads it rides along with cost, which is why none of it needed a cache:
   the cheapest version of this is no bookkeeping at all.
-- **Linked worktrees are children of the repository heading, not top-level rows beside it.** The
-  heading is still the main worktree (the common dir's parent), naming its branch after the
-  project name, with main's sessions straight under it; the linked worktrees sit beneath as rows
-  of their own, each folding with its sessions. They stood beside the heading once, and that made
-  a repository a run of rows rather than one thing: the fold, the indent and the drag all had to
-  be done by hand, and a hairline down the gutter stood in for the level the tree did not have.
-  As children the outline does all of it and the hairline has nothing left to say. They sit
-  under a `Worktrees` heading of their own, beneath main's rows: a repository's children are two
-  kinds, and the label is what tells the block of worktree rows from the session rows above it
-  — which a `Sessions` label over the sessions would not do, since a worktree's rows *are* its
-  sessions and the label would name the obvious.
-  **They are ordered by name, which git only looked like it was answering.** hukan held no
-  opinion about the order at first, on the grounds that the worktrees are git's enumeration and
-  an opinion would be a second copy of something git already answers — but the enumeration is
-  `git_worktree_list`, which reads `.git/worktrees/` in the directory's own order where the CLI's
-  `git worktree list` sorts, so what the rail read down was neither the order they were made in
-  nor any order visible on screen; and a `git worktree add` noticed mid-session was appended
-  after all of them, so it drifted further the longer a window stayed up. The name is the
-  directory's, which is what the row's title says (the branch is its subtitle) and what the CLI
-  sorts on — compared the Finder's way, the same rule the History section's tags take, so
-  `task-9` comes before `task-10`. It is a rule the list is kept in rather than an arrangement
-  anyone makes, so nothing new is saved for it: the repositories' order is still yours to drag
-  and still rides the saved paths, while the worktrees under one come back sorted from the paths
-  themselves.
+- **The rail lists a repository's sessions; a worktree is where a session stands, not a row.**
+  Under the heading come the repository's sessions, whichever worktree each is in, in the order
+  you last instructed them, then the Archived section. It was arranged by worktree — main's
+  sessions under the heading, each linked worktree a heading over its own — and that arrangement
+  was the desk's: while a desk belonged to a worktree, the worktree was what a row was chosen
+  under. A desk is a session's now (above), and an agent's `EnterWorktree` moved a row from one
+  heading to another under a reader who had chosen nothing. Tags settled the rest, the ticket
+  being what a row is looked for by where the worktree's name only stood in for it. **The line
+  under the title names the branch, then the tags, with what has moved in that worktree at the
+  trailing edge** — the branch rather than the worktree's directory, since git never checks one
+  branch out twice, so the branch names the worktree, and it is what the pull request and the
+  agent call it too; the path is the branch's tooltip. Every session row has that line, so the
+  rows are one height again apart from tags that wrap. The heading drops the branch it carried,
+  the rows below saying it already. **A worktree no session stands in is not on the rail** — a
+  terminal's `git worktree add`, what a Remote Control worker leaves — and is reached by starting
+  a session there, from the heading's right-click: the heading's `+` is main's. The worktrees
+  under a repository are still kept in order by name, compared the Finder's way, for the readers
+  that list them (`hukan status`, the outside client's session list).
   **Above the repositories, a group is a name someone gave, and it is the window's.** One window
   per customer is the arrangement the rail exists to make unnecessary — what is waiting on you is
   the question, and it was split across as many rails as there were customers. So repositories
@@ -899,13 +900,12 @@ Workspace (one window)
   still working or waiting on you sank into a collapsed Older, which is the opposite of the rail's
   one job. The boundaries also crossed at midnight, so the row you left in place was somewhere
   else in the morning. Archiving is your decision instead: one `Archived` section at the foot of
-  main's rows, folded until asked. What the buckets
+  the repository's rows, folded until asked. What the buckets
   did carry — when — every row now says for itself, at its trailing edge: how long since you
   last instructed it, which is the sort key, so the numbers read in order down the column where
-  "last activity" would not. **Only main's
-  sessions can be archived** — a linked worktree *is* the task, and the `git worktree remove` that
-  ends it takes the worktree off the rail with its sessions, so nothing accumulates there; the long
-  tail is main's alone, the one-shot questions asked where you happened to be standing. **A
+  "last activity" would not. **Any session can be archived.** It was main's alone while a
+  `git worktree remove` took a task's sessions off the rail with its worktree; now that they stay
+  (see the repository bullet), the long tail grows wherever the work was. **A
   session that is working or waiting on you comes back out** — the flag stays, the showing is what
   the rule overrides — because a pulsing row must never be behind a fold. **A message you send it
   takes the flag off outright**, which is the difference between coming out and staying out: a
@@ -960,8 +960,8 @@ Workspace (one window)
   speak to — it cannot be resumed (Claude Code filters both out of `/resume` itself), its
   approvals are waiting on the phone, and a row that can only be looked at is the dimmed
   repository row the rail already refuses. What that work leaves behind instead is a *worktree*,
-  which git lists and the rail shows with its ± and its history — the work is visible without
-  hukan pretending the conversation is yours. **The hold is the opposite reading of the same
+  which git lists and a session started there shows with its ± and its history — the work is
+  reachable without hukan pretending the conversation is yours. **The hold is the opposite reading of the same
   record and counts every kind**: what it prevents is two engines writing one transcript, which
   is true whoever the other one is, so the kind is read where the row is made and nowhere else.
   An absent kind is an older CLI's and reads as a session, since the kinds worth excluding are

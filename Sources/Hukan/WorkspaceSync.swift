@@ -64,12 +64,46 @@ extension Workspace {
               for: entry.id, fallback: entry.modified)
           }
           session.worktreeID = owner.id
+          // Found under a worktree git lists, so whatever it once stood in, it stands here now.
+          session.goneWorktree = nil
           // Discovery has an answer for this id now, so the live archive set speaks for it from
           // here on rather than the carry-forward one (see `unresolvedArchived`).
           resolveArchivedID(entry.id)
           rebuilt.append(session)
         }
       }
+    }
+
+    // Sessions whose worktree git no longer lists. Their transcripts stay where the engine filed
+    // them — under the gone checkout — so no listing of the worktrees there are reaches them, and
+    // without this a `git worktree remove` would take the conversation off the rail at the next
+    // rebuild after all. The mark each one carries (or carried, before a relaunch) is what says
+    // where to look, and the repository's main checkout is where it stands.
+    var gone = restoredStrandings
+    for session in known.values {
+      guard let mark = session.goneWorktree else { continue }
+      gone[session.id] = Stranding(
+        worktree: mark, home: session.worktreeID,
+        repositoryID: worktree(id: session.worktreeID)?.repositoryID ?? "")
+    }
+    for (id, mark) in gone {
+      guard !rebuilt.contains(where: { $0.id == id }),
+        let main = self.worktree(id: mark.home) ?? mainWorktree(ofRepository: mark.repositoryID),
+        let entry = ClaudeSessionStore.sessions(in: mark.worktree.url).first(where: { $0.id == id })
+      else { continue }
+      let session: AgentSession
+      if let existing = known.removeValue(forKey: id) {
+        session = existing
+      } else {
+        session = AgentSession(id: id, worktreeID: main.id, isDetached: true)
+        applyRestoredPrefs(to: session)
+        session.updatedAt = entry.modified
+        session.lastInstructedAt = restoredInstruction(for: id, fallback: entry.modified)
+      }
+      session.worktreeID = main.id
+      session.goneWorktree = mark.worktree
+      resolveArchivedID(id)
+      rebuilt.append(session)
     }
 
     // A session created moments ago has no transcript yet; keep anything still attached.
@@ -100,10 +134,8 @@ extension Workspace {
   /// 100 ms is what keeps that honest without paying for a full rail rebuild per name.
   private func loadTitles() {
     let requests = sessions.compactMap { session -> (UUID, URL)? in
-      guard session.title == nil, let worktree = worktree(id: session.worktreeID) else {
-        return nil
-      }
-      return (session.id, worktree.url)
+      guard session.title == nil, let home = transcriptHome(of: session) else { return nil }
+      return (session.id, home)
     }
     guard !requests.isEmpty else { return }
 
@@ -203,6 +235,7 @@ extension Workspace {
         && !paths.contains($0.url.standardizedFileURL.path)
     }
     guard !gone.isEmpty else { return changed }
+    for worktree in gone { strandSessions(in: worktree) }
     dropWorktrees(gone)
     return true
   }
@@ -368,10 +401,9 @@ extension Workspace {
         // `.exit` watch, which cleared the pid before any rescan could run. One stat either way,
         // and a rescan is a claude starting or stopping, not a redraw.
         if session.heldByPID != nil || session.isRegistryBorn,
-          let worktree = worktree(id: session.worktreeID)
+          let home = transcriptHome(of: session)
         {
-          session.isDetached = ClaudeSessionStore.isResumable(
-            id: session.id, worktree: worktree.url)
+          session.isDetached = ClaudeSessionStore.isResumable(id: session.id, worktree: home)
           // Nothing was written, so there was no conversation: the row stood for a process, and
           // the process is gone. Undoing the adoption is the honest end of it — leaving it would
           // grow a "New session" per `claude` that was started and quit before a word was typed,
@@ -477,8 +509,8 @@ extension Workspace {
       for id in moved {
         guard let session = self.sessions.first(where: { $0.id == id }) else { continue }
         if session.title == nil { wantsNames = true }
-        if session.isFollowable, let worktree = self.worktree(id: session.worktreeID) {
-          session.follow(at: worktree.url)
+        if session.isFollowable, let home = self.transcriptHome(of: session) {
+          session.follow(at: home)
         }
       }
       if wantsNames { self.loadTitles() }

@@ -128,7 +128,8 @@ final class SessionTagsTests: XCTestCase {
         outline.bounds.width - cell.maxX, SessionRailViewController.cellTrailing, "row \(row)")
     }
 
-    // A tagged row is as tall as its tags wrap to, and an untagged one keeps the rail's height.
+    // A tagged row is as tall as its tags wrap to; an untagged one still has the line under its
+    // title, which carries its branch; a heading keeps the rail's height.
     let tagged = try XCTUnwrap(
       (0..<outline.numberOfRows).first {
         ((outline.item(atRow: $0) as? RailNode)?.session?.tags.count ?? 0) > 2
@@ -138,7 +139,13 @@ final class SessionTagsTests: XCTestCase {
       (0..<outline.numberOfRows).first {
         (outline.item(atRow: $0) as? RailNode)?.session?.tags.isEmpty == true
       })
-    XCTAssertEqual(outline.rect(ofRow: plain).height, outline.rowHeight)
+    XCTAssertGreaterThan(outline.rect(ofRow: plain).height, outline.rowHeight)
+    XCTAssertLessThan(outline.rect(ofRow: plain).height, outline.rect(ofRow: tagged).height)
+    let heading = try XCTUnwrap(
+      (0..<outline.numberOfRows).first {
+        (outline.item(atRow: $0) as? RailNode)?.isRepositoryHeading == true
+      })
+    XCTAssertEqual(outline.rect(ofRow: heading).height, outline.rowHeight)
   }
 
   func testChipsWrapOntoAnotherLineWhenTheyDoNotFit() {

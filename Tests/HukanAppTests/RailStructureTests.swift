@@ -3,9 +3,9 @@ import XCTest
 
 @testable import Hukan
 
-/// The worktree-first rail model: a repository's main worktree (the common dir's parent) folds
-/// into the heading, linked worktrees are its children, and a worktree with no session is kept so
-/// its file tree stays reachable.
+/// The rail's model: a repository's sessions stand under its heading whichever worktree each is
+/// in, the worktrees themselves being where a session is rather than a level of the rail — and a
+/// worktree git stops listing leaves its sessions standing on the main checkout.
 final class RailStructureTests: XCTestCase {
   func testMainIsTheCommonDirParent() {
     let repo = Repository(id: "/repo/main")
@@ -19,28 +19,17 @@ final class RailStructureTests: XCTestCase {
   func testRailNodeHeadingFlagsTellTheKindsApart() {
     let repo = Repository(id: "/repo/main")
     let main = Worktree(url: URL(fileURLWithPath: "/repo/main"), repository: repo)
-    let linked = Worktree(
-      url: URL(fileURLWithPath: "/repo/feature"), branch: "feature", repository: repo)
 
     // Repository heading: carries the repository key, and main so that selecting it is still a
     // destination rather than a bare label.
     let repoHeading = RailNode(title: "MAIN", worktree: main, groupRepositoryID: repo.id)
     XCTAssertTrue(repoHeading.isRepositoryHeading)
-    XCTAssertFalse(repoHeading.isWorktreeHeading)
     XCTAssertFalse(repoHeading.isSectionHeading)
 
-    // A linked worktree's heading: carries a worktree but no repository or archive key.
-    let worktreeHeading = RailNode(title: "feature", worktree: linked)
-    XCTAssertTrue(worktreeHeading.isWorktreeHeading)
-    XCTAssertFalse(worktreeHeading.isRepositoryHeading)
-    XCTAssertFalse(worktreeHeading.isSectionHeading)
-
-    // A section heading — Archived here — carries a kind and a key, and is not a destination.
-    let archive = RailNode(
-      title: "Archived", section: .archived, sectionKey: main.id.uuidString)
+    // A section heading — Archived — carries a kind and a key, and is not a destination.
+    let archive = RailNode(title: "Archived", section: .archived, sectionKey: repo.id)
     XCTAssertTrue(archive.isSectionHeading)
     XCTAssertFalse(archive.isRepositoryHeading)
-    XCTAssertFalse(archive.isWorktreeHeading)
   }
 
   /// The order the rail reads down: main first, then the linked ones by directory name — and a
@@ -104,6 +93,57 @@ final class RailStructureTests: XCTestCase {
     XCTAssertEqual(repos[0].worktrees.map(\.worktree.id), [main.id, linked.id])
   }
 
+  /// What the rail lists is the repository's sessions, whichever worktree each is in, in the order
+  /// you last instructed them — not main's first and then each worktree's.
+  func testTheRailListsARepositorysSessionsAcrossItsWorktreesByInstruction() {
+    let repo = Repository(id: "/repo/main")
+    let main = Worktree(url: URL(fileURLWithPath: "/repo/main"), repository: repo)
+    let linked = Worktree(
+      url: URL(fileURLWithPath: "/repo/feature"), branch: "feature", repository: repo)
+    repo.worktrees = [main, linked]
+    let workspace = Workspace()
+    workspace.repositories = [repo]
+    let older = AgentSession(worktreeID: main.id)
+    older.lastInstructedAt = Date(timeIntervalSinceNow: -60)
+    let newer = AgentSession(worktreeID: linked.id)
+    newer.lastInstructedAt = Date()
+    let archived = AgentSession(worktreeID: linked.id)
+    workspace.sessions = [older, newer, archived]
+    workspace.archivedSessionIDs = [archived.id]
+
+    let rail = workspace.railRepositories[0]
+    XCTAssertEqual(rail.sessions.map(\.session.id), [newer.id, older.id])
+    XCTAssertEqual(
+      rail.archived.map(\.session.id), [archived.id],
+      "a linked worktree's session can be put away like any other")
+  }
+
+  /// A `git worktree remove` run from a shell ends the checkout, not the conversation: the
+  /// session stands on main, remembering where it was, and the next discovery keeps it.
+  func testAWorktreeGitStopsListingLeavesItsSessionsOnMain() {
+    let repo = Repository(id: "/repo/main")
+    let main = Worktree(url: URL(fileURLWithPath: "/repo/main"), repository: repo)
+    let linked = Worktree(
+      url: URL(fileURLWithPath: "/repo/feature"), branch: "feature", repository: repo)
+    repo.worktrees = [main, linked]
+    let workspace = Workspace()
+    workspace.repositories = [repo]
+    let session = AgentSession(worktreeID: linked.id)
+    workspace.sessions = [session]
+
+    workspace.strandSessions(in: linked)
+    workspace.dropWorktrees([linked])
+
+    XCTAssertEqual(workspace.sessions.map(\.id), [session.id], "the session stays")
+    XCTAssertEqual(session.worktreeID, main.id, "on the main checkout")
+    XCTAssertEqual(
+      session.goneWorktree, GoneWorktree(url: linked.url, branch: "feature"),
+      "and the row still names the worktree it was in")
+    XCTAssertEqual(
+      workspace.transcriptHome(of: session), linked.url,
+      "its transcript is read where the engine filed it")
+  }
+
   /// A repository whose main checkout is not open has no heading worktree at all — every worktree
   /// it has is a linked one, and none of them is dressed as main.
   func testARepositoryWithNoMainCheckoutOpenHasOnlyLinkedWorktrees() {
@@ -117,25 +157,6 @@ final class RailStructureTests: XCTestCase {
     let rail = workspace.railRepositories[0]
     XCTAssertNil(rail.main)
     XCTAssertEqual(rail.linked.map(\.worktree.id), [one.id, two.id])
-  }
-
-  /// The rail's heading is the only place a worktree's branch is named, so it is dropped only
-  /// when the directory name already carries it — the `<repo>-<branch>` shape — and kept
-  /// whenever the two genuinely drift.
-  func testBranchLabelDropsOnlyWhenTheDirectoryAlreadyCarriesIt() {
-    XCTAssertTrue(
-      RailNode.branchRepeatsDirectory(
-        directory: "hukan-worktree-heading", branch: "worktree-heading"))
-    XCTAssertTrue(
-      RailNode.branchRepeatsDirectory(directory: "hukan_files-panel", branch: "files-panel"))
-    XCTAssertTrue(RailNode.branchRepeatsDirectory(directory: "feature", branch: "feature"))
-    // Drifted: the directory says nothing about the branch, so both belong on the row.
-    XCTAssertFalse(
-      RailNode.branchRepeatsDirectory(directory: "hukan-wt1", branch: "worktree-heading"))
-    // A suffix, not a substring — "main" inside "domain" is a coincidence.
-    XCTAssertFalse(RailNode.branchRepeatsDirectory(directory: "domain", branch: "main"))
-    // The branch is a prefix of the directory, so the tail the row shows would lose it.
-    XCTAssertFalse(RailNode.branchRepeatsDirectory(directory: "heading-hukan", branch: "heading"))
   }
 
   /// The selection restore's fallback. It runs outside `shouldSelectItem`, so it has to refuse
@@ -407,9 +428,7 @@ final class RailStructureTests: XCTestCase {
     source.selectedSessionID = session.id
     source.archivedSessionIDs = [session.id]
     source.collapsedRepositories = [repository.id]
-    source.collapsedWorktrees = [worktree.id.uuidString]
-    source.expandedArchives = [worktree.id.uuidString]
-    source.collapsedWorktreeSections = [repository.id]
+    source.expandedArchives = [repository.id]
     let group = source.createGroup()
     source.moveRailRepository(repository.id, to: group, at: 0)
 
@@ -425,9 +444,7 @@ final class RailStructureTests: XCTestCase {
     XCTAssertTrue(source.terminals.isEmpty)
     XCTAssertTrue(source.archivedSessionIDs.isEmpty)
     XCTAssertTrue(source.collapsedRepositories.isEmpty)
-    XCTAssertTrue(source.collapsedWorktrees.isEmpty)
     XCTAssertTrue(source.expandedArchives.isEmpty)
-    XCTAssertTrue(source.collapsedWorktreeSections.isEmpty)
     XCTAssertNil(source.groupID(for: repository.id))
     XCTAssertFalse(source.railOrder.contains("r:" + repository.id))
     XCTAssertEqual(source.selectedWorktreeID, repositories[1].worktrees[0].id)
@@ -442,9 +459,7 @@ final class RailStructureTests: XCTestCase {
     XCTAssertTrue(destination.terminals[0] === terminal)
     XCTAssertEqual(destination.archivedSessionIDs, [session.id])
     XCTAssertEqual(destination.collapsedRepositories, [repository.id])
-    XCTAssertEqual(destination.collapsedWorktrees, [worktree.id.uuidString])
-    XCTAssertEqual(destination.expandedArchives, [worktree.id.uuidString])
-    XCTAssertEqual(destination.collapsedWorktreeSections, [repository.id])
+    XCTAssertEqual(destination.expandedArchives, [repository.id])
     session.onHeldChange?()
     XCTAssertEqual(heldChanges, 1)
     XCTAssertFalse(destination.adoptRepository(detached))

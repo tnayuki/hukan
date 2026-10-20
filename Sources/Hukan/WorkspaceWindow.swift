@@ -1589,7 +1589,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   }
 
   /// What the rail is showing, as a place: the session when one was named and is in the
-  /// selected worktree, the worktree row otherwise.
+  /// selected worktree, the heading otherwise.
   private var currentPlace: SelectionHistory.Place? {
     if let session = workspace.selectedSession, session.id == workspace.selectedSessionID {
       return .session(session.id)
@@ -1941,6 +1941,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     let worktree = workspace.addWorktree(url)
     let previous = session.worktreeID
     session.worktreeID = worktree.id
+    session.goneWorktree = nil
     files.desk.sessionMoved(session, from: previous)
     workspace.selectedWorktreeID = worktree.id
     workspace.selectedSessionID = session.id

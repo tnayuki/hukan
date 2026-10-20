@@ -111,7 +111,7 @@ final class RailSelectionTests: XCTestCase {
   func testTheArchivedSectionFoldsEvenWhileItHoldsTheSelection() {
     let (rail, workspace, sessions) = rail(sessionCount: 3)
     XCTAssertTrue(workspace.setArchived(true, for: [sessions[0]]))
-    workspace.expandedArchives = [sessions[0].worktreeID.uuidString]
+    workspace.expandedArchives = [workspace.repositories[0].id]
     workspace.selectedSessionID = sessions[0].id
     rail.reload()
     XCTAssertTrue(rail.selectedSessionIDs.contains(sessions[0].id))

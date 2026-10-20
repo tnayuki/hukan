@@ -98,20 +98,23 @@ enum SessionTags {
   }
 }
 
-/// A session row's tags, under its title: the chips in order, wrapping onto as many lines as they
-/// need. Laid out by hand rather than by a stack, because the row's height has to be known before
-/// the row exists — the rail asks for it to place every row below — and `height` is that same
-/// layout, run without the views.
+/// A session row's line under its title: the branch it stands on, then its tags, in order,
+/// wrapping onto as many lines as they need. Laid out by hand rather than by a stack, because the
+/// row's height has to be known before the row exists — the rail asks for it to place every row
+/// below — and `height` is that same layout, run without the views.
 final class TagFlowView: NSView {
   static let spacing = NSSize(width: 4, height: 3)
 
+  private let branch: BranchMark?
   private let chips: [TagChip]
+  private var items: [NSView] { (branch.map { [$0] } ?? []) + chips }
 
   /// `open` is what a chip naming a page does when it is clicked.
-  init(tags: [String], open: ((URL) -> Void)? = nil) {
+  init(tags: [String], branch: BranchMark.Content? = nil, open: ((URL) -> Void)? = nil) {
+    self.branch = branch.map(BranchMark.init)
     chips = tags.map { TagChip(tag: $0, open: open) }
     super.init(frame: .zero)
-    chips.forEach(addSubview)
+    items.forEach(addSubview)
   }
 
   @available(*, unavailable)
@@ -135,16 +138,106 @@ final class TagFlowView: NSView {
     return frames
   }
 
-  /// How tall `tags` stand in `width` — what the rail asks before it has a row to measure.
-  static func height(of tags: [String], width: CGFloat) -> CGFloat {
-    let sizes = tags.map { TagChip.size(of: $0) }
-    return frames(of: sizes, width: width).last?.maxY ?? 0
+  /// How tall a line of `tags`, led by `branch`, stands in `width` — what the rail asks before it
+  /// has a row to measure.
+  static func height(of tags: [String], branch: BranchMark.Content? = nil, width: CGFloat)
+    -> CGFloat
+  {
+    let sizes = (branch.map { [BranchMark.size(of: $0)] } ?? []) + tags.map { TagChip.size(of: $0) }
+    return frames(of: sizes, width: width).reduce(0) { max($0, $1.maxY) }
   }
 
   override func layout() {
     super.layout()
-    let frames = Self.frames(of: chips.map(\.intrinsicContentSize), width: bounds.width)
-    for (chip, frame) in zip(chips, frames) { chip.frame = frame }
+    let frames = Self.frames(of: items.map(\.intrinsicContentSize), width: bounds.width)
+    for (item, frame) in zip(items, frames) { item.frame = frame }
+  }
+}
+
+/// Where a session stands, at the head of the line under its title: the branch glyph and the
+/// branch's name — the name rather than the worktree's directory, since git never checks one
+/// branch out twice and the branch is what a pull request and the agent both call it. A worktree
+/// git no longer lists is drawn struck through, which is the whole of the report that it went: the
+/// session goes on, in the main checkout, and the row only has to say where it was.
+final class BranchMark: NSView {
+  struct Content: Equatable {
+    var name: String
+    var isGone = false
+    /// The checkout's path, for the tooltip — the one place it is said, the row having no room.
+    var path: String
+  }
+
+  private let content: Content
+  private static let font = NSFont.systemFont(ofSize: 11)
+  private static let gap: CGFloat = 3
+  static let maximumWidth: CGFloat = 150
+
+  private static let glyph: NSImage? = NSImage(
+    systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Branch")?
+    .withSymbolConfiguration(.init(pointSize: 9, weight: .regular))
+
+  init(_ content: Content) {
+    self.content = content
+    super.init(frame: .zero)
+    toolTip = content.isGone ? "\(content.path) — no longer a worktree" : content.path
+    setAccessibilityElement(true)
+    setAccessibilityRole(.staticText)
+    setAccessibilityLabel(
+      content.isGone ? "Branch \(content.name), worktree gone" : "Branch \(content.name)")
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  override var isFlipped: Bool { true }
+
+  private static func attributes(gone: Bool) -> [NSAttributedString.Key: Any] {
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.lineBreakMode = .byTruncatingTail
+    var attributes: [NSAttributedString.Key: Any] = [
+      .font: font, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: paragraph,
+    ]
+    if gone { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+    return attributes
+  }
+
+  /// The size a mark for `content` takes, without making one.
+  static func size(of content: Content) -> NSSize {
+    let text = (content.name as NSString).size(withAttributes: attributes(gone: content.isGone))
+    let glyphWidth = glyph?.size.width ?? 0
+    return NSSize(
+      width: min(ceil(glyphWidth + gap + text.width), maximumWidth),
+      height: ceil(font.ascender - font.descender) + 2)
+  }
+
+  override var intrinsicContentSize: NSSize { Self.size(of: content) }
+
+  override func draw(_ dirtyRect: NSRect) {
+    var x: CGFloat = 0
+    if let glyph = Self.glyph {
+      let tinted = glyph.tinted(.secondaryLabelColor)
+      let y = (bounds.height - glyph.size.height) / 2
+      tinted.draw(
+        in: NSRect(origin: NSPoint(x: 0, y: y), size: glyph.size), from: .zero,
+        operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+      x = glyph.size.width + Self.gap
+    }
+    let text = NSRect(x: x, y: 1, width: max(bounds.width - x, 0), height: bounds.height - 1)
+    (content.name as NSString).draw(
+      with: text, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+      attributes: Self.attributes(gone: content.isGone))
+  }
+}
+
+extension NSImage {
+  /// A template image filled with `color`, for drawing a symbol where no image view tints it.
+  fileprivate func tinted(_ color: NSColor) -> NSImage {
+    NSImage(size: size, flipped: false) { rect in
+      self.draw(in: rect)
+      color.set()
+      rect.fill(using: .sourceAtop)
+      return true
+    }
   }
 }
 

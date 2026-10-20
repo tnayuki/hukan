@@ -258,7 +258,7 @@ enum ExternalMCP {
         let session = workspace.sessions.first(where: { $0.id == id })
       else { return done(.error("no session with id \(text) is open in hukan")) }
       let header = sessionHeader(session, in: workspace)
-      guard let url = workspace.worktree(id: session.worktreeID)?.url else {
+      guard let url = workspace.transcriptHome(of: session) else {
         return done(.text(header))
       }
       let window = TurnWindow(

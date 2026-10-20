@@ -45,10 +45,9 @@ final class WorkspaceModelTests: XCTestCase {
     XCTAssertFalse(worktree.sessions.contains { $0.session.id == sessions[3].id })
   }
 
-  /// Only main's sessions can be archived. A linked worktree is the task itself — the
-  /// `git worktree remove` that ends it takes its sessions off the rail — so nothing accumulates
-  /// there for a fold to put away.
-  func testALinkedWorktreesSessionsCannotBeArchived() {
+  /// A linked worktree's sessions are put away like main's. A worktree going no longer takes its
+  /// sessions with it (see `strandSessions`), so the long tail grows wherever the work was.
+  func testALinkedWorktreesSessionsCanBeArchived() {
     let repo = Repository(id: "/repo/main")
     let main = Worktree(url: URL(fileURLWithPath: "/repo/main"), branch: "main", repository: repo)
     let linked = Worktree(
@@ -56,16 +55,13 @@ final class WorkspaceModelTests: XCTestCase {
     repo.worktrees = [main, linked]
     let (workspace, _, sessions) = workspaceWithSessions(2, in: linked, of: repo)
 
-    XCTAssertFalse(workspace.canArchive(sessions[0]))
-    XCTAssertFalse(workspace.setArchived(true, for: sessions))
-    XCTAssertTrue(workspace.archivedSessionIDs.isEmpty)
-    XCTAssertTrue(workspace.railRepositories[0].linked[0].archived.isEmpty)
-    XCTAssertEqual(workspace.railRepositories[0].linked[0].sessions.count, 2)
+    XCTAssertTrue(workspace.setArchived(true, for: [sessions[0]]))
+    XCTAssertEqual(workspace.railRepositories[0].archived.map(\.session.id), [sessions[0].id])
+    XCTAssertEqual(workspace.railRepositories[0].sessions.map(\.session.id), [sessions[1].id])
   }
 
-  /// A flag on a session that has since moved worktree goes inert rather than being cleared —
-  /// it is still true that you archived it, and coming home is what makes it mean something.
-  func testAnArchivedSessionThatMovesIntoAWorktreeGoesInertAndComesBack() {
+  /// Archived is the session's, whichever worktree its agent moves it to.
+  func testAnArchivedSessionStaysArchivedWhenItMovesWorktree() {
     let repo = Repository(id: "/repo/main")
     let main = Worktree(url: URL(fileURLWithPath: "/repo/main"), branch: "main", repository: repo)
     let linked = Worktree(
@@ -75,10 +71,6 @@ final class WorkspaceModelTests: XCTestCase {
     XCTAssertTrue(workspace.setArchived(true, for: sessions))
 
     sessions[0].worktreeID = linked.id
-    XCTAssertFalse(workspace.isArchived(sessions[0]))
-    XCTAssertTrue(workspace.archivedSessionIDs.contains(sessions[0].id))
-
-    sessions[0].worktreeID = main.id
     XCTAssertTrue(workspace.isArchived(sessions[0]))
   }
 

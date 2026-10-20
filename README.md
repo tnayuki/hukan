@@ -83,15 +83,18 @@ first. Neither deletes anything, and neither touches the worktree's files. A ses
 process holds can be forked, but not rolled back.
 
 **Worktrees.** Repositories are opened and closed; their worktrees are enumerated from git, never
-stored. The main checkout is the repository's own rail row, naming its branch; the linked ones sit
-under a *Worktrees* heading beneath it, each folding away with its sessions, in order of the
-directory name their row carries. An agent moving worktree (`EnterWorktree`)
-takes its session with it, and leaving it (`ExitWorktree`) brings the session back to the worktree
-it was started from. What git is told elsewhere arrives as it is told: a `git worktree add` or
-`git worktree remove` run in a terminal puts a row up or takes one down, and a `git checkout`
-renames the row it was run in. Dragging a repository's heading puts it somewhere else in the
-rail, worktrees and all — the insertion line falls only between repositories, never inside one,
-the worktrees' own order being the name's rather than anyone's. Repositories can be gathered
+stored. The rail lists a repository's sessions under its heading, whichever worktree each is in:
+the line under a session's title names the branch it stands on, then its tags, with what has
+changed in that worktree at the trailing edge, and the worktree's path is the branch's tooltip.
+A worktree is not a row of its own, so one with no session in it is not on the rail. An agent
+moving worktree (`EnterWorktree`) takes its session, and its desk, with it, and leaving it
+(`ExitWorktree`) brings the session back to the worktree it was started from; the row stays where
+it is and its branch changes. What git is told elsewhere arrives as it is told: a `git checkout`
+renames the branch on the rows standing in it, and a `git worktree remove` run in a terminal
+leaves the sessions that were in that worktree on the rail, on the main checkout, their branch
+struck through — the next message resumes the conversation there. Dragging a repository's heading puts it somewhere else in the
+rail, sessions and all — the insertion line falls only between repositories, never inside one,
+the sessions under a heading keeping the rail's own order. Repositories can be gathered
 into named groups — *New Group* on the rail's right-click, then a repository dragged onto the
 group's heading or sent there with *Move to Group* — so one window can hold several customers'
 work, each folding away under its own heading. A folded group's heading carries a dot when a
@@ -378,14 +381,14 @@ Nothing leaves the rail by age, and nothing is deleted from disk except by askin
 Session removes the transcript that *is* the session, permanently. Sessions are discovered from
 Claude Code's transcripts, and one that has yet to write a transcript from the live engine that
 holds it, ordered by when you last instructed them, each row saying how long ago that was. *Archive* puts the ones
-you are done with into a folded section at the foot of the main checkout's rows — only main's,
-since a linked worktree leaves the rail with its sessions when git stops listing it. It stops the
+you are done with into a folded section at the foot of the repository's rows, whichever worktree
+they were in. It stops the
 agent, the way *Stop Session* does, and destroys nothing: the transcript stays exactly where it
 was, *Unarchive* brings the row back, and the next message resumes it. A session
 that starts working or asks for you comes back out on its own, so nothing waiting on you is ever
 hidden — and one you send a message to leaves the fold for good, since instructing a session is
 deciding you are not done with it. Several rows can be selected at once, so a batch of finished attempts is one gesture. A
-worktree's rows leave when git stops listing it, or when its repository is closed.
+repository's rows leave when it is closed.
 
 A session can carry tags — the ticket, the issue, the pull request it is working on — so a row
 says what it is for at a glance. Each is written `kind: value`, `JIRA: ABC-123` or `PR: #42`; the

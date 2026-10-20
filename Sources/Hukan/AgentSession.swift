@@ -111,6 +111,12 @@ final class AgentSession {
   /// When the agent creates a worktree mid-session its working location moves,
   /// so this cannot be fixed at creation time.
   var worktreeID: UUID
+  /// The worktree this session stood in when git stopped listing it — set when the session is
+  /// put on the main checkout instead of leaving with the worktree (see
+  /// `Workspace.strandSessions`). It is what the row still names, struck through, and where the
+  /// transcript goes on living: `EnterWorktree` filed it under that checkout and nothing moves it
+  /// back. Cleared when the session moves to a worktree that is there.
+  var goneWorktree: GoneWorktree?
   var state: RunState = .idle
 
   /// When this session last emitted anything — a fragment of output (`append`) or an
