@@ -1005,6 +1005,47 @@ enum ClaudeSessionStore {
     directory(for: worktree).appendingPathComponent("\(name(id)).jsonl")
   }
 
+  /// One subagent a session launched, as the engine records it beside the session's transcript in
+  /// `<session>/subagents/agent-<id>.meta.json` — the one place that says which worktree a
+  /// subagent sent off with `isolation: "worktree"` made, and which tool call launched it.
+  struct Subagent: Equatable {
+    let agentID: String
+    let description: String?
+    let toolUseID: String?
+    let worktree: URL?
+  }
+
+  /// The subagents session `id` has launched, newest first. A directory listing and a few small
+  /// files, read when they can have changed — a subagent starting or reporting — and not on a clock.
+  static func subagents(of id: UUID, worktree: URL) -> [Subagent] {
+    let directory = directory(for: worktree)
+      .appendingPathComponent(name(id)).appendingPathComponent("subagents")
+    guard
+      let names = try? FileManager.default.contentsOfDirectory(
+        at: directory, includingPropertiesForKeys: [.contentModificationDateKey])
+    else { return [] }
+    return names.filter { $0.lastPathComponent.hasSuffix(".meta.json") }
+      .compactMap { url -> (Subagent, Date)? in
+        guard let data = try? Data(contentsOf: url),
+          let meta = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return nil }
+        let file = url.lastPathComponent
+        let agentID = String(
+          file.dropFirst(file.hasPrefix("agent-") ? 6 : 0).dropLast(".meta.json".count))
+        let modified =
+          (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+          .contentModificationDate ?? .distantPast
+        return (
+          Subagent(
+            agentID: agentID, description: meta["description"] as? String,
+            toolUseID: meta["toolUseId"] as? String,
+            worktree: (meta["worktreePath"] as? String).map { URL(fileURLWithPath: $0) }),
+          modified
+        )
+      }
+      .sorted { $0.1 > $1.1 }.map(\.0)
+  }
+
   /// Delete a session for good: unlink its transcript. Because the list is derived from the
   /// transcripts on disk (see `sessions(in:)`), removing the file *is* removing the session —
   /// there is no hukan-side record to forget, and nothing short of this would stop the next scan

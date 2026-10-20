@@ -353,7 +353,37 @@ final class AgentSession {
   /// found. Only agents are counted. A backgrounded shell (`local_bash`) is often a server meant
   /// to run until someone stops it, and a row that stayed busy for as long as `npm run dev` does
   /// would say nothing about the agent.
-  private var backgroundTasks = Set<String>()
+  private var backgroundTasks: [RunningSubagent] = []
+
+  /// One subagent at work, as the parent's row reports it: what it was sent to do, and the last
+  /// tool the engine's progress said it used — the one fact about it that moves while it runs.
+  struct RunningSubagent: Equatable {
+    let id: String
+    var description: String
+    var lastTool: String?
+  }
+  /// The subagents running now, in the order they were started.
+  var runningSubagents: [RunningSubagent] { backgroundTasks }
+
+  /// The worktrees this session's subagents made (`isolation: "worktree"`), newest first, as
+  /// `subagents/*.meta.json` records them — re-read when a subagent starts or reports, and when the
+  /// session is opened, so the parent's row can say where its work went. Only paths: which of them
+  /// git still lists is the workspace's to answer.
+  private(set) var subagentWorktrees: [URL] = []
+
+  /// Read the subagents' records again, off the main thread.
+  func refreshSubagents() {
+    guard let home = lastKnownWorktree else { return }
+    let id = self.id
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      let worktrees = ClaudeSessionStore.subagents(of: id, worktree: home).compactMap(\.worktree)
+      DispatchQueue.main.async {
+        guard let self, worktrees != self.subagentWorktrees else { return }
+        self.subagentWorktrees = worktrees
+        self.onStateChange?()
+      }
+    }
+  }
 
   /// Whether the agent has anything in flight — a turn, or a subagent a finished turn left
   /// running. This is what the rail reads as working; `isTurnActive` stays the queue gate and the
@@ -650,6 +680,8 @@ final class AgentSession {
   /// keeps opening a year-long conversation from freezing the window.
   func loadHistoryIfNeeded(at worktreeURL: URL) {
     lastKnownWorktree = worktreeURL
+    // Every open, like the task list: a subagent may have reported while nobody was looking.
+    refreshSubagents()
     guard !hasLoadedHistory else { return }
     hasLoadedHistory = true
     let id = self.id
@@ -2214,16 +2246,32 @@ final class AgentSession {
     case "system" where event.subtype == "task_started":
       guard let id = event.payload["task_id"] as? String,
         let type = event.payload["task_type"] as? String,
-        Self.agentTaskTypes.contains(type)
+        Self.agentTaskTypes.contains(type), !backgroundTasks.contains(where: { $0.id == id })
       else { break }
-      backgroundTasks.insert(id)
+      backgroundTasks.append(
+        RunningSubagent(id: id, description: event.payload["description"] as? String ?? ""))
+      // A subagent sent off into a worktree has made it by now, and its record says which.
+      refreshSubagents()
+      onStateChange?()
+
+    case "system" where event.subtype == "task_progress":
+      guard let id = event.payload["task_id"] as? String,
+        let index = backgroundTasks.firstIndex(where: { $0.id == id })
+      else { break }
+      let tool = event.payload["last_tool_name"] as? String
+      guard tool != backgroundTasks[index].lastTool else { break }
+      backgroundTasks[index].lastTool = tool
+      onStateChange?()
 
     case "system" where event.subtype == "task_notification":
       // Emitted once per task, whatever it ended as (completed, failed, killed).
       guard let id = event.payload["task_id"] as? String,
-        backgroundTasks.remove(id) != nil, backgroundTasks.isEmpty, !isTurnActive,
-        state == .running
+        let index = backgroundTasks.firstIndex(where: { $0.id == id })
       else { break }
+      backgroundTasks.remove(at: index)
+      refreshSubagents()
+      onStateChange?()
+      guard backgroundTasks.isEmpty, !isTurnActive, state == .running else { break }
       // The last one has reported with no turn in flight. The engine is about to open a turn to
       // hand the model its result, and that turn's `result` is what ends this; going idle here
       // would flash the check in between. Only if no turn follows is the session done now.

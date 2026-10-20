@@ -17,7 +17,20 @@ final class RailPreviewTests: XCTestCase {
     guard ProcessInfo.processInfo.environment["HUKAN_PREVIEW_RAIL"] == "1" else { return }
 
     let rail = SessionRailViewController()
-    rail.workspace = Self.sampleWorkspace()
+    let workspace = Self.sampleWorkspace()
+    // The working session has sent two subagents off, so the line their row adds is on view.
+    let working = workspace.sessions[3]
+    for (id, what, tool) in [
+      ("a1", "Write the tag tests", "Bash"), ("a2", "Update the README", "Edit"),
+    ] {
+      working.apply(
+        ClaudeEvent(
+          type: "system", subtype: "task_started",
+          payload: ["task_id": id, "task_type": "local_agent", "description": what]))
+      let progress = ["task_id": id, "last_tool_name": tool]
+      working.apply(ClaudeEvent(type: "system", subtype: "task_progress", payload: progress))
+    }
+    rail.workspace = workspace
     rail.loadViewIfNeeded()
     rail.reload()
     // The rail's own floor (`railItem.minimumThickness`), so what the preview truncates is

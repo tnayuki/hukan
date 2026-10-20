@@ -89,7 +89,11 @@ changed in that worktree at the trailing edge, and the worktree's path is the br
 The sessions are in the order you last instructed them unless you sort them otherwise — by
 branch, or by the value of one kind of tag (`JIRA`, `PR`), a session without one coming after —
 from the glyph beside the rail's filter, from View ▸ Sort Sessions By, or from the rail's own
-right-click; the window keeps its choice across a relaunch.
+right-click; the window keeps its choice across a relaunch. A session whose agent has sent
+subagents off says so on its row, a line for each one working — what it was sent to do and the
+last tool it used, three at most and the rest counted — and a
+worktree a subagent made (`isolation: "worktree"`) is listed under the branch of the session that
+sent it, with what has changed in it.
 A worktree is not a row of its own, so one with no session in it is not on the rail. An agent
 moving worktree (`EnterWorktree`) takes its session, and its desk, with it, and leaving it
 (`ExitWorktree`) brings the session back to the worktree it was started from; the row stays where

@@ -867,6 +867,19 @@ Workspace (one window)
   a session there, from the heading's right-click: the heading's `+` is main's. The worktrees
   under a repository are still kept in order by name, compared the Finder's way, for the readers
   that list them (`hukan status`, the outside client's session list).
+  **A subagent is not a row; the row of the session that sent it says what it is doing and where
+  its work went.** The desktop app nests the subagents a session sends off under it as sessions of
+  their own, and the question was whether this rail should too. It should not, because of what a
+  row is here: a session you can speak to, whose approvals land on it. Over `-p` a subagent is
+  neither — the engine refuses `send_task_message` there (measured, 2.1.300), and its approvals
+  arrive as the parent's `can_use_tool`, so its waiting is already the parent's row's. What is left
+  to say is two facts, and both are on the parent's row: a line for each one at work — what it was
+  sent to do and the last tool it used, three at most and the rest counted, since a row that grew
+  without end would push the other sessions off the column — from the stream's own task events,
+  and the worktrees they made, from the engine's
+  record beside the transcript (`subagents/*.meta.json`) — the record and not the worktree's
+  `agent-<id>` name, which is a convention. Read when one starts or reports and when the session
+  is opened, so a session never opened in this window says nothing of what its subagents left.
   **The order is the window's choice of three, and only an order.** When you last instructed a
   session is the default and the one the ages down the trailing edge read in; by branch, and by
   the value of one *kind* of tag, are the other two — the kind because a session carries several

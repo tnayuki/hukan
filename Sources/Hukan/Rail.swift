@@ -1637,12 +1637,14 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       }
       flow.translatesAutoresizingMaskIntoConstraints = false
       cell.addSubview(flow)
+      let width = detailWidth(of: node, detail)
+      let flowHeight = TagFlowView.height(of: detail.tags, branch: detail.branch, width: width)
       NSLayoutConstraint.activate([
         flow.leadingAnchor.constraint(
           equalTo: cell.leadingAnchor, constant: indent + Self.tagLeading),
-        flow.widthAnchor.constraint(equalToConstant: detailWidth(of: node, detail)),
+        flow.widthAnchor.constraint(equalToConstant: width),
         flow.topAnchor.constraint(equalTo: cell.topAnchor, constant: Self.tagTop),
-        flow.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -Self.tagBottom),
+        flow.heightAnchor.constraint(equalToConstant: flowHeight),
       ])
       if let changes = detail.changes {
         let label = NSTextField(labelWithAttributedString: changes)
@@ -1654,8 +1656,74 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
           label.topAnchor.constraint(equalTo: cell.topAnchor, constant: Self.tagTop),
         ])
       }
+      // What the session's subagents are doing, and where their work went — each a line of its own
+      // below, at the indent of the line above, so the row reads as one task and what it sent out.
+      var lines: [NSView] = []
+      for agent in detail.agents { lines.append(Self.agentsLine(agent)) }
+      for child in detail.childWorktrees {
+        lines.append(Self.childWorktreeLine(child.branch, changes: child.changes))
+      }
+      for (index, line) in lines.enumerated() {
+        line.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(line)
+        let top =
+          Self.tagTop + flowHeight + CGFloat(index + 1) * Self.extraLineGap
+          + CGFloat(index) * Self.extraLineHeight
+        NSLayoutConstraint.activate([
+          line.leadingAnchor.constraint(
+            equalTo: cell.leadingAnchor, constant: indent + Self.tagLeading),
+          line.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4),
+          line.topAnchor.constraint(equalTo: cell.topAnchor, constant: top),
+          line.heightAnchor.constraint(equalToConstant: Self.extraLineHeight),
+        ])
+      }
     }
     return cell
+  }
+
+  /// The lines a row adds below its branch and tags — one per kind of thing its subagents left.
+  private static let extraLineHeight: CGFloat = 16
+  private static let extraLineGap: CGFloat = 3
+
+  /// `Write tag tests · Bash`, the person glyph in front: one subagent at work, what it was sent to
+  /// do and the last tool it used.
+  private static func agentsLine(_ text: String) -> NSView {
+    let glyph = NSImageView(
+      image: NSImage(systemSymbolName: "person.fill", accessibilityDescription: "Subagent")
+        ?? NSImage())
+    glyph.symbolConfiguration = .init(pointSize: 9, weight: .regular)
+    glyph.contentTintColor = .systemGreen
+    let label = NSTextField(labelWithString: text)
+    label.font = .systemFont(ofSize: 11)
+    label.textColor = .systemGreen
+    label.lineBreakMode = .byTruncatingTail
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    let row = NSStackView(views: [glyph, label])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = 4
+    return row
+  }
+
+  /// A worktree a subagent made, under the branch of the session that sent it: its branch, struck
+  /// through if git no longer lists it, and what has moved there.
+  private static func childWorktreeLine(_ branch: BranchMark.Content, changes: NSAttributedString?)
+    -> NSView
+  {
+    let mark = BranchMark(branch)
+    mark.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    var views: [NSView] = [mark]
+    if let changes {
+      let label = NSTextField(labelWithAttributedString: changes)
+      label.setContentHuggingPriority(.required, for: .horizontal)
+      views.append(label)
+    }
+    let row = NSStackView(views: views)
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = 6
+    row.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 0)
+    return row
   }
 
   // MARK: - The line under the title
@@ -1676,28 +1744,69 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     /// What has moved in the worktree, `+added −removed`, when anything has — nil on a worktree
     /// with nothing uncommitted, and on one that is gone, which has nothing left to measure.
     var changes: NSAttributedString?
+    /// A line per subagent at work — what it was sent to do and the last tool it used — with what
+    /// does not fit folded into a last `+2 more`; empty when none runs.
+    var agents: [String] = []
+    /// The worktrees its subagents made that git still lists, each with what has moved in it. A
+    /// subagent is no row of its own — nobody can speak to one directly, its approvals come to the
+    /// parent — so where its work went is said here, on the row of the session that sent it.
+    var childWorktrees: [(branch: BranchMark.Content, changes: NSAttributedString?)] = []
+    /// How many lines the row draws below the branch and tags.
+    var extraLines: Int { agents.count + childWorktrees.count }
   }
 
   /// The line under a session row's title, or nil on a row that has none — a hit, or a heading.
   /// Every session row has one, since every session stands on some branch.
   func detail(of node: RailNode) -> RowDetail? {
     guard node.matchOffset == nil, let session = node.session else { return nil }
+    var detail: RowDetail
     if let gone = session.goneWorktree {
-      return RowDetail(
+      detail = RowDetail(
         branch: .init(
           name: gone.branch ?? gone.url.lastPathComponent, isGone: true, path: gone.url.path),
         tags: SessionTags.displayOrder(session.tags))
+    } else {
+      guard let worktree = workspace?.worktree(id: session.worktreeID) ?? node.worktree else {
+        return nil
+      }
+      detail = RowDetail(
+        branch: .init(name: worktree.displayName, path: worktree.url.path),
+        tags: SessionTags.displayOrder(session.tags), changes: Self.changes(of: worktree))
     }
-    guard let worktree = workspace?.worktree(id: session.worktreeID) ?? node.worktree else {
-      return nil
+    detail.agents = Self.agentLines(session.runningSubagents)
+    if let workspace {
+      detail.childWorktrees = session.subagentWorktrees.compactMap { url in
+        guard let worktree = workspace.worktree(atRoot: url), worktree.id != session.worktreeID
+        else { return nil }
+        return (
+          BranchMark.Content(name: worktree.displayName, path: worktree.url.path),
+          Self.changes(of: worktree)
+        )
+      }
     }
-    let stat = worktree.diffstat
-    return RowDetail(
-      branch: .init(name: worktree.displayName, path: worktree.url.path),
-      tags: SessionTags.displayOrder(session.tags),
-      changes: stat.added + stat.removed > 0
-        ? Self.changes(added: stat.added, removed: stat.removed) : nil)
+    return detail
   }
+
+  /// What has moved in `worktree`, or nil when nothing has.
+  private static func changes(of worktree: Worktree) -> NSAttributedString? {
+    let stat = worktree.diffstat
+    return stat.added + stat.removed > 0 ? changes(added: stat.added, removed: stat.removed) : nil
+  }
+
+  /// The running subagents as the row says them: one each, in the order they were started — what
+  /// it was sent to do, then the last tool it used — up to `agentLimit`, past which the rest are a
+  /// count, since a row that grew a line per subagent without end would push the rail's other
+  /// sessions off the column.
+  static func agentLines(_ running: [AgentSession.RunningSubagent]) -> [String] {
+    let shown = running.count > agentLimit ? agentLimit - 1 : running.count
+    var lines = running.prefix(shown).map { agent -> String in
+      let what = agent.description.isEmpty ? "Subagent" : agent.description
+      return agent.lastTool.map { "\(what) · \($0)" } ?? what
+    }
+    if running.count > shown { lines.append("+\(running.count - shown) more") }
+    return lines
+  }
+  static let agentLimit = 3
 
   /// `+12 −3`, green then red, in the digits the age beside it uses.
   static func changes(added: Int, removed: Int) -> NSAttributedString {
@@ -1728,7 +1837,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     }
     let line = TagFlowView.height(
       of: detail.tags, branch: detail.branch, width: detailWidth(of: node, detail))
-    return Self.tagTop + line + Self.tagBottom
+    let extra = CGFloat(detail.extraLines) * (Self.extraLineGap + Self.extraLineHeight)
+    return Self.tagTop + line + extra + Self.tagBottom
   }
 
   /// The width the line under the title wraps in: the row's, less the changes at its trailing
