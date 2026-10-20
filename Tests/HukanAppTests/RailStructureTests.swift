@@ -400,7 +400,7 @@ final class RailStructureTests: XCTestCase {
     let session = AgentSession(worktreeID: worktree.id)
     session.state = .needsAttention
     session.draft = "Unsent draft"
-    let terminal = TerminalSession(worktreeID: worktree.id, cwd: worktree.url)
+    let terminal = TerminalSession(deskID: session.id, cwd: worktree.url)
     source.sessions = [session]
     source.terminals = [terminal]
     source.selectedWorktreeID = worktree.id

@@ -8,8 +8,8 @@ final class Workspace {
   var repositories: [Repository] = []
   var worktrees: [Worktree] { repositories.flatMap(\.worktrees) }
   var sessions: [AgentSession] = []
-  /// This window's terminals, keyed to their worktree like `sessions`. A worktree's desk shows
-  /// `terminals(inWorktree:)`; the array is the one store, so a terminal outlives tab switches.
+  /// This window's terminals, each a tab on one session's desk. A desk shows
+  /// `terminals(inDesk:)`; the array is the one store, so a terminal outlives tab switches.
   var terminals: [TerminalSession] = []
 
   /// Something arrived that the rail is showing — a session title read in the background,
@@ -388,21 +388,21 @@ final class Workspace {
   private var restoredInstructedAt: [String: Date] = [:]
 
   /// Terminals decoded from restoration state, waiting for the window controller to turn them into
-  /// live `TerminalSession`s (it owns the callback wiring). Each carries the worktree to reopen on
+  /// live `TerminalSession`s (it owns the callback wiring). Each carries the desk to reopen on
   /// and the scrollback to replay. Unlike sessions, a terminal has no disk source to rediscover —
   /// the model is the state — so it is rebuilt from here, then this is emptied by `takeRestoredTerminals`.
   private var pendingRestoredTerminals:
-    [(worktreeID: UUID, directory: String, sessionID: String, scrollback: String)] = []
+    [(deskID: UUID, directory: String, sessionID: String, scrollback: String)] = []
 
   func takeRestoredTerminals()
-    -> [(worktreeID: UUID, directory: String, sessionID: String, scrollback: String)]
+    -> [(deskID: UUID, directory: String, sessionID: String, scrollback: String)]
   {
     defer { pendingRestoredTerminals = [] }
     return pendingRestoredTerminals
   }
 
   /// Web tabs decoded from restoration state, waiting for the desk to put them back on their
-  /// worktrees — the terminals' arrangement, for the same reason: the tabs are the desk's and it
+  /// sessions — the terminals' arrangement, for the same reason: the tabs are the desk's and it
   /// wires them, so the model only carries them across.
   private var pendingRestoredBrowserTabs: [BrowserTabState] = []
 
@@ -428,12 +428,12 @@ final class Workspace {
   }
 
   /// A tab is named by its position among its own kind in the saved lists, so an order is one
-  /// row per tab: which worktree, which kind — nothing else.
+  /// row per tab: which desk, which kind — nothing else.
   struct RestoredTabOrder: Hashable {
     enum Kind: String {
       case browser, terminal, file, commit
     }
-    let worktreeID: UUID
+    let deskID: UUID
     let kind: Kind
   }
 
@@ -446,7 +446,7 @@ final class Workspace {
     return pendingRestoredTabOrder
   }
 
-  /// Which tab was showing on each worktree's strip, as a place in it.
+  /// Which tab was showing on each desk's strip, as a place in it.
   private(set) var pendingRestoredTabSelection: [UUID: Int] = [:]
 
   func takeRestoredTabSelection() -> [UUID: Int] {
@@ -516,8 +516,18 @@ final class Workspace {
     return candidates.max { $0.updatedAt < $1.updatedAt }
   }
 
-  func terminals(inWorktree worktreeID: UUID) -> [TerminalSession] {
-    terminals.filter { $0.worktreeID == worktreeID }
+  func session(id: UUID) -> AgentSession? { sessions.first { $0.id == id } }
+
+  /// A desk is a session's: its tabs go where the session goes, which is what lets the worktree
+  /// stop being the thing the window is arranged under.
+  func terminals(inDesk deskID: UUID) -> [TerminalSession] {
+    terminals.filter { $0.deskID == deskID }
+  }
+
+  /// The session whose desk a worktree's work lands on when nothing more specific says — the one
+  /// instructed most recently there, the rail's own order.
+  func latestSession(inWorktree worktreeID: UUID) -> AgentSession? {
+    sessions(inWorktree: worktreeID).max { $0.lastInstructedAt < $1.lastInstructedAt }
   }
 
   /// Drop a terminal, killing its shell first so closing a tab never orphans a running process.
@@ -619,7 +629,7 @@ final class Workspace {
     let sessionIDs = Set(movingSessions.map(\.id))
     let detached = DetachedRepository(
       repository: repository, sessions: movingSessions,
-      terminals: terminals.filter { worktreeIDs.contains($0.worktreeID) },
+      terminals: terminals.filter { sessionIDs.contains($0.deskID) },
       archivedSessionIDs: archivedSessionIDs.intersection(sessionIDs),
       collapsedRepositories: collapsedRepositories.intersection([id]),
       collapsedWorktrees: collapsedWorktrees.intersection(keys),
@@ -627,7 +637,7 @@ final class Workspace {
       collapsedWorktreeSections: collapsedWorktreeSections.intersection([id]))
     repositories.removeAll { $0.id == id }
     sessions.removeAll { worktreeIDs.contains($0.worktreeID) }
-    terminals.removeAll { worktreeIDs.contains($0.worktreeID) }
+    terminals.removeAll { sessionIDs.contains($0.deskID) }
     archivedSessionIDs.subtract(sessionIDs)
     collapsedRepositories.remove(id)
     collapsedWorktrees.subtract(keys)
@@ -716,10 +726,12 @@ final class Workspace {
   /// the transcripts stay where Claude Code put them, so a path that comes back brings them back.
   func dropWorktrees(_ leaving: [Worktree]) {
     let doomed = Set(leaving.map(\.id))
+    let desks = Set(sessions.filter { doomed.contains($0.worktreeID) }.map(\.id))
     for session in sessions where doomed.contains(session.worktreeID) { session.stop() }
     sessions.removeAll { doomed.contains($0.worktreeID) }
-    for terminal in terminals where doomed.contains(terminal.worktreeID) { terminal.terminate() }
-    terminals.removeAll { doomed.contains($0.worktreeID) }
+    // A terminal is a tab on its session's desk, so it leaves with the session.
+    for terminal in terminals where desks.contains(terminal.deskID) { terminal.terminate() }
+    terminals.removeAll { desks.contains($0.deskID) }
     for repository in repositories { repository.worktrees.removeAll { doomed.contains($0.id) } }
     syncWatchers()
     if let selected = selectedWorktreeID, doomed.contains(selected) {
@@ -961,49 +973,59 @@ final class Workspace {
     static let rosterNames = "roster.names"
     static let rosterResolved = "roster.resolved"
     // Terminals: the shell process is volatile, but enough rides restoration to bring one back on
-    // the same desk (keyed by its worktree, whose id is itself restored), in the same directory,
+    // the same desk (keyed by its session, whose id is Claude Code's), in the same directory,
     // with its scrollback replayed and its history session picked up. The label is derived from
     // the directory, not stored. Bounded scrollback; the fresh shell starts below it on display.
-    static let terminalWorktreeIDs = "terminals.worktreeIDs"
+    static let terminalDeskIDs = "terminals.deskIDs"
     static let terminalDirectories = "terminals.directories"
     static let terminalSessionIDs = "terminals.sessionIDs"
     static let terminalScrollbacks = "terminals.scrollbacks"
-    // Web tabs: keyed by worktree like the terminals, the address and title so the tab can be
-    // named and found before it loads, and WebKit's own interaction state — the back/forward
-    // list and scroll — carried opaque, base64 so it rides as a string like everything else.
-    static let browserWorktreeIDs = "browsers.worktreeIDs"
+    // Web tabs: keyed by desk like the terminals, the address and title so the tab can be named
+    // and found before it loads, and WebKit's own interaction state — the back/forward list and
+    // scroll — carried opaque, base64 so it rides as a string like everything else.
+    static let browserDeskIDs = "browsers.deskIDs"
     static let browserURLs = "browsers.urls"
     static let browserTitles = "browsers.titles"
     static let browserStates = "browsers.states"
-    // File tabs: the worktree and the path relative to it, which is the whole of a buffer's
-    // identity. Nothing of the text rides along — an unsaved edit is answered for before the
-    // window goes, so what comes back is the file as it stands on disk.
+    // File tabs: the desk they stand on, then the worktree and the path relative to it, which is
+    // the whole of a buffer's identity. Nothing of the text rides along — an unsaved edit is
+    // answered for before the window goes, so what comes back is the file as it stands on disk.
+    static let fileDeskIDs = "files.deskIDs"
     static let fileWorktreeIDs = "files.worktreeIDs"
     static let filePaths = "files.paths"
     /// "1" where the tab is a Markdown file's preview rather than its source. A list of its own
     /// beside the paths rather than a mark inside them, so a state saved before previews existed
     /// reads as every tab being the source, which is what it was.
     static let fileRendered = "files.rendered"
-    // Commit tabs: the worktree they were opened from and the oid, which is the tab's identity.
-    static let commitWorktreeIDs = "commits.worktreeIDs"
+    // Commit tabs: the desk they stand on and the oid, which is the tab's identity.
+    static let commitDeskIDs = "commits.deskIDs"
     static let commitOids = "commits.oids"
     // The strip's order across every kind, so a dragged tab does not spring back on relaunch:
     // one row per restorable tab, in strip order — the four lists above are saved in that same
     // order, which is what makes a row's kind enough to name its tab.
-    static let tabOrderWorktreeIDs = "tabs.orderWorktreeIDs"
+    static let tabOrderDeskIDs = "tabs.orderDeskIDs"
     static let tabOrderKinds = "tabs.orderKinds"
-    // Which tab was showing on each worktree's strip, as its place in that strip — one row per
-    // worktree that had one, since the desk keeps a showing tab per strip and coming back to a
-    // worktree is the same act whether the window was restarted in between or not.
-    static let tabSelectedWorktreeIDs = "tabs.selectedWorktreeIDs"
+    // Which tab was showing on each desk's strip, as its place in that strip — one row per desk
+    // that had one, since coming back to a session is the same act whether the window was
+    // restarted in between or not.
+    static let tabSelectedDeskIDs = "tabs.selectedDeskIDs"
     static let tabSelectedIndexes = "tabs.selectedIndexes"
+    // A window saved before desks were sessions' keyed every tab by its worktree instead. Read
+    // once, on the first launch after, and handed to the sessions there (see `adoptLegacyDesks`).
+    enum Legacy {
+      static let terminalWorktreeIDs = "terminals.worktreeIDs"
+      static let browserWorktreeIDs = "browsers.worktreeIDs"
+      static let commitWorktreeIDs = "commits.worktreeIDs"
+      static let tabOrderWorktreeIDs = "tabs.orderWorktreeIDs"
+      static let tabSelectedWorktreeIDs = "tabs.selectedWorktreeIDs"
+    }
   }
 
   /// The tabs come from the desk, which owns them; they are passed in rather than read off the
   /// model because the model has no view to read them from. `terminals` too, when given: the
   /// model's list is in the order they were opened, and the desk's is the order they stand in,
   /// which is the one to come back in. `tabOrder` is the strip order the four lists are in, and
-  /// `selectedTabIndexes` is the place in it that was showing, per worktree.
+  /// `selectedTabIndexes` is the place in it that was showing, per desk.
   func encodeState(
     to coder: NSCoder, browserTabs: [BrowserTabState] = [], terminals: [TerminalSession]? = nil,
     fileTabs: [FileTabState] = [], commitTabs: [CommitTabState] = [],
@@ -1102,34 +1124,32 @@ final class Workspace {
       withRoster.map { $0.availableModels.map(\.resolvedModel) as NSArray } as NSArray,
       forKey: Key.rosterResolved)
 
-    coder.encode(terminals.map(\.worktreeID.uuidString) as NSArray, forKey: Key.terminalWorktreeIDs)
+    coder.encode(terminals.map(\.deskID.uuidString) as NSArray, forKey: Key.terminalDeskIDs)
     coder.encode(terminals.map(\.currentDirectoryPath) as NSArray, forKey: Key.terminalDirectories)
     coder.encode(terminals.map(\.sessionID) as NSArray, forKey: Key.terminalSessionIDs)
     coder.encode(terminals.map { $0.scrollbackText() } as NSArray, forKey: Key.terminalScrollbacks)
 
-    coder.encode(
-      browserTabs.map(\.worktreeID.uuidString) as NSArray, forKey: Key.browserWorktreeIDs)
+    coder.encode(browserTabs.map(\.deskID.uuidString) as NSArray, forKey: Key.browserDeskIDs)
     coder.encode(browserTabs.map(\.url) as NSArray, forKey: Key.browserURLs)
     coder.encode(browserTabs.map(\.title) as NSArray, forKey: Key.browserTitles)
     coder.encode(
       browserTabs.map { $0.interactionState?.base64EncodedString() ?? "" } as NSArray,
       forKey: Key.browserStates)
 
+    coder.encode(fileTabs.map(\.deskID.uuidString) as NSArray, forKey: Key.fileDeskIDs)
     coder.encode(fileTabs.map(\.worktreeID.uuidString) as NSArray, forKey: Key.fileWorktreeIDs)
     coder.encode(fileTabs.map(\.path) as NSArray, forKey: Key.filePaths)
     coder.encode(fileTabs.map { $0.rendered ? "1" : "" } as NSArray, forKey: Key.fileRendered)
 
-    coder.encode(
-      commitTabs.map(\.worktreeID.uuidString) as NSArray, forKey: Key.commitWorktreeIDs)
+    coder.encode(commitTabs.map(\.deskID.uuidString) as NSArray, forKey: Key.commitDeskIDs)
     coder.encode(commitTabs.map(\.oid) as NSArray, forKey: Key.commitOids)
 
-    coder.encode(
-      tabOrder.map(\.worktreeID.uuidString) as NSArray, forKey: Key.tabOrderWorktreeIDs)
+    coder.encode(tabOrder.map(\.deskID.uuidString) as NSArray, forKey: Key.tabOrderDeskIDs)
     coder.encode(tabOrder.map(\.kind.rawValue) as NSArray, forKey: Key.tabOrderKinds)
     // Sorted, because a dictionary has no order and two runs of the same desk should write the
     // same state.
     let selected = selectedTabIndexes.sorted { $0.key.uuidString < $1.key.uuidString }
-    coder.encode(selected.map(\.key.uuidString) as NSArray, forKey: Key.tabSelectedWorktreeIDs)
+    coder.encode(selected.map(\.key.uuidString) as NSArray, forKey: Key.tabSelectedDeskIDs)
     coder.encode(
       selected.map { NSNumber(value: $0.value) } as NSArray, forKey: Key.tabSelectedIndexes)
   }
@@ -1265,87 +1285,158 @@ final class Workspace {
       }
     }
 
-    // Terminals: rebuild the pending list keyed by worktree. The worktrees exist by now (built at
-    // the top of this method with their restored ids), but the live TerminalSessions are made by
-    // the controller (it wires the callbacks) once this returns — see materializeRestoredTerminals.
-    let terminalWorktrees = strings(coder, Key.terminalWorktreeIDs)
+    // The tabs, each keyed by the desk it stands on. A state saved before desks were sessions'
+    // names a worktree in that slot instead; it is read the same way and handed over below, once
+    // discovery has built the sessions there is to hand it to.
+    let legacy =
+      !coder.containsValue(forKey: Key.tabOrderDeskIDs)
+      && coder.containsValue(forKey: Key.Legacy.tabOrderWorktreeIDs)
+    func desks(_ key: String, legacy legacyKey: String) -> [String] {
+      strings(coder, legacy ? legacyKey : key)
+    }
+
+    // Terminals: rebuild the pending list keyed by desk. The live TerminalSessions are made by the
+    // controller (it wires the callbacks) once this returns — see materializeRestoredTerminals.
+    let terminalDesks = desks(Key.terminalDeskIDs, legacy: Key.Legacy.terminalWorktreeIDs)
     let terminalDirectories = strings(coder, Key.terminalDirectories)
     let terminalSessionIDs = strings(coder, Key.terminalSessionIDs)
     let terminalScrollbacks = strings(coder, Key.terminalScrollbacks)
     pendingRestoredTerminals = []
-    for (index, idString) in terminalWorktrees.enumerated() {
-      guard let worktreeID = UUID(uuidString: idString) else { continue }
+    for (index, idString) in terminalDesks.enumerated() {
+      guard let deskID = UUID(uuidString: idString) else { continue }
       let directory = index < terminalDirectories.count ? terminalDirectories[index] : ""
       let sessionID = index < terminalSessionIDs.count ? terminalSessionIDs[index] : ""
       let scrollback = index < terminalScrollbacks.count ? terminalScrollbacks[index] : ""
-      pendingRestoredTerminals.append((worktreeID, directory, sessionID, scrollback))
+      pendingRestoredTerminals.append((deskID, directory, sessionID, scrollback))
     }
 
-    let browserWorktrees = strings(coder, Key.browserWorktreeIDs)
+    let browserDesks = desks(Key.browserDeskIDs, legacy: Key.Legacy.browserWorktreeIDs)
     let browserURLs = strings(coder, Key.browserURLs)
     let browserTitles = strings(coder, Key.browserTitles)
     let browserStates = strings(coder, Key.browserStates)
     pendingRestoredBrowserTabs = []
-    for (index, idString) in browserWorktrees.enumerated() {
-      guard let worktreeID = UUID(uuidString: idString), index < browserURLs.count else { continue }
+    for (index, idString) in browserDesks.enumerated() {
+      guard let deskID = UUID(uuidString: idString), index < browserURLs.count else { continue }
       let state = index < browserStates.count ? browserStates[index] : ""
       pendingRestoredBrowserTabs.append(
         BrowserTabState(
-          worktreeID: worktreeID, url: browserURLs[index],
+          deskID: deskID, url: browserURLs[index],
           title: index < browserTitles.count ? browserTitles[index] : "",
           interactionState: state.isEmpty ? nil : Data(base64Encoded: state)))
     }
 
+    // A file tab's worktree is its buffer's, so it is in both shapes; only the desk is new.
     let fileWorktrees = strings(coder, Key.fileWorktreeIDs)
+    let fileDesks = legacy ? fileWorktrees : strings(coder, Key.fileDeskIDs)
     let filePaths = strings(coder, Key.filePaths)
     let fileRendered = strings(coder, Key.fileRendered)
     pendingRestoredFileTabs = []
-    for (index, idString) in fileWorktrees.enumerated() where index < filePaths.count {
-      guard let worktreeID = UUID(uuidString: idString), !filePaths[index].isEmpty else { continue }
+    for (index, idString) in fileDesks.enumerated()
+    where index < filePaths.count && index < fileWorktrees.count {
+      guard let deskID = UUID(uuidString: idString),
+        let worktreeID = UUID(uuidString: fileWorktrees[index]), !filePaths[index].isEmpty
+      else { continue }
       pendingRestoredFileTabs.append(
         FileTabState(
-          worktreeID: worktreeID, path: filePaths[index],
+          deskID: deskID, worktreeID: worktreeID, path: filePaths[index],
           rendered: index < fileRendered.count && fileRendered[index] == "1"))
     }
 
-    let commitWorktrees = strings(coder, Key.commitWorktreeIDs)
+    let commitDesks = desks(Key.commitDeskIDs, legacy: Key.Legacy.commitWorktreeIDs)
     let commitOids = strings(coder, Key.commitOids)
     pendingRestoredCommitTabs = []
-    for (index, idString) in commitWorktrees.enumerated() where index < commitOids.count {
-      guard let worktreeID = UUID(uuidString: idString), !commitOids[index].isEmpty else {
-        continue
-      }
-      pendingRestoredCommitTabs.append(
-        CommitTabState(worktreeID: worktreeID, oid: commitOids[index]))
+    for (index, idString) in commitDesks.enumerated() where index < commitOids.count {
+      guard let deskID = UUID(uuidString: idString), !commitOids[index].isEmpty else { continue }
+      pendingRestoredCommitTabs.append(CommitTabState(deskID: deskID, oid: commitOids[index]))
     }
 
-    let orderWorktrees = strings(coder, Key.tabOrderWorktreeIDs)
+    let orderDesks = desks(Key.tabOrderDeskIDs, legacy: Key.Legacy.tabOrderWorktreeIDs)
     let orderKinds = strings(coder, Key.tabOrderKinds)
     pendingRestoredTabOrder = []
-    for (index, idString) in orderWorktrees.enumerated() where index < orderKinds.count {
-      guard let worktreeID = UUID(uuidString: idString),
+    for (index, idString) in orderDesks.enumerated() where index < orderKinds.count {
+      guard let deskID = UUID(uuidString: idString),
         let kind = RestoredTabOrder.Kind(rawValue: orderKinds[index])
       else { continue }
-      pendingRestoredTabOrder.append(RestoredTabOrder(worktreeID: worktreeID, kind: kind))
+      pendingRestoredTabOrder.append(RestoredTabOrder(deskID: deskID, kind: kind))
     }
 
     // The place in each strip that was showing. Kept for the desk to consume rather than applied
     // here: the tabs are not on it yet, and the reload that puts them there is what would
     // otherwise choose for it.
-    let selectedWorktrees = strings(coder, Key.tabSelectedWorktreeIDs)
+    let selectedDesks = desks(Key.tabSelectedDeskIDs, legacy: Key.Legacy.tabSelectedWorktreeIDs)
     let selectedIndexes =
       (coder.decodeArrayOfObjects(ofClass: NSNumber.self, forKey: Key.tabSelectedIndexes) ?? [])
       .map(\.intValue)
     pendingRestoredTabSelection = [:]
-    for (index, idString) in selectedWorktrees.enumerated() where index < selectedIndexes.count {
-      guard let worktreeID = UUID(uuidString: idString), selectedIndexes[index] >= 0 else {
-        continue
-      }
-      pendingRestoredTabSelection[worktreeID] = selectedIndexes[index]
+    for (index, idString) in selectedDesks.enumerated() where index < selectedIndexes.count {
+      guard let deskID = UUID(uuidString: idString), selectedIndexes[index] >= 0 else { continue }
+      pendingRestoredTabSelection[deskID] = selectedIndexes[index]
     }
 
     // The session list is never stored — it is read back off disk every time.
     discoverSessions()
+    if legacy { adoptLegacyDesks() }
+  }
+
+  /// Hand a state saved per worktree to the sessions, once — on the first launch after desks
+  /// became sessions'. A worktree's tabs go to the session instructed most recently there. One
+  /// with no session keeps only its web tabs, which go to the repository's most recent session:
+  /// a page is the one tab that costs something to find again, where a file is a click in the
+  /// files panel and a terminal is a fresh shell either way. A desk handed tabs from a worktree
+  /// other than its own drops their saved order and showing tab, since those name places in a
+  /// strip that is not the one the desk now has.
+  private func adoptLegacyDesks() {
+    var owner: [UUID: UUID] = [:]
+    var webOwner: [UUID: UUID] = [:]
+    for worktree in worktrees {
+      if let session = latestSession(inWorktree: worktree.id) {
+        owner[worktree.id] = session.id
+        webOwner[worktree.id] = session.id
+      } else if let session = sessions.filter({
+        self.worktree(id: $0.worktreeID)?.repositoryID == worktree.repositoryID
+      }).max(by: { $0.lastInstructedAt < $1.lastInstructedAt }) {
+        webOwner[worktree.id] = session.id
+      }
+    }
+    let rearranged = Set(
+      pendingRestoredBrowserTabs.compactMap { tab -> UUID? in
+        guard owner[tab.deskID] == nil else { return nil }
+        return webOwner[tab.deskID]
+      })
+
+    pendingRestoredTerminals = pendingRestoredTerminals.compactMap { terminal in
+      owner[terminal.deskID].map {
+        (deskID: $0, terminal.directory, terminal.sessionID, terminal.scrollback)
+      }
+    }
+    pendingRestoredBrowserTabs = pendingRestoredBrowserTabs.compactMap { tab in
+      guard let deskID = webOwner[tab.deskID] else { return nil }
+      var tab = tab
+      tab.deskID = deskID
+      return tab
+    }
+    pendingRestoredFileTabs = pendingRestoredFileTabs.compactMap { tab in
+      guard let deskID = owner[tab.deskID] else { return nil }
+      var tab = tab
+      tab.deskID = deskID
+      return tab
+    }
+    pendingRestoredCommitTabs = pendingRestoredCommitTabs.compactMap { tab in
+      guard let deskID = owner[tab.deskID] else { return nil }
+      var tab = tab
+      tab.deskID = deskID
+      return tab
+    }
+    pendingRestoredTabOrder = pendingRestoredTabOrder.compactMap { row in
+      guard let deskID = owner[row.deskID], !rearranged.contains(deskID) else { return nil }
+      return RestoredTabOrder(deskID: deskID, kind: row.kind)
+    }
+    var selection: [UUID: Int] = [:]
+    for (worktreeID, index) in pendingRestoredTabSelection {
+      guard let deskID = owner[worktreeID], !rearranged.contains(deskID) else { continue }
+      selection[deskID] = index
+    }
+    pendingRestoredTabSelection = selection
   }
 
   private func strings(_ coder: NSCoder, _ key: String) -> [String] {

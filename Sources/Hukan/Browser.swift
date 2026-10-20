@@ -128,7 +128,8 @@ enum BrowserAddress {
 /// found again by address, before the page has loaded. Only a tab that got somewhere is worth a
 /// slot: a blank new tab is one keystroke to make again.
 struct BrowserTabState: Equatable {
-  var worktreeID: UUID
+  /// The session whose desk the tab stands on.
+  var deskID: UUID
   var url: String
   var title: String
   var interactionState: Data?
@@ -253,7 +254,7 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
     if let pendingRestore { return pendingRestore }
     guard let url = currentURL, url.scheme != "about" else { return nil }
     return BrowserTabState(
-      worktreeID: UUID(), url: url.absoluteString, title: pageTitle,
+      deskID: UUID(), url: url.absoluteString, title: pageTitle,
       interactionState: webView.interactionState as? Data)
   }
 

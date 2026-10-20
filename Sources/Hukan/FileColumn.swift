@@ -215,6 +215,8 @@ final class FileContentViewController: NSViewController {
 
   /// The open file, so the column can fall back to it when a switch is cancelled.
   var currentPath: String? { path }
+  /// Which checkout's file that is — the half of a buffer's identity the path alone does not say.
+  var currentWorktreeID: UUID? { worktree?.id }
 
   /// Before an unsaved edit is lost, ask. Save writes it, Don't Save drops it, Cancel keeps it
   /// and returns false so the caller aborts the move; a no-op returning true when nothing is
@@ -794,6 +796,11 @@ final class FileColumns {
     guard let workspace,
       let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
     else { return }
+    // A worktree no session stands in has no desk to open on, so the pick has nowhere to go.
+    guard desk.deskID != nil else {
+      NSSound.beep()
+      return
+    }
     desk.openFile(
       worktree: worktree, path: path, preview: !pin, reveal: line.map { ($0, panel.query) })
   }
@@ -815,6 +822,10 @@ final class FileColumns {
     guard let workspace,
       let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
     else { return }
+    guard desk.deskID != nil else {
+      NSSound.beep()
+      return
+    }
     desk.openCommit(worktree: worktree, oid: oid, preview: !pin)
   }
 
@@ -852,7 +863,7 @@ final class FileColumns {
     }
 
     panel.show(worktree: worktree)
-    desk.reload(worktreeID: workspace.selectedWorktreeID)
+    desk.reload(deskID: workspace.selectedSession?.id)
   }
 
   /// Show a just-created terminal in the desk. The controller has already appended it to
@@ -861,21 +872,19 @@ final class FileColumns {
     desk.open(terminalID: id)
   }
 
-  /// Open a new web tab in the selected worktree.
+  /// Open a new web tab on the selected session's desk.
   func openBrowser() {
-    guard let workspace,
-      let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
-    else { return }
-    desk.openBrowser(worktree: worktree)
+    desk.openBrowser()
   }
 
-  /// Open an address in the selected worktree's desk — a link followed from the transcript.
+  /// Open an address on the selected session's desk — a link followed from the transcript.
   func openBrowser(url: URL) {
-    guard let workspace,
-      let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
-    else { return }
-    desk.openBrowser(worktree: worktree, url: url)
+    desk.openBrowser(url: url)
   }
+
+  /// Whether there is a desk to put a tab on — a session selected. ⌘T and ⌃⌘T validate on it: a
+  /// desk is a session's, so with none selected there is nobody whose tab it would be.
+  var hasDesk: Bool { workspace?.selectedSession != nil }
 
   /// ⌘W: close the active tab (file or terminal). Returns whether one was showing to close.
   @discardableResult
@@ -950,14 +959,16 @@ final class FileColumns {
   /// A terminal renamed itself (OSC title); repaint the strip's labels.
   func refreshTerminalTabs() {
     guard desk.isViewLoaded else { return }
-    desk.reload(worktreeID: workspace?.selectedWorktreeID)
+    desk.reload(deskID: workspace?.selectedSession?.id)
   }
 
   /// The selected worktree's files changed on disk: refresh every open file and the panel (its
   /// tree if the list moved, its content hits so the worklist reflects the disk), then reload so
   /// the rail's Changed section picks up the new diffstat.
   func refreshInPlace(changed: Set<String>? = nil) {
-    desk.refreshOpenFiles(changed: changed)
+    if let worktreeID = workspace?.selectedWorktreeID {
+      desk.refreshOpenFiles(worktreeID: worktreeID, changed: changed)
+    }
     panel.filesChangedOnDisk()
     onNeedsReload?()
   }

@@ -360,16 +360,22 @@ final class SDWorktree: NSObject {
     return SDSession(uuid: session.id, workspace: workspace, window: window)
   }
 
+  /// A terminal is a tab on a session's desk, so a worktree's terminals are those of the sessions
+  /// standing in it now.
+  private func isHere(_ terminal: TerminalSession) -> Bool {
+    workspace.session(id: terminal.deskID)?.worktreeID == uuid
+  }
+
   @objc var terminals: [SDTerminal] {
     workspace.terminals
-      .filter { $0.worktreeID == uuid }
+      .filter(isHere)
       .map { SDTerminal(uuid: $0.id, workspace: workspace, window: window) }
   }
 
   @objc(valueInTerminalsWithUniqueID:)
   func valueInTerminals(withUniqueID id: Any) -> SDTerminal? {
     guard let key = id as? String, let terminalID = UUID(uuidString: key),
-      workspace.terminals.contains(where: { $0.id == terminalID && $0.worktreeID == uuid })
+      workspace.terminals.contains(where: { $0.id == terminalID && isHere($0) })
     else { return nil }
     return SDTerminal(uuid: terminalID, workspace: workspace, window: window)
   }
@@ -379,7 +385,7 @@ final class SDWorktree: NSObject {
   func valueInTerminals(withName name: String) -> SDTerminal? {
     guard
       let terminal = workspace.terminals.first(where: {
-        $0.worktreeID == uuid && $0.title.localizedCaseInsensitiveCompare(name) == .orderedSame
+        isHere($0) && $0.title.localizedCaseInsensitiveCompare(name) == .orderedSame
       })
     else { return nil }
     return SDTerminal(uuid: terminal.id, workspace: workspace, window: window)
@@ -403,7 +409,8 @@ final class SDWorktree: NSObject {
       let session = controller.makeSession(in: worktree)
       return SDSession(uuid: session.id, workspace: workspace, window: window)
     case "terminals":
-      let terminal = controller.makeTerminal(in: worktree)
+      // A terminal is a tab on a session's desk; a worktree with no session has none to hold it.
+      guard let terminal = controller.makeTerminal(in: worktree) else { return nil }
       return SDTerminal(uuid: terminal.id, workspace: workspace, window: window)
     default:
       return super.newScriptingObject(
@@ -695,7 +702,8 @@ final class SDTerminal: NSObject {
 
   override var objectSpecifier: NSScriptObjectSpecifier? {
     guard let model = terminalModel,
-      let container = SDWorktree(uuid: model.worktreeID, workspace: workspace, window: window)
+      let worktreeID = workspace.session(id: model.deskID)?.worktreeID,
+      let container = SDWorktree(uuid: worktreeID, workspace: workspace, window: window)
         .objectSpecifier,
       let desc = container.keyClassDescription
     else { return nil }

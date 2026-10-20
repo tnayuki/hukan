@@ -10,7 +10,7 @@ import XCTest
 final class TerminalSessionTests: XCTestCase {
   func testViewSpawnsAndRetainsAShell() {
     let terminal = TerminalSession(
-      worktreeID: UUID(), cwd: URL(fileURLWithPath: NSTemporaryDirectory()))
+      deskID: UUID(), cwd: URL(fileURLWithPath: NSTemporaryDirectory()))
     XCTAssertFalse(terminal.isSpawned, "no shell before the view is touched")
     XCTAssertFalse(terminal.isRunning)
 
@@ -41,7 +41,7 @@ final class TerminalSessionTests: XCTestCase {
   }
 
   func testTabLabelFollowsTheCommandHoldingThePTY() {
-    let terminal = TerminalSession(worktreeID: UUID(), cwd: URL(fileURLWithPath: "/tmp"))
+    let terminal = TerminalSession(deskID: UUID(), cwd: URL(fileURLWithPath: "/tmp"))
     XCTAssertEqual(terminal.title, "tmp", "an idle terminal is named for its directory")
 
     let view = terminal.view
@@ -75,7 +75,7 @@ final class TerminalSessionTests: XCTestCase {
   /// not our child and so is reaped by launchd once its shell hangs up, and the shell itself,
   /// which is ours and would otherwise linger as a zombie.
   func testTerminateHangsUpTheShellAndTheCommandItWasRunning() {
-    let terminal = TerminalSession(worktreeID: UUID(), cwd: URL(fileURLWithPath: "/tmp"))
+    let terminal = TerminalSession(deskID: UUID(), cwd: URL(fileURLWithPath: "/tmp"))
     let view = terminal.view
     XCTAssertTrue(
       spin(untilTrue: {
@@ -111,6 +111,8 @@ final class TerminalSessionTests: XCTestCase {
     let workspace = Workspace()
     workspace.repositories = [repository]
     workspace.selectedWorktreeID = worktree.id
+    // A terminal is a tab on a session's desk, so there has to be a session to hold it.
+    deskSession(in: worktree, of: workspace)
 
     let controller = WorkspaceWindowController(workspace: workspace)
     let window = controller.window
@@ -139,6 +141,8 @@ final class TerminalSessionTests: XCTestCase {
     let workspace = Workspace()
     workspace.repositories = [repository]
     workspace.selectedWorktreeID = worktree.id
+    // A terminal is a tab on a session's desk, so there has to be a session to hold it.
+    deskSession(in: worktree, of: workspace)
 
     let controller = WorkspaceWindowController(workspace: workspace)
     _ = controller.window
@@ -217,11 +221,11 @@ final class TerminalSessionTests: XCTestCase {
     let workspace = Workspace()
     let worktreeID = UUID()
     let terminal = TerminalSession(
-      worktreeID: worktreeID, cwd: URL(fileURLWithPath: NSTemporaryDirectory()))
+      deskID: worktreeID, cwd: URL(fileURLWithPath: NSTemporaryDirectory()))
     workspace.terminals.append(terminal)
-    XCTAssertEqual(workspace.terminals(inWorktree: worktreeID).count, 1)
+    XCTAssertEqual(workspace.terminals(inDesk: worktreeID).count, 1)
 
     workspace.removeTerminal(id: terminal.id)
-    XCTAssertTrue(workspace.terminals(inWorktree: worktreeID).isEmpty)
+    XCTAssertTrue(workspace.terminals(inDesk: worktreeID).isEmpty)
   }
 }

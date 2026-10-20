@@ -28,7 +28,7 @@ final class MarkdownPreviewTabTests: XCTestCase {
     let workspace = Workspace()
     let worktree = workspace.addWorktree(worktreeRoot())
     let desk = desk(workspace)
-    desk.reload(worktreeID: worktree.id)
+    desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     desk.openFile(worktree: worktree, path: "README.md", preview: false)
     desk.openFile(worktree: worktree, path: "README.md", preview: false, rendered: true)
     // Asked for twice, it is still one preview: the pair is the tab's identity.
@@ -43,7 +43,7 @@ final class MarkdownPreviewTabTests: XCTestCase {
     let workspace = Workspace()
     let worktree = workspace.addWorktree(worktreeRoot())
     let desk = desk(workspace)
-    desk.reload(worktreeID: worktree.id)
+    desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     desk.openFile(worktree: worktree, path: "README.md", preview: false, rendered: true)
 
     let archiver = NSKeyedArchiver(requiringSecureCoding: true)
@@ -64,7 +64,7 @@ final class MarkdownPreviewTabTests: XCTestCase {
     let desk = desk(workspace)
     var closed: [String] = []
     desk.onFileTabClosed = { _, path in closed.append(path) }
-    desk.reload(worktreeID: worktree.id)
+    desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     desk.openFile(worktree: worktree, path: "README.md", preview: false)
     desk.openFile(worktree: worktree, path: "README.md", preview: false, rendered: true)
 

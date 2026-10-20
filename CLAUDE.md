@@ -16,9 +16,9 @@ if it is ever needed again.
 Workspace (one window)
 └─ Repository        ← the open/close unit; identity is git's common dir's parent
    └─ Worktree
-      ├─ Session (agent)   ← claude -p over pipes
-      ├─ Terminal          ← a shell over a PTY
-      └─ File
+      ├─ Session (agent)   ← claude -p over pipes; owns a desk
+      │  └─ Terminal       ← a shell over a PTY, a tab on that desk
+      └─ File              ← a buffer, (Worktree, relative path)
 ```
 
 - **Buffer identity is `(Worktree, relative path)` — never the absolute path.** Keying on the
@@ -80,10 +80,23 @@ Workspace (one window)
   calls on it, read when it is used rather than on every turn. **The rule is a line per tool the
   window depends on the agent calling**, not one line in total: the session's tags (below) are the
   second, for the same reason — a tool nothing mentions is a tool the model never calls unasked.
-- **Session and Terminal are children of a Worktree, not peers of each other** — two
-  implementations of one thing, a process running in this worktree. The session's conversation
-  has the column beside the desk; the terminal is a tab on the desk, beside the files, commits
-  and web tabs of the same worktree.
+- **A desk is a session's, not a worktree's, and a terminal is a tab on it.** The session's
+  conversation has the column beside the desk; the desk is that session's files, commits, web
+  tabs and terminals. It was the worktree's, and the agent is what made that wrong: an
+  `EnterWorktree` moves the session and not the selection, so a desk keyed by worktree left the
+  task's tabs behind in the checkout it had left and swapped the desk out from under a row nobody
+  had clicked. So **a file tab remembers its path and follows its session** into the next
+  checkout, the task carrying on in another place — a file the new checkout does not have closes,
+  and a tab holding an unsaved edit stays on the buffer it was typed into, since the edit is that
+  worktree's, and the strip names the worktree beside it. The buffer is still
+  `(Worktree, relative path)`; what moved is only who holds the tab. Two conversations in one
+  checkout are two desks, and a fork is a desk of its own. **No session, no desk**: with none
+  selected the desk is empty, ⌘T and ⌃⌘T are off and a pick in the files panel has nowhere to
+  go, since there is nobody whose tab it would be — no repository-level desk stands in, that
+  being the worktree desk again under another name. A window saved while desks were worktrees'
+  hands each worktree's tabs, once, to the session instructed there last; a worktree no session
+  stood in keeps only its web tabs, given to the repository's latest session, since a page is the
+  one tab that costs something to find again.
 - **A double-click promotes what it lands on as far as it will go.** A preview becomes a lasting
   tab — the files panel's gesture and the rail's, unchanged — and a tab that is already lasting
   takes the whole window, folding every other column away. One rule covers both halves, which is
@@ -113,15 +126,15 @@ Workspace (one window)
   is the transcript's width, and a transcript grown over a folded desk is a number nothing can
   tell from one somebody dragged, so the arrangement was replayed and the desk collapsed again.
   Now the drag stops at the column's minimum and the fold belongs to the maximize alone, which is
-  what it was added for. **Bar one: a worktree with no tabs folds its desk**, and the conversation
-  takes the width — an empty desk is a blank column, and the worktree a session has just entered
-  is exactly the one that has nothing on it yet. It is not a fold anyone makes, so it is not
+  what it was added for. **Bar one: a desk with no tabs folds**, and the conversation takes the
+  width — an empty desk is a blank column, and a session just started is exactly the one that has
+  nothing on it yet. It is not a fold anyone makes, so it is not
   remembered either: whether the desk is folded is read off the strip and the mode every time,
   which is what keeps it from disagreeing with them. The maximize's memento leaves the desk out
   for that reason — it can only ever have been "the strip was empty", and a tab that arrives while
   the conversation has the window would otherwise come back folded inside the column with no way
   to it — and the widths are not recorded while it holds, since the transcript then stands at the
-  width of the pair. What it costs is that switching between a worktree with tabs and one without
+  width of the pair. What it costs is that switching between a session with tabs and one without
   moves the transcript's width, which was weighed and taken. The strip's right-click menu is the same set of acts spelled out — the
   four ways to close from a tab, `Keep Open` while it is still a preview, and that maximize.
 - **The desk's plain `⌘T` is the browser's; the terminal takes `⌃⌘T`.** Creation is two families,
@@ -286,11 +299,11 @@ Workspace (one window)
   issuers the server names, no chooser — this machine has one device certificate). Reload is Stop
   while loading, with a progress line under the bar. ⌘F is the commit tab's field, in the pane's
   own row: WebKit's find is a step, not a list, so the label says only that there was nothing to
-  find. **A popup lands on the worktree of the page that opened it**, which is not necessarily the
-  one on screen: a sign-in finishing in a background worktree's tab must not swap the desk out
-  from under the rail's selection, so it joins that worktree's tabs and waits there — and a page
-  whose worktree is gone is declined, so WebKit drops the popup rather than loading it into a
-  view no one will see. A page retitles itself several times while loading; that relabels one
+  find. **A popup lands on the desk of the page that opened it**, which is not necessarily the one
+  on screen: a sign-in finishing in a background session's tab must not swap the desk out from
+  under the rail's selection, so it joins that session's tabs and waits there — and a page whose
+  session is gone is declined, so WebKit drops the popup rather than loading it into a view no
+  one will see. A page retitles itself several times while loading; that relabels one
   tab in place rather than rebuilding the strip. No process pool: it was set on the belief that it
   shared the sign-in, and it never did — the persistent data store does, and WebKit has managed
   its own processes since macOS 12.
@@ -330,8 +343,8 @@ Workspace (one window)
   what lets the standing yes be narrow instead of the whole permission mode. **Opening a tab is
   the same card asked before the tab exists**, and the tab is made only on a yes, already shared
   and showing — the yes is the click, and opened behind it sat on the strip reading as an open
-  that had not happened. It shows only on the worktree the desk is on: which worktree that is
-  belongs to the rail's selection, not to the agent. That is also why
+  that had not happened. It shows only when its session's desk is the one on screen: which desk
+  that is belongs to the rail's selection, not to the agent. That is also why
   hukan's own tools never reach the generic approval card, and why the grant is asked for whatever
   the mode says: a `can_use_tool` is not sent under `bypassPermissions` at all, so a gate hung off
   it would be gone exactly where it mattered, and a mode loosened for a checkout was never a
@@ -341,8 +354,9 @@ Workspace (one window)
   the shape of the hole that has been found in browser agents' origin checks. The person never
   meets the word origin: the glyph goes hollow, and the next drive asks again. The glyph is the model picker's sparkles —
   the agent's mark in this window already; the symbol set has no robot, and the chip is the
-  toolbar's load gauge — and a wand once the tab may be driven, two glyphs rather than a fill. One grant serves
-  every session of the worktree, since the tabs are the worktree's and so is the task. **Never
+  toolbar's load gauge — and a wand once the tab may be driven, two glyphs rather than a fill. The
+  tools reach the calling session's own desk and no other, since that is whose tabs they are.
+  **Never
   saved**: a grant back after a relaunch would be hukan making it again tomorrow on nobody's
   behalf, and a grant that lives nowhere on disk is one nothing can forge — the other attack on
   browser agents' permission stores. What the grant is not is a boundary on identity: every tab
@@ -384,27 +398,27 @@ Workspace (one window)
   as what identifies it and nothing more — a worktree and a relative path, an oid, a directory
   and a scrollback, and for a web tab WebKit's own `interactionState` (the back/forward list and where
   each entry was scrolled) held opaque beside the title and address, so the tab can be named and
-  found by address before it loads. It rides the window's restorable state keyed by worktree,
+  found by address before it loads. It rides the window's restorable state keyed by session,
   passed in from the desk because the model has no view to read it off. **Nothing is read until
-  its tab is looked at** — a restored window may carry a dozen tabs across its worktrees, and
+  its tab is looked at** — a restored window may carry a dozen tabs across its sessions, and
   reading them all at launch is what a browser's session restore is known for; a saved web title
   holds until the page reports its own, or every restored tab would rename itself to a bare host
   name the moment it loads. What does not come back is what has nothing left to show: a blank web
-  tab (one keystroke to make again), a file or a worktree that is gone, a commit a rebase dropped
-  — that last one unchecked at launch, since nothing answers it more cheaply than reading the
+  tab (one keystroke to make again), a file, worktree or session that is gone, a commit a rebase
+  dropped — that last one unchecked at launch, since nothing answers it more cheaply than reading the
   commit, so the tab says so when it is opened. **The strip's order is saved apart from the tabs**,
   one row per tab naming only its kind, because a row is then answered by position in that kind's
   list — and a tab that did not come back is a row past the end of its list, which the strip
   closes up over. **The showing tab is a place in that order**, applied once the strip is in it:
   the terminals arrive on a reload of their own, before the rest of the strip is on it, so an index
   spent at the first reload available is spent against half a strip. **A showing tab is a fact about
-  a strip, not about the desk**, so there is one per worktree and every one of them is saved. The
-  desk holds every worktree's tabs at once and shows one worktree's, and a single showing tab was
-  the desk standing in for each strip: switching the rail away left the reconcile nothing to land
-  on and it fell to the end of the new strip, which is then what the old worktree came back to as
-  well. Saving only the showing worktree's would be that same bug one relaunch later — the desk you
-  were looking at right, every other one on its last tab — where coming back to a worktree is the
-  same act whether the window was restarted in between or not. A restored tab is
+  a strip, not about the view**, so there is one per desk and every one of them is saved. The
+  view holds every session's tabs at once and shows one desk, and a single showing tab was the
+  view standing in for each strip: switching the rail away left the reconcile nothing to land on
+  and it fell to the end of the new strip, which is then what the old one came back to as well.
+  Saving only the showing desk's would be that same bug one relaunch later — the desk you were
+  looking at right, every other one on its last tab — where coming back to a session is the same
+  act whether the window was restarted in between or not. A restored tab is
   lasting, never a preview: a preview is what the last click made of a tab, and a relaunch is not
   a click.
 - **A window that closes, and a quit, ask about every unsaved edit first.** The same Save / Don't
@@ -576,10 +590,14 @@ Workspace (one window)
   model already has. What is under `.git` is the repository, not the checkout — a COMMIT_EDITMSG
   must not become a phantom row of the checkout it configures, and a linked worktree's lives
   under *main's* gitdir — so those open as outside files, keyed by absolute path (no twin exists
-  for the `(Worktree, relative path)` rule to guard against), on the desk of the worktree that
-  *asked*: the requesting terminal's, which is why the request carries who asked at all. A path
-  that does not exist is refused out loud — a file handed to `open` used to be swallowed with a
-  clean exit, the same "Return did nothing" the browser's error page fixed.
+  for the `(Worktree, relative path)` rule to guard against), on the desk of whoever *asked*: the
+  requesting terminal's session, which is why the request carries who asked at all. A file of a
+  checkout goes to a session standing in that worktree — the selected one if it is there, else
+  the one instructed there last — and that session is selected, so the file shows beside the
+  conversation it belongs with; with none there it lands on the selected session's desk as a tab
+  on the other worktree. A path that does not exist is refused out loud, and so is one with no
+  session anywhere to open it on — a file handed to `open` used to be swallowed with a clean exit,
+  the same "Return did nothing" the browser's error page fixed.
 - **The terminal's `$EDITOR` is hukan itself, and closing the tab is the editor exiting.** The
   bundled helper by absolute path — nothing installed on PATH, and the Dev build's terminals
   reach the Dev app — riding one public verb, `edit`, whose `waiting` holds the Apple event's
@@ -968,8 +986,8 @@ Workspace (one window)
   exists, from the rail's width and the insets the source-list style puts around a cell, which are
   measured rather than documented and held by a test against the outline's own frames.
   **A tag can name its page, and the click opens it where a link in the transcript would** — on
-  the desk of the session's worktree, the session selected first since the desk shows only the
-  selected worktree's tabs, ⌘ sending it out to the default browser instead. The PR an agent tags
+  the session's desk, the session selected first since the desk on screen is the selected
+  session's, ⌘ sending it out to the default browser instead. The PR an agent tags
   is the PR it just opened, which is what a web tab is for, and one rule for every address in the
   window is what keeps the ⌘ meaning one thing. The address rides in the tag's own string, `PR:
   #42 <https://…>`, rather than beside it: the tool, the editor, the saved state and the scripting

@@ -281,7 +281,7 @@ final class BrowserTests: XCTestCase {
   /// dozen web tabs come back without loading a dozen pages.
   func testARestoredTabAnswersWithoutLoading() {
     let state = BrowserTabState(
-      worktreeID: UUID(), url: "https://github.com/tnayuki/hukan/pull/12",
+      deskID: UUID(), url: "https://github.com/tnayuki/hukan/pull/12",
       title: "Add the browser · Pull Request #12", interactionState: Data([1, 2, 3]))
     let pane = BrowserPaneViewController(restoring: state)
     XCTAssertEqual(pane.pageTitle, "Add the browser · Pull Request #12")
@@ -406,47 +406,49 @@ final class BrowserTests: XCTestCase {
   }
 }
 
-/// The desk's side of a web tab: which worktree a popup lands on, and a page closing itself.
-/// Kept in this file so it shares the one WebKit-loading host (see the note at the top).
+/// The desk's side of a web tab: which desk a popup lands on, and a page closing itself. Kept in
+/// this file so it shares the one WebKit-loading host (see the note at the top).
 final class BrowserDeskTests: XCTestCase {
-  private func desk(worktrees: Int) -> (WorktreeDeskViewController, Workspace, [Worktree]) {
+  /// A desk showing the first of `sessions` sessions, each on a worktree of its own.
+  private func desk(sessions: Int) -> (WorktreeDeskViewController, Workspace, [UUID]) {
     let workspace = Workspace()
-    let made = (0..<worktrees).map { _ -> Worktree in
+    let made = (0..<sessions).map { _ -> UUID in
       let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
       try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-      return workspace.addWorktree(url)
+      return deskSession(in: workspace.addWorktree(url), of: workspace).id
     }
     let desk = WorktreeDeskViewController()
     desk.workspace = workspace
-    desk.reload(worktreeID: made.first?.id)
+    desk.reload(deskID: made.first)
     return (desk, workspace, made)
   }
 
-  /// A sign-in finishing in a background worktree's tab opens its popup *there*, and the desk
-  /// stays on the worktree the rail has selected.
-  func testAPopupFromABackgroundWorktreeDoesNotSwitchTheDesk() {
-    let (desk, _, worktrees) = desk(worktrees: 2)
-    desk.openBrowser(worktree: worktrees[1], url: URL(string: "https://example.com/login")!)
-    desk.reload(worktreeID: worktrees[0].id)
-    XCTAssertEqual(desk.browserTabsReport, "(no web tabs)", "the desk is on the first worktree")
+  /// A sign-in finishing in a background session's tab opens its popup *there*, and the desk
+  /// stays on the session the rail has selected.
+  func testAPopupFromABackgroundDeskDoesNotSwitchTheDesk() {
+    let (desk, _, desks) = desk(sessions: 2)
+    desk.reload(deskID: desks[1])
+    desk.openBrowser(url: URL(string: "https://example.com/login")!)
+    desk.reload(deskID: desks[0])
+    XCTAssertEqual(desk.browserTabsReport, "(no web tabs)", "the desk is on the first session")
 
     // The background tab's page calls window.open.
     let popup = WKWebView(frame: .zero, configuration: BrowserEnvironment.makeConfiguration())
-    desk.openBrowser(worktree: worktrees[1], webView: popup)
-    XCTAssertEqual(desk.browserTabsReport, "(no web tabs)", "still on the first worktree")
-    desk.reload(worktreeID: worktrees[1].id)
+    desk.openBrowser(desk: desks[1], webView: popup)
+    XCTAssertEqual(desk.browserTabsReport, "(no web tabs)", "still on the first session")
+    desk.reload(deskID: desks[1])
     XCTAssertEqual(
       desk.browserTabsReport.components(separatedBy: "\n").count, 2,
-      "the popup joined the second worktree's tabs: \(desk.browserTabsReport)")
+      "the popup joined the second session's tabs: \(desk.browserTabsReport)")
   }
 
   /// Back and forward drive the web tab showing on the desk, and go dead when the surface is not
   /// a browser — which is what disables the menu items. History itself is WebKit's, so this
   /// checks the desk routes to the right pane and reads its history flags, not the navigation.
   func testBackAndForwardTrackTheActiveBrowserTab() {
-    let (desk, _, worktrees) = desk(worktrees: 1)
+    let (desk, _, _) = desk(sessions: 1)
     XCTAssertFalse(desk.canBrowserGoBack, "no web tab yet")
-    desk.openBrowser(worktree: worktrees[0])
+    desk.openBrowser()
     let pane = try! XCTUnwrap(desk.selectedBrowserPane)
     XCTAssertFalse(desk.canBrowserGoBack, "a fresh tab has no history")
     XCTAssertFalse(desk.canBrowserGoForward)
@@ -454,7 +456,7 @@ final class BrowserDeskTests: XCTestCase {
     XCTAssertEqual(desk.canBrowserGoBack, pane.webView.canGoBack)
     desk.browserGoBack()  // a no-op with no history, but must not trap
     // Switch the surface off the browser: the actions go dead, so the menu items disable.
-    desk.openBrowser(worktree: worktrees[0])
+    desk.openBrowser()
     XCTAssertNotNil(desk.selectedBrowserPane)
   }
 
@@ -463,9 +465,9 @@ final class BrowserDeskTests: XCTestCase {
   /// forward do: a blank tab has no history and is exactly the tab worth typing an address into,
   /// and a page that failed to load is exactly the one worth reloading.
   func testReloadAndTheAddressFieldTrackTheActiveBrowserTab() {
-    let (desk, _, worktrees) = desk(worktrees: 1)
+    let (desk, _, _) = desk(sessions: 1)
     XCTAssertFalse(desk.isShowingWebTab, "no web tab yet")
-    desk.openBrowser(worktree: worktrees[0])
+    desk.openBrowser()
     XCTAssertTrue(desk.isShowingWebTab, "a blank tab takes both")
     XCTAssertFalse(desk.canBrowserGoBack, "where back and forward have nowhere to go")
     // All of them reach the showing pane, and none may trap on a tab with nothing loaded in it.
@@ -484,18 +486,18 @@ final class BrowserDeskTests: XCTestCase {
   /// stays on the one being read. ⇧ with it is the other half, and it is what every other way of
   /// opening a web tab already does.
   func testACommandClickedTabOpensBehindTheOneBeingRead() {
-    let (desk, _, worktrees) = desk(worktrees: 1)
-    desk.openBrowser(worktree: worktrees[0], url: URL(string: "https://example.com/issue")!)
+    let (desk, _, _) = desk(sessions: 1)
+    desk.openBrowser(url: URL(string: "https://example.com/issue")!)
     let reading = desk.selectedBrowserPane
 
     desk.openBrowser(
-      worktree: worktrees[0], url: URL(string: "https://example.com/pr")!, inBackground: true)
+      url: URL(string: "https://example.com/pr")!, inBackground: true)
     let behind = desk.browserTabsReport.components(separatedBy: "\n")
     XCTAssertEqual(behind.count, 2, "the tab joined the strip: \(desk.browserTabsReport)")
     XCTAssertTrue(behind[0].contains("●"), "the desk stays put: \(desk.browserTabsReport)")
     XCTAssertTrue(desk.selectedBrowserPane === reading, "and on the same pane")
 
-    desk.openBrowser(worktree: worktrees[0], url: URL(string: "https://example.com/docs")!)
+    desk.openBrowser(url: URL(string: "https://example.com/docs")!)
     let front = desk.browserTabsReport.components(separatedBy: "\n")
     XCTAssertEqual(front.count, 3)
     XCTAssertTrue(front[2].contains("●"), "in front: \(desk.browserTabsReport)")
@@ -504,32 +506,30 @@ final class BrowserDeskTests: XCTestCase {
   /// `window.close()` — how an SSO popup ends — takes the tab with it rather than leaving an empty
   /// one on the strip.
   func testAPageClosingItselfClosesItsTab() {
-    let (desk, _, worktrees) = desk(worktrees: 1)
-    desk.openBrowser(worktree: worktrees[0])
+    let (desk, _, _) = desk(sessions: 1)
+    desk.openBrowser()
     let pane = try! XCTUnwrap(desk.selectedBrowserPane)
     pane.webViewDidClose(pane.webView)
     XCTAssertEqual(desk.browserTabsReport, "(no web tabs)")
   }
 
-  /// Every web tab of every worktree is saved, tagged with its worktree, and comes back on it.
-  func testTabsRestoreOntoTheirWorktrees() {
-    let (desk, workspace, worktrees) = desk(worktrees: 2)
+  /// Every web tab of every desk is saved, tagged with its desk, and comes back on it.
+  func testTabsRestoreOntoTheirDesks() {
+    let (desk, workspace, desks) = desk(sessions: 2)
     let states = [
       BrowserTabState(
-        worktreeID: worktrees[0].id, url: "https://example.com/a", title: "A",
-        interactionState: nil),
+        deskID: desks[0], url: "https://example.com/a", title: "A", interactionState: nil),
       BrowserTabState(
-        worktreeID: worktrees[1].id, url: "https://example.com/b", title: "B",
-        interactionState: nil),
-      // A worktree that is gone takes its tabs with it.
+        deskID: desks[1], url: "https://example.com/b", title: "B", interactionState: nil),
+      // A session that is gone takes its tabs with it.
       BrowserTabState(
-        worktreeID: UUID(), url: "https://example.com/c", title: "C", interactionState: nil),
+        deskID: UUID(), url: "https://example.com/c", title: "C", interactionState: nil),
     ]
     desk.restoreBrowserTabs(states)
     XCTAssertEqual(
       Set(desk.restorableBrowserTabs.map(\.url)),
       ["https://example.com/a", "https://example.com/b"])
-    desk.reload(worktreeID: worktrees[1].id)
+    desk.reload(deskID: desks[1])
     XCTAssertTrue(desk.browserTabsReport.contains("B  https://example.com/b"))
     _ = workspace
   }

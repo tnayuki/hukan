@@ -382,15 +382,13 @@ final class BrowserCommand: NSScriptCommand {
       return desk.browserTabsReport
     }
     guard guardedScriptingEnabled() else { return fail("opening an address is not scriptable") }
-    let workspace = controller.workspace
-    guard let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
-    else { return fail("no selected worktree") }
+    guard desk.deskID != nil else { return fail("no selected session") }
     // An address bar takes text, not a URL: sending it through the pane's own `load` is what
     // makes the search fallback and the refusals scriptable at all.
     if let pane = desk.selectedBrowserPane {
       pane.load(text)
     } else {
-      desk.openBrowser(worktree: worktree)
+      desk.openBrowser()
       desk.selectedBrowserPane?.load(text)
     }
     return "loading \(text)"
@@ -409,6 +407,7 @@ final class CommitTabCommand: NSScriptCommand {
       let workspace = controller.workspace
       guard let worktree = workspace.selectedWorktreeID.flatMap({ workspace.worktree(id: $0) })
       else { return fail("no selected worktree") }
+      guard desk.deskID != nil else { return fail("no selected session") }
       desk.openCommit(worktree: worktree, oid: oid, preview: false)
       return "opened \(oid)"
     }
@@ -521,7 +520,13 @@ final class EditCommand: NSScriptCommand {
     }
     guard let controller = controller ?? frontController() else { return fail("no window") }
     guard let opened = controller.openPath(URL(fileURLWithPath: text), terminalID: terminalID)
-    else { return fail("no such path: \(text)") }
+    else {
+      // A file opens on a session's desk, so a path that is there can still have nowhere to go.
+      guard FileManager.default.fileExists(atPath: text) else {
+        return fail("no such path: \(text)")
+      }
+      return fail("no session to open it on: \(text)")
+    }
     if argument("rendered", as: Bool.self) == true,
       case .file(let worktreeID, let tabPath) = opened,
       WorktreeDeskViewController.isMarkdown(tabPath)

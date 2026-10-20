@@ -41,7 +41,7 @@ header, and everything else folds away until the same gesture puts it back.
 
 **Back and forward.** The two chevrons over the conversation walk where the rail has been, the
 way a browser walks pages: each session or worktree selected, however it was reached, is a step,
-and going back to a session takes its worktree's desk with it. A session deleted since, or a
+and going back to a session takes its desk with it. A session deleted since, or a
 worktree git no longer lists, is stepped over. The history is the window's and is not kept across
 a relaunch.
 
@@ -137,8 +137,13 @@ band and a two-column gutter say it instead), with the editor's own tree-sitter 
 tab's own search field marks every occurrence in every open card at once, and Return steps
 through them.
 
-**The desk.** The selected worktree's tabs, with the files panel as the trailing column, hidden
-by the toggle at the toolbar's far end. Each worktree's strip keeps its own showing tab, so
+**The desk.** The selected session's tabs, with the files panel as the trailing column, hidden
+by the toggle at the toolbar's far end. A desk belongs to a session, not to a worktree: two
+conversations in one checkout keep a desk each, and when an agent moves its session into another
+worktree the desk goes with it — each file tab opens the same path in the new checkout, a file it
+does not have closes, and a tab holding an unsaved edit stays on the checkout it was typed in,
+naming that worktree on the strip. With no session selected there is no desk, so New Browser and
+New Terminal are off. Each session's strip keeps its own showing tab, so
 switching away on the rail and back — or relaunching — lands on what was being read there. The tree is the worktree as it is on disk — every file and
 directory, including the ones git ignores, which are drawn dimmed — listed a directory at a time
 as it is opened and kept in step with what moves, so a file a build or an agent just wrote is
@@ -203,13 +208,15 @@ end, a drag puts one wherever it is dropped, and closing the active one lands on
 neighbour. Past the point where the tabs stop fitting, it scrolls sideways instead of squeezing
 every label at once, and whichever tab is picked is scrolled back into sight; `+` keeps the
 trailing edge, outside the scroll. A click previews and a double-click promotes: a preview
-becomes lasting, and a lasting tab takes the whole window. A worktree with no tabs open has no
+becomes lasting, and a lasting tab takes the whole window. A session with no tabs open has no
 desk at all: the conversation takes its width, and the first tab opened gives it back.
 
-The strip comes back after a relaunch — every kind of tab, on its worktree, in the order it stood
+The strip comes back after a relaunch — every kind of tab, on its session, in the order it stood
 in, open at the tab that was showing. Nothing is read until its tab is looked at, so a desk of a
-dozen tabs costs the one on screen. A tab whose file or worktree is gone by then does not come
-back. Unsaved edits are not carried across: closing the window, and quitting, ask about each one
+dozen tabs costs the one on screen. A tab whose file, worktree or session is gone by then does not
+come back. A window saved by a version that kept a desk per worktree hands each worktree's tabs to
+the session instructed there last; a worktree no session stood in keeps only its web tabs, which
+go to the repository's latest session. Unsaved edits are not carried across: closing the window, and quitting, ask about each one
 first — Save, Don't Save or Cancel — the way closing a tab does.
 
 A web tab's field is an address bar and a search box at once, and the text decides which: a
@@ -256,8 +263,10 @@ A double-click takes the whole token — a hash, a path, a URL, an option — he
 transcript alike, on a Japanese line as readily as an English one.
 
 **Opening from outside.** `open -a hukan <path>` — or a Finder drop — opens a directory in the
-worktree that contains it, its repository first when none does, and a file as a lasting tab; a
-path that does not exist says so instead of exiting clean. The bundled CLI does the same from any
+worktree that contains it, its repository first when none does, and a file as a lasting tab — on
+the desk of a session standing in that worktree, which is selected, or on the selected session's
+desk when none stands there; a path that does not exist, or a window with no session to open it
+on, says so instead of exiting clean. The bundled CLI does the same from any
 shell (`…/Hukan.app/Contents/Resources/hukan`, one `ln -s` away from a PATH of your choosing),
 and `--wait` returns when the tab closes — which is what hukan's own terminals ship as
 `$EDITOR`: `git commit` opens its message as a tab, caret on line one, ⌘S ⌘W commits, and closing

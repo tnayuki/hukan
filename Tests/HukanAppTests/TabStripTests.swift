@@ -22,7 +22,7 @@ final class TabStripTests: XCTestCase {
       contentRect: NSRect(x: 0, y: 0, width: width, height: 400),
       styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = desk.view
-    desk.reload(worktreeID: worktree.id)
+    desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
 
     for i in 0..<files {
       let name = "ReasonablyLongFileName\(i).swift"
@@ -78,6 +78,7 @@ final class TabStripTests: XCTestCase {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
       try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
       let worktree = workspace.addWorktree(root)
+      desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
       for name in names {
         try? "let a = 1\n".write(
           to: root.appendingPathComponent(name), atomically: true, encoding: .utf8)
@@ -88,34 +89,42 @@ final class TabStripTests: XCTestCase {
     return (desk, made[0], made[1])
   }
 
-  /// The showing tab belongs to the strip, not to the desk: coming back to a worktree lands on the
+  /// Switch the desk to the session standing in `worktree`.
+  private func show(_ worktree: Worktree, on desk: WorktreeDeskViewController) {
+    desk.reload(deskID: deskSession(in: worktree, of: desk.workspace!).id)
+  }
+
+  /// The showing tab belongs to the strip, not to the view: coming back to a session lands on the
   /// tab that was being read there. It used to land on the end of that strip, because a single
-  /// showing tab had nothing to say about a worktree that was not on screen and the reconcile fell
+  /// showing tab had nothing to say about a strip that was not on screen and the reconcile fell
   /// through to the last tab.
-  func testSwitchingWorktreesKeepsEachStripsShowingTab() {
+  func testSwitchingDesksKeepsEachStripsShowingTab() {
     let (desk, first, second) = twoWorktreeDesk()
+    show(first, on: desk)
     desk.openFile(worktree: first, path: "a.swift", preview: false)
+    show(second, on: desk)
     desk.openFile(worktree: second, path: "x.swift", preview: false)
 
-    desk.reload(worktreeID: first.id)
+    show(first, on: desk)
     XCTAssertTrue(
       desk.tabStripReport.contains("● file      a.swift"),
-      "the first worktree comes back on the tab it was left on:\n\(desk.tabStripReport)")
+      "the first desk comes back on the tab it was left on:\n\(desk.tabStripReport)")
 
-    desk.reload(worktreeID: second.id)
+    show(second, on: desk)
     XCTAssertTrue(
       desk.tabStripReport.contains("● file      x.swift"),
       "and so does the second:\n\(desk.tabStripReport)")
   }
 
-  /// The memory is per worktree and nothing else: a tab closed while its worktree was off screen
-  /// still lands on a neighbour rather than on nothing.
+  /// The memory is per desk and nothing else: a tab closed while its desk was off screen still
+  /// lands on a neighbour rather than on nothing.
   func testAShowingTabClosedWhileAwayLandsOnWhatIsLeft() {
     let (desk, first, second) = twoWorktreeDesk()
+    show(first, on: desk)
     desk.openFile(worktree: first, path: "a.swift", preview: false)
-    desk.reload(worktreeID: second.id)
+    show(second, on: desk)
     desk.fileDeleted(worktreeID: first.id, path: "a.swift")
-    desk.reload(worktreeID: first.id)
+    show(first, on: desk)
     XCTAssertTrue(
       desk.tabStripReport.contains("●"),
       "something is showing on a strip that still has tabs:\n\(desk.tabStripReport)")
@@ -254,24 +263,28 @@ final class TabStripTests: XCTestCase {
     let (desk, scroll) = desk(width: 900, files: 0)
     let workspace = desk.workspace!
     let worktree = workspace.worktrees[0]
-    let shellA = TerminalSession(worktreeID: worktree.id, cwd: worktree.url)
-    let shellB = TerminalSession(worktreeID: worktree.id, cwd: worktree.url)
+    let shellA = TerminalSession(
+      deskID: deskSession(in: worktree, of: workspace).id, cwd: worktree.url)
+    let shellB = TerminalSession(
+      deskID: deskSession(in: worktree, of: workspace).id, cwd: worktree.url)
     workspace.terminals = [shellA, shellB]
     desk.restoreBrowserTabs([
       BrowserTabState(
-        worktreeID: worktree.id, url: "https://a.example", title: "A", interactionState: nil),
+        deskID: deskSession(in: worktree, of: workspace).id, url: "https://a.example", title: "A",
+        interactionState: nil),
       BrowserTabState(
-        worktreeID: worktree.id, url: "https://b.example", title: "B", interactionState: nil),
+        deskID: deskSession(in: worktree, of: workspace).id, url: "https://b.example", title: "B",
+        interactionState: nil),
     ])
-    desk.reload(worktreeID: worktree.id)
+    desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     XCTAssertEqual(titles(in: scroll).count, 4)
 
     // Saved as: B, shell A, A, shell B — the web tabs and terminals each in that order.
     desk.restoreTabOrder([
-      .init(worktreeID: worktree.id, kind: .browser),
-      .init(worktreeID: worktree.id, kind: .terminal),
-      .init(worktreeID: worktree.id, kind: .browser),
-      .init(worktreeID: worktree.id, kind: .terminal),
+      .init(deskID: deskSession(in: worktree, of: workspace).id, kind: .browser),
+      .init(deskID: deskSession(in: worktree, of: workspace).id, kind: .terminal),
+      .init(deskID: deskSession(in: worktree, of: workspace).id, kind: .browser),
+      .init(deskID: deskSession(in: worktree, of: workspace).id, kind: .terminal),
     ])
     let expected = ["A", shellA.title, "B", shellB.title]
     XCTAssertEqual(titles(in: scroll), expected)

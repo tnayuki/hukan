@@ -19,7 +19,9 @@ import SwiftTerm
 /// where it was.
 final class TerminalSession: LocalProcessTerminalViewDelegate {
   let id: UUID
-  let worktreeID: UUID
+  /// The session whose desk this terminal is a tab of. A desk is a session's, not a worktree's,
+  /// so a terminal goes where its session goes — the shell stays in whatever directory it is in.
+  let deskID: UUID
   /// A stable id for the shell's save/restore session (`TERM_SESSION_ID`). Persisted across a
   /// relaunch so the restored shell restores its own history.
   let sessionID: String
@@ -49,11 +51,11 @@ final class TerminalSession: LocalProcessTerminalViewDelegate {
   private var restoredScrollback: String
 
   init(
-    id: UUID = UUID(), worktreeID: UUID, cwd: URL, restoredDirectory: URL? = nil,
+    id: UUID = UUID(), deskID: UUID, cwd: URL, restoredDirectory: URL? = nil,
     sessionID: String? = nil, restoredScrollback: String = ""
   ) {
     self.id = id
-    self.worktreeID = worktreeID
+    self.deskID = deskID
     self.sessionID = sessionID ?? id.uuidString
     self.currentDirectory = restoredDirectory ?? cwd
     self.restoredScrollback = restoredScrollback

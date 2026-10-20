@@ -97,7 +97,7 @@ final class FileSaveTests: XCTestCase {
       contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
       styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = files.desk.view
-    files.desk.reload(worktreeID: worktree.id)
+    files.desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     files.desk.openFile(worktree: worktree, path: "a.txt", preview: false)
     let content = try XCTUnwrap(files.desk.activeFileContent)
     let text = try XCTUnwrap(textView(in: content.view))
@@ -152,7 +152,7 @@ final class FileSaveTests: XCTestCase {
       contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
       styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = files.desk.view
-    files.desk.reload(worktreeID: worktree.id)
+    files.desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     files.desk.openFile(worktree: worktree, path: "blob.bin", preview: false)
     let content = try XCTUnwrap(files.desk.activeFileContent)
     let text = try XCTUnwrap(textView(in: content.view))
@@ -185,7 +185,7 @@ final class FileSaveTests: XCTestCase {
       contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
       styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = files.desk.view
-    files.desk.reload(worktreeID: worktree.id)
+    files.desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     files.desk.openFile(worktree: worktree, path: "blob.zzz", preview: false)
     let content = try XCTUnwrap(files.desk.activeFileContent)
     let text = try XCTUnwrap(textView(in: content.view))
@@ -209,7 +209,7 @@ final class FileSaveTests: XCTestCase {
       contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
       styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = files.desk.view
-    files.desk.reload(worktreeID: worktree.id)
+    files.desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     files.desk.openFile(worktree: worktree, path: "a.txt", preview: false)
     let content = try XCTUnwrap(files.desk.activeFileContent)
     let text = try XCTUnwrap(textView(in: content.view))

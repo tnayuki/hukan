@@ -64,7 +64,7 @@ final class ImagePaneTests: XCTestCase {
       contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
       styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = files.desk.view
-    files.desk.reload(worktreeID: worktree.id)
+    files.desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     files.desk.openFile(worktree: worktree, path: path, preview: false)
     return (files, try XCTUnwrap(files.desk.activeFileContent), window)
   }

@@ -45,7 +45,7 @@ final class TabRestoreTests: XCTestCase {
     // The terminals come back first and reload the desk on their own, before the rest of the strip
     // is on it. Modelled here because it is the shape that broke the saved selection once: spent
     // against half a strip, it landed the window on the end of that half.
-    deck.reload(worktreeID: restored.worktrees.first?.id)
+    deck.reload(deskID: restored.sessions.first?.id)
     deck.restoreFileTabs(restored.takeRestoredFileTabs())
     deck.restoreCommitTabs(restored.takeRestoredCommitTabs())
     deck.restoreTabOrder(restored.takeRestoredTabOrder())
@@ -60,7 +60,7 @@ final class TabRestoreTests: XCTestCase {
     let workspace = Workspace()
     let worktree = workspace.addWorktree(root)
     let desk = desk(workspace)
-    desk.reload(worktreeID: worktree.id)
+    desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     for name in ["a.swift", "b.swift", "c.swift"] {
       desk.openFile(worktree: worktree, path: name, preview: false)
     }
@@ -69,7 +69,7 @@ final class TabRestoreTests: XCTestCase {
 
     let (restored, deck) = try relaunch(workspace, desk)
     let back = try XCTUnwrap(restored.worktrees.first)
-    deck.reload(worktreeID: back.id)
+    deck.reload(deskID: restored.latestSession(inWorktree: back.id)?.id)
 
     XCTAssertEqual(
       deck.restorableFileTabs.map(\.path), ["c.swift", "a.swift", "b.swift"],
@@ -83,7 +83,7 @@ final class TabRestoreTests: XCTestCase {
     let workspace = Workspace()
     let worktree = workspace.addWorktree(root)
     let desk = desk(workspace)
-    desk.reload(worktreeID: worktree.id)
+    desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     desk.openFile(worktree: worktree, path: "a.swift", preview: false)
     desk.openFile(worktree: worktree, path: "b.swift", preview: false)
 
@@ -91,7 +91,7 @@ final class TabRestoreTests: XCTestCase {
     XCTAssertEqual(deck.unreadRestoredTabCount, 2, "nothing is read by restoring it")
 
     let back = try XCTUnwrap(restored.worktrees.first)
-    deck.reload(worktreeID: back.id)
+    deck.reload(deskID: restored.latestSession(inWorktree: back.id)?.id)
     XCTAssertEqual(
       deck.unreadRestoredTabCount, 1, "the showing tab, and only it, has been read")
   }
@@ -104,7 +104,7 @@ final class TabRestoreTests: XCTestCase {
     let worktree = workspace.addWorktree(root)
     workspace.selectedWorktreeID = worktree.id
     let desk = desk(workspace)
-    desk.reload(worktreeID: worktree.id)
+    desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     for name in ["a.swift", "b.swift", "c.swift"] {
       desk.openFile(worktree: worktree, path: name, preview: false)
     }
@@ -112,7 +112,7 @@ final class TabRestoreTests: XCTestCase {
 
     let (restored, deck) = try relaunch(workspace, desk)
     let back = try XCTUnwrap(restored.worktrees.first)
-    deck.reload(worktreeID: back.id)
+    deck.reload(deskID: restored.latestSession(inWorktree: back.id)?.id)
 
     XCTAssertEqual(deck.activeFileContent?.currentPath, "a.swift")
     XCTAssertEqual(deck.unreadRestoredTabCount, 2, "the other two are still unread")
@@ -129,12 +129,12 @@ final class TabRestoreTests: XCTestCase {
     workspace.selectedWorktreeID = first.id
     let desk = desk(workspace)
 
-    desk.reload(worktreeID: second.id)
+    desk.reload(deskID: deskSession(in: second, of: workspace).id)
     for name in ["x.swift", "y.swift"] {
       desk.openFile(worktree: second, path: name, preview: false)
     }
     desk.selectTab(at: 0)
-    desk.reload(worktreeID: first.id)
+    desk.reload(deskID: deskSession(in: first, of: workspace).id)
     for name in ["a.swift", "b.swift", "c.swift"] {
       desk.openFile(worktree: first, path: name, preview: false)
     }
@@ -144,9 +144,9 @@ final class TabRestoreTests: XCTestCase {
     let backFirst = try XCTUnwrap(restored.worktrees.first { $0.url.path == first.url.path })
     let backSecond = try XCTUnwrap(restored.worktrees.first { $0.url.path == second.url.path })
 
-    deck.reload(worktreeID: backFirst.id)
+    deck.reload(deskID: restored.latestSession(inWorktree: backFirst.id)?.id)
     XCTAssertEqual(deck.activeFileContent?.currentPath, "b.swift", "the worktree it opens on")
-    deck.reload(worktreeID: backSecond.id)
+    deck.reload(deskID: restored.latestSession(inWorktree: backSecond.id)?.id)
     XCTAssertEqual(
       deck.activeFileContent?.currentPath, "x.swift",
       "and the one it does not, which would otherwise land on the end of its strip")
@@ -160,14 +160,14 @@ final class TabRestoreTests: XCTestCase {
     let workspace = Workspace()
     let worktree = workspace.addWorktree(root)
     let desk = desk(workspace)
-    desk.reload(worktreeID: worktree.id)
+    desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     desk.openFile(worktree: worktree, path: "a.swift", preview: false)
     desk.openFile(worktree: worktree, path: "b.swift", preview: false)
     try FileManager.default.removeItem(at: root.appendingPathComponent("a.swift"))
 
     let (restored, deck) = try relaunch(workspace, desk)
     let back = try XCTUnwrap(restored.worktrees.first)
-    deck.reload(worktreeID: back.id)
+    deck.reload(deskID: restored.latestSession(inWorktree: back.id)?.id)
 
     XCTAssertEqual(deck.openFilePaths, ["b.swift"])
   }

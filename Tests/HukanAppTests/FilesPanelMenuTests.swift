@@ -295,7 +295,7 @@ final class DeskFileEditTests: XCTestCase {
     let worktree = workspace.addWorktree(root)
     let desk = WorktreeDeskViewController()
     desk.workspace = workspace
-    desk.reload(worktreeID: worktree.id)
+    desk.reload(deskID: deskSession(in: worktree, of: workspace).id)
     return (desk, worktree)
   }
 

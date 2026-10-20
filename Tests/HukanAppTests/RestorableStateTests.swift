@@ -119,10 +119,10 @@ final class RestorableStateTests: XCTestCase {
     let worktree = UUID()
     let tabs = [
       BrowserTabState(
-        worktreeID: worktree, url: "https://github.com/tnayuki/hukan/pull/12",
+        deskID: worktree, url: "https://github.com/tnayuki/hukan/pull/12",
         title: "Pull Request #12", interactionState: Data([0, 255, 7])),
       BrowserTabState(
-        worktreeID: worktree, url: "https://example.com", title: "", interactionState: nil),
+        deskID: worktree, url: "https://example.com", title: "", interactionState: nil),
     ]
     let archiver = NSKeyedArchiver(requiringSecureCoding: true)
     Workspace().encodeState(to: archiver, browserTabs: tabs)
@@ -141,21 +141,21 @@ final class RestorableStateTests: XCTestCase {
     // An unspawned terminal carrying restored scrollback stands in for one saved and not yet
     // re-shown: `scrollbackText()` passes its text straight through, no live shell needed.
     let first = TerminalSession(
-      worktreeID: worktreeA, cwd: tmp, restoredScrollback: "line one\nline two")
-    let second = TerminalSession(worktreeID: worktreeB, cwd: tmp)
+      deskID: worktreeA, cwd: tmp, restoredScrollback: "line one\nline two")
+    let second = TerminalSession(deskID: worktreeB, cwd: tmp)
     workspace.terminals = [first, second]
 
     let restored = try roundTrip(workspace)
     let pending = restored.takeRestoredTerminals()
 
     XCTAssertEqual(pending.count, 2)
-    XCTAssertEqual(pending[0].worktreeID, worktreeA)
+    XCTAssertEqual(pending[0].deskID, worktreeA)
     // Directory and session id round-trip, so a restored terminal reopens where it was and picks
     // its history back up.
     XCTAssertEqual(pending[0].directory, tmp.path)
     XCTAssertEqual(pending[0].sessionID, first.sessionID)
     XCTAssertEqual(pending[0].scrollback, "line one\nline two")
-    XCTAssertEqual(pending[1].worktreeID, worktreeB)
+    XCTAssertEqual(pending[1].deskID, worktreeB)
     XCTAssertEqual(pending[1].sessionID, second.sessionID)
     XCTAssertEqual(pending[1].scrollback, "", "an empty terminal saves no scrollback")
     // Taking the list empties it — the controller materializes once.
@@ -169,12 +169,12 @@ final class RestorableStateTests: XCTestCase {
     let workspace = Workspace()
     let worktree = UUID()
     let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
-    let first = TerminalSession(worktreeID: worktree, cwd: tmp)
-    let second = TerminalSession(worktreeID: worktree, cwd: tmp)
+    let first = TerminalSession(deskID: worktree, cwd: tmp)
+    let second = TerminalSession(deskID: worktree, cwd: tmp)
     workspace.terminals = [first, second]
     let order: [Workspace.RestoredTabOrder] = [
-      .init(worktreeID: worktree, kind: .terminal), .init(worktreeID: worktree, kind: .browser),
-      .init(worktreeID: worktree, kind: .terminal),
+      .init(deskID: worktree, kind: .terminal), .init(deskID: worktree, kind: .browser),
+      .init(deskID: worktree, kind: .terminal),
     ]
 
     let archiver = NSKeyedArchiver(requiringSecureCoding: true)
@@ -197,10 +197,10 @@ final class RestorableStateTests: XCTestCase {
     let worktree = UUID()
     let other = UUID()
     let files = [
-      FileTabState(worktreeID: worktree, path: "Sources/Model.swift"),
-      FileTabState(worktreeID: other, path: "README.md"),
+      FileTabState(deskID: worktree, worktreeID: worktree, path: "Sources/Model.swift"),
+      FileTabState(deskID: other, worktreeID: other, path: "README.md"),
     ]
-    let commits = [CommitTabState(worktreeID: worktree, oid: String(repeating: "a", count: 40))]
+    let commits = [CommitTabState(deskID: worktree, oid: String(repeating: "a", count: 40))]
 
     let archiver = NSKeyedArchiver(requiringSecureCoding: true)
     Workspace().encodeState(to: archiver, fileTabs: files, commitTabs: commits)
@@ -223,8 +223,8 @@ final class RestorableStateTests: XCTestCase {
     let other = UUID()
     workspace.selectedWorktreeID = worktree
     let order: [Workspace.RestoredTabOrder] = [
-      .init(worktreeID: worktree, kind: .file), .init(worktreeID: worktree, kind: .commit),
-      .init(worktreeID: worktree, kind: .browser),
+      .init(deskID: worktree, kind: .file), .init(deskID: worktree, kind: .commit),
+      .init(deskID: worktree, kind: .browser),
     ]
 
     let archiver = NSKeyedArchiver(requiringSecureCoding: true)

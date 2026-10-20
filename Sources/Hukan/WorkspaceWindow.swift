@@ -1939,7 +1939,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// rows under one heading in the rail.
   private func moveSession(_ session: AgentSession, to url: URL) {
     let worktree = workspace.addWorktree(url)
+    let previous = session.worktreeID
     session.worktreeID = worktree.id
+    files.desk.sessionMoved(session, from: previous)
     workspace.selectedWorktreeID = worktree.id
     workspace.selectedSessionID = session.id
     reload()
@@ -1949,7 +1951,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// the window follows it there, the way it followed it in. The model decides whether there is
   /// anywhere to go (`Workspace.returnSession`); a result naming no open worktree changes nothing.
   private func returnSession(_ session: AgentSession, to url: URL) {
+    let previous = session.worktreeID
     guard workspace.returnSession(session, to: url) else { return }
+    files.desk.sessionMoved(session, from: previous)
     workspace.selectedWorktreeID = session.worktreeID
     workspace.selectedSessionID = session.id
     reload()
@@ -2137,18 +2141,19 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     return openOutsideFile(url, terminalID: terminalID)
   }
 
-  /// A file no worktree may claim, on the desk of the worktree that asked for it — the
-  /// requesting terminal's, or the selected one. Keyed by its absolute path: it has no
-  /// relative one, and no twin in another worktree for the `(Worktree, relative path)` rule
-  /// to guard against.
+  /// A file no worktree may claim, on the desk of whoever asked for it — the requesting
+  /// terminal's session, or the selected one. Keyed by its absolute path: it has no relative one,
+  /// and no twin in another worktree for the `(Worktree, relative path)` rule to guard against.
   private func openOutsideFile(_ url: URL, terminalID: UUID?) -> OpenedPath? {
-    let home =
-      terminalID.flatMap { id in
-        workspace.terminals.first { $0.id == id }
-          .flatMap { workspace.worktree(id: $0.worktreeID) }
-      } ?? workspace.selectedWorktreeID.flatMap { workspace.worktree(id: $0) }
-      ?? workspace.worktrees.first
-    guard let home else { return nil }
+    let asker = terminalID.flatMap { id in workspace.terminals.first { $0.id == id } }
+      .flatMap { workspace.session(id: $0.deskID) }
+    guard
+      let session = asker ?? workspace.selectedSession
+        ?? workspace.sessions.max(by: { $0.lastInstructedAt < $1.lastInstructedAt }),
+      let home = workspace.worktree(id: session.worktreeID)
+    else { return nil }
+    workspace.selectedWorktreeID = home.id
+    workspace.selectedSessionID = session.id
     return show(file: url.path, in: home)
   }
 
@@ -2156,8 +2161,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// browse, and a preview would be discarded by the panel's next single click. A tab already
   /// showing the file re-reads it — the second `git commit`'s message must not arrive under
   /// the first one's text.
-  private func show(file path: String, in worktree: Worktree) -> OpenedPath {
-    workspace.selectedWorktreeID = worktree.id
+  ///
+  /// A desk is a session's, so the file goes to one: a session already standing in its worktree —
+  /// the selected one if it is there, else the one instructed there last — which is selected, so
+  /// the file shows beside the conversation it belongs with. With none there, the selected
+  /// session's desk takes it as a tab on that other worktree, and says so on the strip. With no
+  /// session at all there is no desk, and the open is refused rather than swallowed.
+  private func show(file path: String, in worktree: Worktree) -> OpenedPath? {
+    let selected = workspace.selectedSession
+    guard
+      let session = selected.flatMap({ $0.worktreeID == worktree.id ? $0 : nil })
+        ?? workspace.latestSession(inWorktree: worktree.id) ?? selected
+    else { return nil }
+    workspace.selectedWorktreeID = session.worktreeID
+    workspace.selectedSessionID = session.id
     reload()
     let existing = files.desk.openFilePaths.contains(path)
     files.desk.openFile(worktree: worktree, path: path, preview: false)
@@ -2186,15 +2203,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// The same terminal, started somewhere other than the worktree's root — the files panel's
   /// Open in Terminal, which names the directory the row is in.
   private func newTerminal(at cwd: URL?) {
-    guard let worktreeID = workspace.selectedWorktreeID,
-      let worktree = workspace.worktree(id: worktreeID)
-    else { return }
-    createTerminal(in: worktree, cwd: cwd)
+    guard let session = workspace.selectedSession else { return }
+    createTerminal(on: session, cwd: cwd)
   }
 
-  /// The scripting seam (`make new terminal`), mirroring `makeSession`.
-  func makeTerminal(in worktree: Worktree) -> TerminalSession {
-    createTerminal(in: worktree)
+  /// The scripting seam (`make new terminal`), mirroring `makeSession`. A terminal is a tab on a
+  /// session's desk, so it goes on the worktree's most recently instructed session — nil when no
+  /// session stands there to hold it.
+  func makeTerminal(in worktree: Worktree) -> TerminalSession? {
+    let session =
+      workspace.selectedSession.flatMap { $0.worktreeID == worktree.id ? $0 : nil }
+      ?? workspace.latestSession(inWorktree: worktree.id)
+    return session.map { createTerminal(on: $0) }
   }
 
   /// A link pressed in the transcript. It opens on this worktree's desk rather than in the
@@ -2223,13 +2243,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// link pressed in the transcript follows — ⌘, or an address a web tab will not take, goes out to
   /// the default browser instead.
   private func openTag(_ url: URL, of session: AgentSession) {
-    guard !NSEvent.modifierFlags.contains(.command), BrowserEnvironment.opensAsWebTab(url),
-      let worktree = workspace.worktree(id: session.worktreeID)
-    else {
+    guard !NSEvent.modifierFlags.contains(.command), BrowserEnvironment.opensAsWebTab(url) else {
       NSWorkspace.shared.open(url)
       return
     }
-    files.desk.openBrowser(worktree: worktree, url: url)
+    // The desk on screen is the selected session's, so the session is selected first and the tab
+    // goes on its desk — which is where it would be had the link been pressed in its transcript.
+    if workspace.selectedSession?.id != session.id {
+      workspace.selectedWorktreeID = session.worktreeID
+      workspace.selectedSessionID = session.id
+      reload()
+    }
+    files.openBrowser(url: url)
   }
 
   /// File ▸ New Browser (⌘T). A web tab in the selected worktree's desk, over the shared
@@ -2238,21 +2263,25 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.openBrowser()
   }
 
+  /// A shell on a session's desk, started in the worktree the session is in unless `cwd` says
+  /// otherwise.
   @discardableResult
-  private func createTerminal(in worktree: Worktree, cwd: URL? = nil) -> TerminalSession {
-    let terminal = TerminalSession(worktreeID: worktree.id, cwd: cwd ?? worktree.url)
+  private func createTerminal(on session: AgentSession, cwd: URL? = nil) -> TerminalSession {
+    let root = workspace.worktree(id: session.worktreeID)?.url
+    let terminal = TerminalSession(
+      deskID: session.id, cwd: cwd ?? root ?? FileManager.default.homeDirectoryForCurrentUser)
     registerTerminal(terminal)
-    // Show it now only if its worktree is the one on screen; otherwise it waits, unspawned, for
-    // that worktree to be selected (scripting can make a terminal in any worktree).
-    if workspace.selectedWorktreeID == worktree.id {
+    // Show it now only if its desk is the one on screen; otherwise it waits, unspawned, for that
+    // session to be selected (scripting can make a terminal on any worktree's session).
+    if files.desk.deskID == session.id {
       files.openTerminal(id: terminal.id)
     }
     return terminal
   }
 
-  /// The current owner, resolved when a pending browser grant is answered after a move.
-  static func desk(for worktreeID: UUID) -> WorktreeDeskViewController? {
-    all.first { $0.workspace.worktree(id: worktreeID) != nil }?.files.desk
+  /// The current owner of a desk, resolved when a pending browser grant is answered after a move.
+  static func desk(for deskID: UUID) -> WorktreeDeskViewController? {
+    all.first { $0.workspace.session(id: deskID) != nil }?.files.desk
   }
 
   /// Take a repository from another window with everything in it still running — sessions on
@@ -2277,8 +2306,10 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     source.setMaximized(nil)
     setMaximized(nil)
     let worktreeIDs = Set(repository.worktrees.map(\.id))
+    let deskIDs = Set(
+      source.workspace.sessions.filter { worktreeIDs.contains($0.worktreeID) }.map(\.id))
     source.running.detachSessions(in: worktreeIDs)
-    let tabs = source.files.desk.detachTabs(in: worktreeIDs)
+    let tabs = source.files.desk.detachTabs(in: deskIDs)
     guard let detached = source.workspace.detachRepository(id) else { return false }
     workspace.adoptRepository(detached)
     files.desk.adoptTabs(tabs)
@@ -2329,7 +2360,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// carried on the model and replayed above a fresh shell when the desk first shows it.
   private func materializeRestoredTerminals() {
     for pending in workspace.takeRestoredTerminals() {
-      guard let worktree = workspace.worktree(id: pending.worktreeID) else { continue }
+      guard let session = workspace.session(id: pending.deskID),
+        let worktree = workspace.worktree(id: session.worktreeID)
+      else { continue }
       // Reopen where the shell was, unless that directory is gone — then fall back to the worktree.
       var isDirectory: ObjCBool = false
       let exists =
@@ -2339,7 +2372,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       let directory = exists ? URL(fileURLWithPath: pending.directory) : nil
       registerTerminal(
         TerminalSession(
-          worktreeID: worktree.id, cwd: worktree.url, restoredDirectory: directory,
+          deskID: session.id, cwd: worktree.url, restoredDirectory: directory,
           sessionID: pending.sessionID.isEmpty ? nil : pending.sessionID,
           restoredScrollback: pending.scrollback))
     }
@@ -2772,7 +2805,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     case #selector(saveFile(_:)):
       return files.hasUnsavedEdit
     case #selector(newTerminal(_:)), #selector(newBrowserTab(_:)):
-      return workspace.selectedWorktreeID != nil
+      return files.hasDesk
     case #selector(closeTab(_:)):
       return files.hasClosableTab
     case #selector(clearTerminal(_:)):
