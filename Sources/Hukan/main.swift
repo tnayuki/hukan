@@ -360,6 +360,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       withTitle: "Hide Sidebar",
       action: #selector(WorkspaceWindowController.toggleRail(_:)), keyEquivalent: "s")
     sidebar.keyEquivalentModifierMask = [.command, .control]
+    // The rail's order, the toolbar glyph's menu spelled out where a menu bar user looks for it —
+    // Finder keeps its sort under View too. Filled when it opens, from the window in front.
+    let sort = viewMenu.addItem(withTitle: "Sort Sessions By", action: nil, keyEquivalent: "")
+    let sortMenu = NSMenu(title: "Sort Sessions By")
+    sortMenu.delegate = RailSortMenuDelegate.front
+    sort.submenu = sortMenu
     viewMenu.addItem(.separator())
     // AppKit owns items wired to toggleFullScreen: — it retitles Enter/Exit itself.
     let fullScreen = viewMenu.addItem(

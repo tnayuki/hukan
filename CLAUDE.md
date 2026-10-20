@@ -165,7 +165,8 @@ Workspace (one window)
   stopped listing — is stepped over rather than removed, so the order around it holds. Per window
   and never saved, the reader's place in the transcript's rule: a restored window has no reader to
   have been anywhere. **The chevrons open the content section, not the rail's**: the rail's row is
-  spent to the point on its filter, which is what a 4pt shortfall there already cost, and over the
+  spent to the point on its filter and its sort, each of which cost the rail's floor its width,
+  and over the
   conversation is where Finder and Xcode put theirs — first in the column whose contents they
   change. **The keys are ⌃⌘←/→, Xcode's, and not the browser's ⌘[ / ⌘]**, which the web tab holds:
   a focused web view answers yes to every ⌘-key put to it, so one pair could not be split between
@@ -866,6 +867,16 @@ Workspace (one window)
   a session there, from the heading's right-click: the heading's `+` is main's. The worktrees
   under a repository are still kept in order by name, compared the Finder's way, for the readers
   that list them (`hukan status`, the outside client's session list).
+  **The order is the window's choice of three, and only an order.** When you last instructed a
+  session is the default and the one the ages down the trailing edge read in; by branch, and by
+  the value of one *kind* of tag, are the other two — the kind because a session carries several
+  and a ticket and a pull request are not one sequence, and each falls back to the instruction
+  order where it has nothing to say. No headings come with them: grouping by branch would be the
+  worktree headings back under another name, and an order costs nothing to undo. No pinning
+  either, there being nothing a pinned row would say that the choice of order does not. The
+  choice is a glyph pulling down a menu at the rail's toolbar row — a pop-up naming the order
+  would spend the width that row's floor is measured from — and the same items under View and on
+  the rail's own right-click, a menu being where an option is looked for. Saved with the window.
   **Above the repositories, a group is a name someone gave, and it is the window's.** One window
   per customer is the arrangement the rail exists to make unnecessary — what is waiting on you is
   the question, and it was split across as many rails as there were customers. So repositories

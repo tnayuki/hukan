@@ -86,6 +86,10 @@ process holds can be forked, but not rolled back.
 stored. The rail lists a repository's sessions under its heading, whichever worktree each is in:
 the line under a session's title names the branch it stands on, then its tags, with what has
 changed in that worktree at the trailing edge, and the worktree's path is the branch's tooltip.
+The sessions are in the order you last instructed them unless you sort them otherwise — by
+branch, or by the value of one kind of tag (`JIRA`, `PR`), a session without one coming after —
+from the glyph beside the rail's filter, from View ▸ Sort Sessions By, or from the rail's own
+right-click; the window keeps its choice across a relaunch.
 A worktree is not a row of its own, so one with no session in it is not on the rail. An agent
 moving worktree (`EnterWorktree`) takes its session, and its desk, with it, and leaving it
 (`ExitWorktree`) brings the session back to the worktree it was started from; the row stays where

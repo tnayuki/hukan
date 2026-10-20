@@ -612,11 +612,12 @@ final class Workspace {
     /// Main first, then the linked ones — for the readers that want the worktrees without caring
     /// which is which (`hukan status`, and anything counting).
     var worktrees: [RailWorktree] { (main.map { [$0] } ?? []) + linked }
-    /// What the rail lists under the heading: every session of the repository, newest instruction
-    /// first. The worktree is no level of the rail's — it is where a session stands now, which an
-    /// agent's `EnterWorktree` changes without anyone choosing anything — so it rides on the row.
-    var sessions: [RailEntry] { Self.ordered(worktrees.flatMap(\.sessions)) }
-    var archived: [RailEntry] { Self.ordered(worktrees.flatMap(\.archived)) }
+    /// What the rail lists under the heading: every session of the repository, in the rail's
+    /// order (`railSort`). The worktree is no level of the rail's — it is where a session stands
+    /// now, which an agent's `EnterWorktree` changes without anyone choosing anything — so it
+    /// rides on the row.
+    let sessions: [RailEntry]
+    let archived: [RailEntry]
 
     static func ordered(_ entries: [RailEntry]) -> [RailEntry] {
       entries.sorted { lhs, rhs in
@@ -625,6 +626,67 @@ final class Workspace {
         }
         return lhs.session.id.uuidString < rhs.session.id.uuidString
       }
+    }
+  }
+
+  /// How the rail orders a repository's sessions — the window's choice, saved with it. Only an
+  /// order: the heading and the Archived section stand where they do whichever it is, and each
+  /// order falls back to the instruction one where it has nothing to say.
+  enum RailSort: Equatable {
+    /// When you last instructed it, newest first — the default, and the one the ages read in.
+    case lastInstructed
+    /// By the branch the session stands on.
+    case branch
+    /// By the value of the session's tag of this kind (`JIRA`, `PR`); a session with none after.
+    case tag(String)
+  }
+  var railSort: RailSort = .lastInstructed
+
+  /// The tag kinds the window's sessions carry, as the Sort menu offers them: each once whatever
+  /// its case, in the order a person reads a list.
+  var tagKinds: [String] {
+    var seen: [String: String] = [:]
+    for tag in sessions.flatMap(\.tags) {
+      guard let kind = SessionTags.split(tag).kind else { continue }
+      if seen[kind.lowercased()] == nil { seen[kind.lowercased()] = kind }
+    }
+    return seen.values.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+  }
+
+  /// The branch a session's row names — the one it stood on, for a session whose worktree is gone.
+  func branchName(of session: AgentSession) -> String {
+    if let gone = session.goneWorktree { return gone.branch ?? gone.url.lastPathComponent }
+    return worktree(id: session.worktreeID)?.displayName ?? ""
+  }
+
+  /// `entries` in the rail's order.
+  func railOrdered(_ entries: [RailEntry]) -> [RailEntry] {
+    let byInstruction = RailRepository.ordered(entries)
+    switch railSort {
+    case .lastInstructed:
+      return byInstruction
+    case .branch:
+      // Stable over the instruction order, so a branch's sessions stay newest first.
+      return byInstruction.enumerated().sorted { a, b in
+        let order = branchName(of: a.element.session).localizedStandardCompare(
+          branchName(of: b.element.session))
+        return order == .orderedSame ? a.offset < b.offset : order == .orderedAscending
+      }.map(\.element)
+    case .tag(let kind):
+      func value(_ entry: RailEntry) -> String? {
+        entry.session.tags.lazy.map(SessionTags.split)
+          .first { $0.kind?.caseInsensitiveCompare(kind) == .orderedSame }?.value
+      }
+      return byInstruction.enumerated().sorted { a, b in
+        switch (value(a.element), value(b.element)) {
+        case (let x?, let y?):
+          let order = x.localizedStandardCompare(y)
+          return order == .orderedSame ? a.offset < b.offset : order == .orderedAscending
+        case (.some, nil): return true
+        case (nil, .some): return false
+        case (nil, nil): return a.offset < b.offset
+        }
+      }.map(\.element)
     }
   }
 
@@ -646,11 +708,15 @@ final class Workspace {
     }
     return order.map { key in
       let group = byRepository[key] ?? []
+      let main = group.first { $0.isMain }.map(railWorktree)
+      let linked = group.filter { !$0.isMain }.map(railWorktree)
+      let all = (main.map { [$0] } ?? []) + linked
       return RailRepository(
         repositoryID: key,
         repositoryName: group.first?.repositoryName ?? key,
-        main: group.first { $0.isMain }.map(railWorktree),
-        linked: group.filter { !$0.isMain }.map(railWorktree))
+        main: main, linked: linked,
+        sessions: railOrdered(all.flatMap(\.sessions)),
+        archived: railOrdered(all.flatMap(\.archived)))
     }
   }
 
@@ -982,6 +1048,9 @@ final class Workspace {
     static let railOrder = "rail.order"
     static let collapsedGroups = "rail.collapsedGroups"
     static let collapsedRepositories = "rail.collapsedRepositories"
+    // How the rail orders sessions: "instructed", "branch" or "tag", and the tag's kind beside it.
+    static let railSort = "rail.sort"
+    static let railSortKind = "rail.sortKind"
     // Keyed by repository id since the rail lists sessions under the repository alone; a key
     // saved by worktree id names nothing now and leaves its Archived folded, which is its default.
     static let expandedArchives = "rail.expandedArchives"
@@ -1103,6 +1172,13 @@ final class Workspace {
     coder.encode(historyHeight, forKey: Key.historyHeight)
     coder.encode(Array(collapsedRepositories) as NSArray, forKey: Key.collapsedRepositories)
     coder.encode(Array(expandedArchives) as NSArray, forKey: Key.expandedArchives)
+    switch railSort {
+    case .lastInstructed: coder.encode("instructed" as NSString, forKey: Key.railSort)
+    case .branch: coder.encode("branch" as NSString, forKey: Key.railSort)
+    case .tag(let kind):
+      coder.encode("tag" as NSString, forKey: Key.railSort)
+      coder.encode(kind as NSString, forKey: Key.railSortKind)
+    }
     // Archived ids worth keeping: the live sessions that carry the flag, plus the ids no
     // discovery has claimed — those belong to repositories this window has not opened, and
     // dropping them would silently unarchive a whole repository the next time it is opened.
@@ -1282,6 +1358,13 @@ final class Workspace {
       .map(\.doubleValue)
     collapsedRepositories = Set(strings(coder, Key.collapsedRepositories))
     expandedArchives = Set(strings(coder, Key.expandedArchives))
+    let sort = coder.decodeObject(of: NSString.self, forKey: Key.railSort) as String?
+    let sortKind = coder.decodeObject(of: NSString.self, forKey: Key.railSortKind) as String?
+    switch sort {
+    case "branch": railSort = .branch
+    case "tag": railSort = sortKind.map { .tag($0) } ?? .lastInstructed
+    default: railSort = .lastInstructed
+    }
     // Both forms: the parsed set is what the rail reads, the raw strings are the
     // carry-forward for ids no session has claimed yet (see `unresolvedArchived`).
     let archived = strings(coder, Key.archivedSessionIDs)

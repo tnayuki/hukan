@@ -118,6 +118,41 @@ final class RailStructureTests: XCTestCase {
       "a linked worktree's session can be put away like any other")
   }
 
+  /// The rail's three orders. Each is an order and nothing else — the rows are the same rows —
+  /// and each falls back to the instruction order where it has nothing to say: a branch's
+  /// sessions stay newest first, and a session with no tag of the kind goes after the rest.
+  func testTheRailSortsByInstructionByBranchAndByATagKind() {
+    let repo = Repository(id: "/repo/main")
+    let main = Worktree(url: URL(fileURLWithPath: "/repo/main"), branch: "main", repository: repo)
+    let alpha = Worktree(
+      url: URL(fileURLWithPath: "/repo/alpha"), branch: "alpha", repository: repo)
+    repo.worktrees = [main, alpha]
+    let workspace = Workspace()
+    workspace.repositories = [repo]
+    func session(_ worktree: Worktree, _ age: Double, _ tags: [String]) -> AgentSession {
+      let session = AgentSession(worktreeID: worktree.id)
+      session.lastInstructedAt = Date(timeIntervalSinceNow: -age)
+      _ = session.setTags(tags)
+      return session
+    }
+    let newest = session(main, 1, ["JIRA: HUK-10"])
+    let middle = session(alpha, 2, ["jira: HUK-9", "PR: #3"])
+    let oldest = session(alpha, 3, [])
+    workspace.sessions = [oldest, newest, middle]
+    func order() -> [UUID] { workspace.railRepositories[0].sessions.map(\.session.id) }
+
+    XCTAssertEqual(order(), [newest.id, middle.id, oldest.id])
+
+    workspace.railSort = .branch
+    XCTAssertEqual(order(), [middle.id, oldest.id, newest.id], "alpha before main, newest first")
+
+    workspace.railSort = .tag("JIRA")
+    XCTAssertEqual(
+      order(), [middle.id, newest.id, oldest.id],
+      "HUK-9 before HUK-10 the Finder's way, the kind matched whatever its case, untagged last")
+    XCTAssertEqual(workspace.tagKinds, ["JIRA", "PR"], "each kind offered once")
+  }
+
   /// A `git worktree remove` run from a shell ends the checkout, not the conversation: the
   /// session stands on main, remembering where it was, and the next discovery keeps it.
   func testAWorktreeGitStopsListingLeavesItsSessionsOnMain() {

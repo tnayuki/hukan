@@ -2,6 +2,7 @@ import AppKit
 
 extension NSToolbarItem.Identifier {
   static let sessionFilter = NSToolbarItem.Identifier("sessionFilter")
+  static let sessionSort = NSToolbarItem.Identifier("sessionSort")
   static let status = NSToolbarItem.Identifier("status")
   static let systemUsage = NSToolbarItem.Identifier("systemUsage")
   static let usage = NSToolbarItem.Identifier("usage")
@@ -314,6 +315,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     rail.onNewSession = { [weak self] repositoryID in
       self?.newSession(inRepository: repositoryID)
     }
+    rail.fillSortMenu = { [weak self] menu in self?.fillRailSortMenu(menu) }
     rail.onNewSessionInWorktree = { [weak self] worktreeID in
       guard let self, let worktree = self.workspace.worktree(id: worktreeID) else { return }
       self.createSession(in: worktree)
@@ -582,7 +584,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// floors carry four points of slack over that, as the panel's do. The panel's own row was
   /// re-measured on the same run and still clears its 280 and 372 — measured with the rail held
   /// wide, since an item the rail drops reflows the whole bar and reads as the panel's failure.
-  static func railMinimumWidth(labelled: Bool) -> CGFloat { labelled ? 312 : 296 }
+  ///
+  /// The sort pull-down then cost the row its width plus the bar's spacing: it is clipped below a
+  /// 336pt rail uncaptioned and a 352pt one captioned, so the floors moved by 44 to the same four
+  /// points of slack. What a clipped item costs is not only itself — the overflow chevron it
+  /// raises sits at the bar's far end and shifts the panel's row along with it, which is how it
+  /// was found, as the panel's test failing.
+  static func railMinimumWidth(labelled: Bool) -> CGFloat { labelled ? 356 : 340 }
 
   /// What the desk is allowed to ask for, and how hard it holds it. A tab whose content resists
   /// compression harder than this does not get a wider desk — it wins the argument, moves the
@@ -705,7 +713,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // window and none of it in full screen, where they are gone, so without the space the row
     // slid left by that much and the toggle stood in the middle of the rail.
     [
-      .sessionFilter, .flexibleSpace, .toggleSidebar, .sidebarTrackingSeparator,
+      .sessionFilter, .flexibleSpace, .sessionSort, .toggleSidebar, .sidebarTrackingSeparator,
       .sessionHistory, .status,
       .flexibleSpace, .appUpdate, .usage, .systemUsage, .filesSeparator, .filesFilter,
       .flexibleSpace, .filesScope, .toggleHistory, .toggleFiles,
@@ -762,6 +770,22 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       _ = sessionFilterWidth
       item.view = rail.filterSearchField
       sessionFilterToolbarItem = item
+      updateRailToolbarItem()
+      return item
+    case .sessionSort:
+      // The rail's order, beside the rail's filter: both say how the column under them reads.
+      // A glyph that pulls down a menu rather than a pop-up naming the order — a name costs the
+      // row its width, and the row is what the rail's floor is measured from (see
+      // `railMinimumWidth`). The checkmark in the menu says which order is on.
+      //
+      // A view item hosting its own pull-down, the way the history chevrons are one: the bar gives
+      // an image item — `NSMenuToolbarItem` included — a 44pt slot whatever its glyph, and on the
+      // rail's row that slot is what decides whether the filter stays in the bar.
+      let item = NSToolbarItem(itemIdentifier: identifier)
+      item.label = "Sort"
+      item.toolTip = "Sort Sessions"
+      item.view = sessionSortButton
+      sessionSortToolbarItem = item
       updateRailToolbarItem()
       return item
     case .filesFilter:
@@ -912,9 +936,97 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// The rail's filter belongs to the rail, so it goes with it — hidden while the rail is
   /// collapsed.
   func updateRailToolbarItem() {
+    let collapsed = splitController.splitViewItems.first?.isCollapsed == true
+    sessionSortToolbarItem?.isHidden = collapsed
     guard let sessionFilterToolbarItem else { return }
     _ = sessionFilterWidth
-    sessionFilterToolbarItem.isHidden = splitController.splitViewItems.first?.isCollapsed == true
+    sessionFilterToolbarItem.isHidden = collapsed
+  }
+
+  private weak var sessionSortToolbarItem: NSToolbarItem?
+  /// Fills the toolbar's sort menu each time it opens, so the tag kinds offered are the ones the
+  /// window's sessions carry now.
+  private lazy var railSortMenuDelegate = RailSortMenuDelegate(pullDown: true) { [weak self] in
+    self
+  }
+  /// The glyph the rail's order is pulled down from. A pull-down shows its menu's first item as
+  /// its face, so the delegate keeps one there holding the glyph.
+  private lazy var sessionSortButton: NSPopUpButton = {
+    let button = NSPopUpButton(frame: .zero, pullsDown: true)
+    button.isBordered = false
+    button.imagePosition = .imageOnly
+    (button.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+    button.toolTip = "Sort Sessions"
+    button.setAccessibilityLabel("Sort Sessions")
+    let menu = NSMenu(title: "Sort Sessions")
+    menu.delegate = railSortMenuDelegate
+    menu.addItem(Self.sortFaceItem())
+    button.menu = menu
+    // The glyph's own size. A pull-down left to its intrinsic width keeps room for a title and an
+    // arrow it does not draw, and an item the bar thinks is that wide is clipped into the
+    // overflow menu — whose chevron then shoves every row after it along.
+    button.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      button.widthAnchor.constraint(equalToConstant: 24),
+      button.heightAnchor.constraint(equalToConstant: 24),
+    ])
+    return button
+  }()
+
+  /// The pull-down's face: the glyph, and nothing a click can choose.
+  static func sortFaceItem() -> NSMenuItem {
+    let face = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    face.image = barGlyph("arrow.up.arrow.down", description: "Sort Sessions", accented: false)
+    return face
+  }
+
+  /// The rail's orders as menu items, the one that is on checked — what the toolbar's glyph pulls
+  /// down, View ▸ Sort Sessions By lists and the rail's own right-click offers, so the three can
+  /// never disagree. A tag order is offered per kind the window's sessions carry, and the kind is
+  /// a submenu since there may be several.
+  func fillRailSortMenu(_ menu: NSMenu) {
+    menu.removeAllItems()
+    func item(_ title: String, _ value: String, on: Bool) -> NSMenuItem {
+      let item = NSMenuItem(title: title, action: #selector(setRailSort(_:)), keyEquivalent: "")
+      item.target = self
+      item.representedObject = value
+      item.state = on ? .on : .off
+      return item
+    }
+    let sort = workspace.railSort
+    menu.addItem(item("Last Instructed", "instructed", on: sort == .lastInstructed))
+    menu.addItem(item("Branch", "branch", on: sort == .branch))
+    let kinds = workspace.tagKinds
+    let tag = NSMenuItem(title: "Tag", action: nil, keyEquivalent: "")
+    if case .tag = sort { tag.state = .on }
+    if kinds.isEmpty {
+      tag.isEnabled = false
+      tag.toolTip = "No session has a tag yet"
+    } else {
+      let submenu = NSMenu(title: "Tag")
+      for kind in kinds {
+        submenu.addItem(item(kind, "tag:" + kind, on: isSortedBy(kind: kind, sort)))
+      }
+      tag.submenu = submenu
+    }
+    menu.addItem(tag)
+  }
+
+  /// Whether `sort` is by tags of `kind`, whatever case either was written in.
+  private func isSortedBy(kind: String, _ sort: Workspace.RailSort) -> Bool {
+    guard case .tag(let current) = sort else { return false }
+    return current.caseInsensitiveCompare(kind) == .orderedSame
+  }
+
+  @objc func setRailSort(_ sender: NSMenuItem) {
+    guard let value = sender.representedObject as? String else { return }
+    switch value {
+    case "branch": workspace.railSort = .branch
+    case _ where value.hasPrefix("tag:"): workspace.railSort = .tag(String(value.dropFirst(4)))
+    default: workspace.railSort = .lastInstructed
+    }
+    rail.reload()
+    window?.invalidateRestorableState()
   }
 
   private weak var filesToolbarItem: NSToolbarItem?
@@ -2875,5 +2987,33 @@ final class WindowSplitViewController: NSSplitViewController {
   override func toggleSidebar(_ sender: Any?) {
     guard let onToggleSidebar else { return super.toggleSidebar(sender) }
     onToggleSidebar(sender)
+  }
+}
+
+/// Fills a Sort Sessions menu from a window's own state each time it opens — the toolbar's, whose
+/// window is fixed, and View ▸ Sort Sessions By, whose window is whichever is in front.
+final class RailSortMenuDelegate: NSObject, NSMenuDelegate {
+  private let controller: () -> WorkspaceWindowController?
+  /// The menu is a pull-down's, whose first item is its face rather than a choice.
+  private let pullDown: Bool
+
+  init(pullDown: Bool = false, controller: @escaping () -> WorkspaceWindowController?) {
+    self.pullDown = pullDown
+    self.controller = controller
+  }
+
+  /// The View menu's: the key window's controller, else the front one.
+  static let front = RailSortMenuDelegate {
+    NSApp.keyWindow?.windowController as? WorkspaceWindowController
+      ?? WorkspaceWindowController.all.first
+  }
+
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    guard let controller = controller() else {
+      menu.removeAllItems()
+      return
+    }
+    controller.fillRailSortMenu(menu)
+    if pullDown { menu.insertItem(WorkspaceWindowController.sortFaceItem(), at: 0) }
   }
 }

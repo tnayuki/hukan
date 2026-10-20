@@ -218,6 +218,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// rearranged; this only asks the window to redraw and re-record its state.
   var onReorderRepositories: (() -> Void)?
   var onNewSession: ((String) -> Void)?
+  /// The window's Sort Sessions items, for the rail's own right-click.
+  var fillSortMenu: ((NSMenu) -> Void)?
   /// The heading's New Session In: start a session in that specific worktree (the heading's `+`
   /// starts one in main).
   var onNewSessionInWorktree: ((UUID) -> Void)?
@@ -1803,7 +1805,17 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       menu.addItem(groupItem("Ungroup", #selector(ungroupClickedGroup(_:)), id))
       return
     }
-    if node == nil { menu.addItem(groupItem("New Group", #selector(createClickedGroup(_:)), nil)) }
+    if node == nil {
+      menu.addItem(groupItem("New Group", #selector(createClickedGroup(_:)), nil))
+      // The rail's order, from the rail itself — the same items the toolbar's glyph pulls down.
+      if let fillSortMenu {
+        let submenu = NSMenu(title: "Sort By")
+        fillSortMenu(submenu)
+        let sort = NSMenuItem(title: "Sort By", action: nil, keyEquivalent: "")
+        sort.submenu = submenu
+        menu.addItem(sort)
+      }
+    }
     if let node, node.isRepositoryHeading, let id = node.repositoryID, let workspace {
       // A worktree is no row of its own, so this is where a session is started in one that has
       // none — the heading's `+` is main's. Only when there is more than main to choose from.
