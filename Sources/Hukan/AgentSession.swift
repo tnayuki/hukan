@@ -229,6 +229,9 @@ final class AgentSession {
   /// the rail lists, so it needs a name of its own — the worktree is only where it happens
   /// to be working.
   var title: String?
+  /// Whether this engine has been asked for that name yet (see `askForTitle`). Per process,
+  /// since the engine answers from what it holds.
+  private var titleAsked = false
 
   /// Estimated USD spent by this session, summed from the transcript's recorded token `usage`
   /// via `Pricing`. Nil until history loads or a turn ends with priceable usage. On a
@@ -933,26 +936,41 @@ final class AgentSession {
     }
   }
 
-  /// Adopt the name Claude Code has settled on, if it has moved.
+  /// Ask this process's engine for the conversation's name, once.
   ///
-  /// The engine writes `ai-title` to the transcript and never mentions it over the pipes, so a
-  /// running session's name is otherwise frozen at whatever it was when the session was first
-  /// seen — hukan's guess from the first line typed, for a session started here, and it never
-  /// catches a later rename either. Same shape as `refreshCostEstimate`, and for the same
-  /// reason: the file is the master copy, so re-read it off the main thread at each turn's end
-  /// (the engine writes the name early in the first turn, so one turn is enough to be named)
-  /// and stay silent when nothing moved.
-  private func refreshTitle() {
+  /// A `-p` engine no longer names a session unasked (see `ClaudeSession.generateTitle`), so
+  /// without this a session started here keeps hukan's guess from the first line typed for good.
+  /// Asked on the first send of each engine, not of each conversation: the engine answers with
+  /// the name it restored on a resume at no cost, and a session that predates the change — named
+  /// by nobody — gets one the first time it is spoken to again. What the name is drawn from is
+  /// the conversation's opening message, which for a new one is the message being sent and for
+  /// a resumed one has to be read back off the transcript.
+  private func askForTitle(opening: String?) {
+    guard let runner, !titleAsked else { return }
+    titleAsked = true
+    let ask = { [weak self, weak runner] (description: String?) in
+      guard let description, let runner else { return }
+      runner.generateTitle(from: description) { self?.adoptEngineTitle($0) }
+    }
+    if let opening { return ask(opening) }
     guard let worktree = lastKnownWorktree else { return }
     let id = self.id
-    DispatchQueue.global(qos: .utility).async { [weak self] in
-      guard let named = ClaudeSessionStore.aiTitle(id: id, worktree: worktree) else { return }
-      DispatchQueue.main.async {
-        guard let self, named != self.title else { return }
-        self.title = named
-        self.onStateChange?()
-      }
+    DispatchQueue.global(qos: .utility).async {
+      let first = ClaudeSessionStore.firstPrompt(id: id, worktree: worktree)
+      DispatchQueue.main.async { ask(first) }
     }
+  }
+
+  /// Take the engine's name for the conversation — the reply to `askForTitle`, and every
+  /// `session_title_changed` after it, which is how a rename made elsewhere (a phone on the
+  /// bridge) reaches the rail. Shaped like a title read back off disk, so the row does not change
+  /// form on a restore, and silent when nothing moved.
+  private func adoptEngineTitle(_ named: String?) {
+    guard let named else { return }
+    let title = ClaudeSessionStore.titleLine(from: named)
+    guard !title.isEmpty, title != self.title else { return }
+    self.title = title
+    onStateChange?()
   }
 
   /// `holdIdle` starts the process without flipping to `.running`, for a New Session brought up
@@ -1106,6 +1124,7 @@ final class AgentSession {
         model: model, permissionMode: permissionMode.rawValue, effort: effort,
         tools: tools, resume: isDetached, fork: forkOrigin, rollbackTo: rollbackAnchor)
       runner = session
+      titleAsked = false
       // The branch has been taken, or the cut has been made: either way the engine has written
       // it into this session's own transcript, so every later launch resumes that file like any
       // other. Passing the same anchor twice would roll a second turn's work away.
@@ -1219,7 +1238,8 @@ final class AgentSession {
     // the message says — and what it reads as when the transcript is read back.
     let said = ([text] + attachments.filter { !$0.isImage }.map(\.path))
       .filter { !$0.isEmpty }.joined(separator: "\n")
-    if title == nil {
+    let opens = title == nil
+    if opens {
       // The same shape the store gives a title read back off disk, so a session's row does not
       // change form when it is restored (see `ClaudeSessionStore.titleLine`).
       let guess = ClaudeSessionStore.titleLine(from: said)
@@ -1231,6 +1251,7 @@ final class AgentSession {
         said, imagePaths: attachments.filter(\.isImage).map(\.path),
         forkAnchor: lastRecordUUID))
     runner?.send(text, attachments: attachments)
+    askForTitle(opening: opens ? said : nil)
   }
 
   /// Actually hand a message to the engine and open a turn. Only reached when no turn is in
@@ -2220,7 +2241,6 @@ final class AgentSession {
       flushQueue()
       onStateChange?()
       refreshCostEstimate()
-      refreshTitle()
       refreshContextUsage()
 
     case "system" where event.subtype == "init":
@@ -2318,6 +2338,9 @@ final class AgentSession {
       isSettingRemoteControl = false
       applyBridge(ClaudeBridgeState(state: raw, detail: event.payload["detail"] as? String))
       onStateChange?()
+
+    case "system" where event.subtype == "session_title_changed":
+      adoptEngineTitle(event.payload["title"] as? String)
 
     default:
       break

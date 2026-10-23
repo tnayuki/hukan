@@ -564,6 +564,22 @@ final class ClaudeSession {
     ask("get_context_usage", completion: completion)
   }
 
+  /// Ask the engine to name the conversation, and to keep the name: `persist` makes it append
+  /// the `ai-title` the store reads a session's name from, so the name outlives this process.
+  ///
+  /// A `-p` engine stopped naming its sessions on its own in 2.1.280 — the host is expected to
+  /// ask, which is what the desktop app and the VS Code extension do (read off the 2.1.300
+  /// binary's control dispatch). It answers with the name it already holds when it has one —
+  /// restored on a resume, or set by a rename — so asking again costs no model call and never
+  /// overrides a name someone chose. `description` is what the name is drawn from: the
+  /// conversation's opening message. The engine declines one that is too short, or a slash
+  /// command, and the reply's title is then null.
+  func generateTitle(from description: String, completion: @escaping (String?) -> Void) {
+    ask("generate_session_title", ["description": description, "persist": true]) { reply in
+      completion(reply?["title"] as? String)
+    }
+  }
+
   /// Put this conversation on the bridge, or take it off — the request the VS Code extension
   /// sends down this same stream, verified against its shipped `extension.js` as well as the
   /// engine's own control dispatch.
@@ -1187,7 +1203,21 @@ enum ClaudeSessionStore {
     let url = transcriptURL(id: id, worktree: worktree)
     guard let data = try? Data(contentsOf: url) else { return nil }
     if let named = aiTitle(inTranscript: data) { return named }
+    guard let text = firstPrompt(inTranscript: data) else { return nil }
+    let title = titleLine(from: text)
+    return title.isEmpty ? nil : title
+  }
 
+  /// The first thing the person typed into the session, whole — what the engine is asked to
+  /// draw a name from when it has none (see `ClaudeSession.generateTitle`).
+  static func firstPrompt(id: UUID, worktree: URL) -> String? {
+    guard let data = try? Data(contentsOf: transcriptURL(id: id, worktree: worktree)) else {
+      return nil
+    }
+    return firstPrompt(inTranscript: data)
+  }
+
+  private static func firstPrompt(inTranscript data: Data) -> String? {
     for line in data.split(separator: 0x0a) {
       guard let record = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
         record["type"] as? String == "user", record["isMeta"] as? Bool != true,
@@ -1195,26 +1225,9 @@ enum ClaudeSessionStore {
         let message = record["message"] as? [String: Any],
         let text = userTexts(in: message["content"]).first
       else { continue }
-      let title = titleLine(from: text)
-      return title.isEmpty ? nil : title
+      return text
     }
     return nil
-  }
-
-  /// The name Claude Code itself gave the session, and only that — no fallback to the first
-  /// thing typed.
-  ///
-  /// This is what a *named* session re-reads to notice a rename: the engine keeps appending
-  /// `ai-title` as the conversation goes on and never mentions it over the pipes, so the name
-  /// on the rail otherwise stays whatever was true when the session was first seen. The
-  /// fallback is deliberately not part of it — a running session already carries hukan's own
-  /// guess from the first line typed, and replacing that with the same line untruncated would
-  /// be a worse row, not a fresher one.
-  static func aiTitle(id: UUID, worktree: URL) -> String? {
-    guard let data = try? Data(contentsOf: transcriptURL(id: id, worktree: worktree)) else {
-      return nil
-    }
-    return aiTitle(inTranscript: data)
   }
 
   /// The last `ai-title` in a whole transcript. The marker is the value, not `"type":"ai-title"`,

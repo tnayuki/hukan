@@ -81,25 +81,46 @@ final class SessionTitleTests: XCTestCase {
     XCTAssertNil(ClaudeSessionStore.title(id: UUID(), worktree: worktree))
   }
 
-  /// Writes `lines` as a transcript and returns the engine's own name for it, if any.
-  private func aiTitle(_ lines: [String]) throws -> String? {
+  /// Writes `lines` as a transcript and returns the message the engine is asked to name it from.
+  private func firstPrompt(_ lines: [String]) throws -> String? {
     let id = UUID()
     try lines.joined(separator: "\n").write(
       to: ClaudeSessionStore.transcriptURL(id: id, worktree: worktree),
       atomically: true, encoding: .utf8)
-    return ClaudeSessionStore.aiTitle(id: id, worktree: worktree)
+    return ClaudeSessionStore.firstPrompt(id: id, worktree: worktree)
   }
 
-  func testEngineNameIsTheLastOne() throws {
-    let lines = [userLine("start"), titleLine("First guess"), titleLine("Settled name")]
-    XCTAssertEqual(try aiTitle(lines), "Settled name")
+  /// The engine names a conversation from its opening, so that is what it is handed — skipping
+  /// the records nobody typed, and whatever name the session already carries.
+  func testNameIsAskedForFromTheOpeningMessage() throws {
+    let lines = [
+      #"{"type":"user","isMeta":true,"message":{"role":"user","content":"boilerplate"}}"#,
+      titleLine("Old name"),
+      userLine("what the user typed"),
+      userLine("a later turn"),
+    ]
+    XCTAssertEqual(try firstPrompt(lines), "what the user typed")
   }
 
-  /// The refresh path takes no fallback: a session running under hukan's own guess must keep
-  /// it until the engine actually names the session, not have it replaced by the same first
-  /// line untruncated.
-  func testEngineNameIsNilWhenTheEngineHasNotNamedIt() throws {
-    XCTAssertNil(try aiTitle([userLine("what the user typed")]))
+  /// Whole, not cut to a row: the cap is the rail's, and the engine sizes its own input.
+  func testOpeningMessageIsHandedOverWhole() throws {
+    let long = String(repeating: "あ", count: 500)
+    XCTAssertEqual(try firstPrompt([userLine(long + "\\nsecond line")]), long + "\nsecond line")
+  }
+
+  /// The engine's name arrives on the stream — the reply to the request, and a rename made
+  /// elsewhere — and takes over from hukan's guess in the same shape a stored name has.
+  func testTitleChangeOnTheStreamRenamesTheSession() {
+    let session = AgentSession(worktreeID: UUID())
+    session.title = "what the user typed"
+    session.apply(
+      ClaudeEvent(
+        type: "system", subtype: "session_title_changed",
+        payload: ["title": String(repeating: "x", count: 500)]))
+    XCTAssertEqual(session.title?.count, 61)
+    session.apply(
+      ClaudeEvent(type: "system", subtype: "session_title_changed", payload: ["title": "  "]))
+    XCTAssertEqual(session.title?.count, 61, "a blank name is no name")
   }
 
   /// A title is a rail row, and the rail typesets it on one line with `sizeToFit`. The fallback

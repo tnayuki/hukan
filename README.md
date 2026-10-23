@@ -309,7 +309,9 @@ comes back off. Turning it off, and a bridge that drops or is refused, say so in
 
 **Sessions.** A restored session reads its conversation back rather than opening empty, and
 switching back to a session lands on the line you left it at — or at the end, if that is where you
-left it. Names are Claude Code's own titles. A session not yet reattached is marked `detached` and resumes on
+left it. Names are Claude Code's own titles, asked for with the first message — the first line
+typed stands in until the answer arrives, and a session that never got one is named the next time
+it is spoken to. A session not yet reattached is marked `detached` and resumes on
 selection; one another process already holds shows greyed and cannot be started, but still reads
 and searches, and returns the moment that process exits. A `claude` started outside the window —
 in a terminal, in a worktree open here — joins the rail as it starts, held, and takes its name
