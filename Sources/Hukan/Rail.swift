@@ -1627,17 +1627,16 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       row.heightAnchor.constraint(equalToConstant: outlineView.rowHeight),
     ])
     // The line under the title: the branch the session stands on, then its tags, wrapping as far
-    // as they need, with what has moved in that worktree at the trailing edge — under the age,
-    // so the column of numbers on the right reads as the row's facts. Read off the session at
-    // draw time, like the age, so a change needs only a redraw and a new height (see
-    // `heightOfRowByItem`). Not on a hit row, which is a snippet of the transcript.
+    // as they need. Read off the session at draw time, like the age, so a change needs only a
+    // redraw and a new height (see `heightOfRowByItem`). Not on a hit row, which is a snippet of
+    // the transcript.
     if let detail = detail(of: node), let session = node.session {
       let flow = TagFlowView(tags: detail.tags, branch: detail.branch) { [weak self] url in
         self?.openTag(url, of: session)
       }
       flow.translatesAutoresizingMaskIntoConstraints = false
       cell.addSubview(flow)
-      let width = detailWidth(of: node, detail)
+      let width = tagWidth(of: node)
       let flowHeight = TagFlowView.height(of: detail.tags, branch: detail.branch, width: width)
       NSLayoutConstraint.activate([
         flow.leadingAnchor.constraint(
@@ -1646,22 +1645,12 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
         flow.topAnchor.constraint(equalTo: cell.topAnchor, constant: Self.tagTop),
         flow.heightAnchor.constraint(equalToConstant: flowHeight),
       ])
-      if let changes = detail.changes {
-        let label = NSTextField(labelWithAttributedString: changes)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.toolTip = "Changed since HEAD in this worktree"
-        cell.addSubview(label)
-        NSLayoutConstraint.activate([
-          label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-          label.topAnchor.constraint(equalTo: cell.topAnchor, constant: Self.tagTop),
-        ])
-      }
       // What the session's subagents are doing, and where their work went — each a line of its own
       // below, at the indent of the line above, so the row reads as one task and what it sent out.
       var lines: [NSView] = []
       for agent in detail.agents { lines.append(Self.agentsLine(agent)) }
       for child in detail.childWorktrees {
-        lines.append(Self.childWorktreeLine(child.branch, changes: child.changes))
+        lines.append(Self.childWorktreeLine(child))
       }
       for (index, line) in lines.enumerated() {
         line.translatesAutoresizingMaskIntoConstraints = false
@@ -1706,19 +1695,11 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   }
 
   /// A worktree a subagent made, under the branch of the session that sent it: its branch, struck
-  /// through if git no longer lists it, and what has moved there.
-  private static func childWorktreeLine(_ branch: BranchMark.Content, changes: NSAttributedString?)
-    -> NSView
-  {
+  /// through if git no longer lists it.
+  private static func childWorktreeLine(_ branch: BranchMark.Content) -> NSView {
     let mark = BranchMark(branch)
     mark.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    var views: [NSView] = [mark]
-    if let changes {
-      let label = NSTextField(labelWithAttributedString: changes)
-      label.setContentHuggingPriority(.required, for: .horizontal)
-      views.append(label)
-    }
-    let row = NSStackView(views: views)
+    let row = NSStackView(views: [mark])
     row.orientation = .horizontal
     row.alignment = .centerY
     row.spacing = 6
@@ -1741,16 +1722,13 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   struct RowDetail {
     var branch: BranchMark.Content
     var tags: [String]
-    /// What has moved in the worktree, `+added −removed`, when anything has — nil on a worktree
-    /// with nothing uncommitted, and on one that is gone, which has nothing left to measure.
-    var changes: NSAttributedString?
     /// A line per subagent at work — what it was sent to do and the last tool it used — with what
     /// does not fit folded into a last `+2 more`; empty when none runs.
     var agents: [String] = []
-    /// The worktrees its subagents made that git still lists, each with what has moved in it. A
-    /// subagent is no row of its own — nobody can speak to one directly, its approvals come to the
-    /// parent — so where its work went is said here, on the row of the session that sent it.
-    var childWorktrees: [(branch: BranchMark.Content, changes: NSAttributedString?)] = []
+    /// The worktrees its subagents made that git still lists. A subagent is no row of its own —
+    /// nobody can speak to one directly, its approvals come to the parent — so where its work went
+    /// is said here, on the row of the session that sent it.
+    var childWorktrees: [BranchMark.Content] = []
     /// How many lines the row draws below the branch and tags.
     var extraLines: Int { agents.count + childWorktrees.count }
   }
@@ -1771,26 +1749,17 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       }
       detail = RowDetail(
         branch: .init(name: worktree.displayName, path: worktree.url.path),
-        tags: SessionTags.displayOrder(session.tags), changes: Self.changes(of: worktree))
+        tags: SessionTags.displayOrder(session.tags))
     }
     detail.agents = Self.agentLines(session.runningSubagents)
     if let workspace {
       detail.childWorktrees = session.subagentWorktrees.compactMap { url in
         guard let worktree = workspace.worktree(atRoot: url), worktree.id != session.worktreeID
         else { return nil }
-        return (
-          BranchMark.Content(name: worktree.displayName, path: worktree.url.path),
-          Self.changes(of: worktree)
-        )
+        return BranchMark.Content(name: worktree.displayName, path: worktree.url.path)
       }
     }
     return detail
-  }
-
-  /// What has moved in `worktree`, or nil when nothing has.
-  private static func changes(of worktree: Worktree) -> NSAttributedString? {
-    let stat = worktree.diffstat
-    return stat.added + stat.removed > 0 ? changes(added: stat.added, removed: stat.removed) : nil
   }
 
   /// The running subagents as the row says them: one each, in the order they were started — what
@@ -1807,17 +1776,6 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     return lines
   }
   static let agentLimit = 3
-
-  /// `+12 −3`, green then red, in the digits the age beside it uses.
-  static func changes(added: Int, removed: Int) -> NSAttributedString {
-    let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-    let text = NSMutableAttributedString(
-      string: "+\(added)", attributes: [.font: font, .foregroundColor: NSColor.systemGreen])
-    text.append(
-      NSAttributedString(
-        string: " −\(removed)", attributes: [.font: font, .foregroundColor: NSColor.systemRed]))
-    return text
-  }
 
   /// Where the tags start, in from the row's content: under the title, past the status dot.
   private static let tagLeading: CGFloat =
@@ -1836,16 +1794,9 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       return outlineView.rowHeight
     }
     let line = TagFlowView.height(
-      of: detail.tags, branch: detail.branch, width: detailWidth(of: node, detail))
+      of: detail.tags, branch: detail.branch, width: tagWidth(of: node))
     let extra = CGFloat(detail.extraLines) * (Self.extraLineGap + Self.extraLineHeight)
     return Self.tagTop + line + extra + Self.tagBottom
-  }
-
-  /// The width the line under the title wraps in: the row's, less the changes at its trailing
-  /// edge, which stand on the first line and are kept clear of every line below it too.
-  func detailWidth(of node: RailNode, _ detail: RowDetail) -> CGFloat {
-    let changes = detail.changes.map { ceil($0.size().width) + 6 } ?? 0
-    return tagWidth(of: node) - changes
   }
 
   /// The width a row's tags wrap in: the row's cell, less the row's own inset and the status dot.

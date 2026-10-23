@@ -71,7 +71,7 @@ final class TranscriptTailTests: XCTestCase {
         + line("c", parent: "b", role: "user", text: "three"), id: id, appending: true)
 
     guard
-      case .appended(let records, let cursor, _) = ClaudeSessionStore.historyTail(
+      case .appended(let records, let cursor, _, _) = ClaudeSessionStore.historyTail(
         id: id, worktree: worktree, since: history.cursor)
     else { return XCTFail("the file grew, so there is a tail to read") }
     XCTAssertEqual(texts(of: records), ["two", "three"], "and only the tail — not the first line")
@@ -99,7 +99,7 @@ final class TranscriptTailTests: XCTestCase {
 
     try write(String(whole[cut...]), id: id, appending: true)
     guard
-      case .appended(let records, _, _) = ClaudeSessionStore.historyTail(
+      case .appended(let records, _, _, _) = ClaudeSessionStore.historyTail(
         id: id, worktree: worktree, since: history.cursor)
     else { return XCTFail("the line is whole now") }
     XCTAssertEqual(texts(of: records), ["two"], "and it is read exactly once, in full")
@@ -144,7 +144,7 @@ final class TranscriptTailTests: XCTestCase {
       sidechain + line("b", parent: "a", role: "assistant", text: "two"), id: id, appending: true)
 
     guard
-      case .appended(let records, _, _) = ClaudeSessionStore.historyTail(
+      case .appended(let records, _, _, _) = ClaudeSessionStore.historyTail(
         id: id, worktree: worktree, since: history.cursor)
     else { return XCTFail("the conversation did carry on") }
     XCTAssertEqual(texts(of: records), ["two"], "the subagent's line is passed over, not counted")
@@ -167,7 +167,7 @@ final class TranscriptTailTests: XCTestCase {
         + line("b", parent: "a", role: "assistant", text: "two"), id: id, appending: true)
 
     guard
-      case .appended(_, _, let title) = ClaudeSessionStore.historyTail(
+      case .appended(_, _, let title, _) = ClaudeSessionStore.historyTail(
         id: id, worktree: worktree, since: history.cursor)
     else { return XCTFail("there is a tail") }
     XCTAssertEqual(title, "端末で走っている作業")

@@ -197,6 +197,10 @@ public enum RenderCase {
       done
       """
     text.append(Transcript.toolUse(name: "Bash", input: ["command": multiline]))
+    text.append(
+      Transcript.toolUse(
+        name: "Edit", input: ["file_path": "Sources/Hukan/Rail.swift"],
+        changes: LineChanges(added: 12, removed: 3)))
     text.append(Transcript.spacer(4))
     text.append(
       Transcript.toolCallExpandedRun(

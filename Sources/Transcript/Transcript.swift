@@ -27,16 +27,36 @@ public final class ToolCallToken {
   /// the call is opened, since that is the one moment it is read, and nil when there is none (an
   /// engine that kept no record of it, or a call that has not started one yet).
   public let subagent: (() -> NSAttributedString?)?
+  /// The call's own id, carried so the lines it changed can be put on it once its result arrives
+  /// (see `Transcript.addingChanges`).
+  public let toolUseID: String?
+  /// The lines the call changed, once its result has said. A var because the result arrives after
+  /// the line is drawn, and both fold states are rebuilt from the token.
+  public var changes: LineChanges?
 
   public init(
     name: String, summary: String, full: String, rendersMarkdown: Bool = false,
-    subagent: (() -> NSAttributedString?)? = nil
+    subagent: (() -> NSAttributedString?)? = nil, toolUseID: String? = nil,
+    changes: LineChanges? = nil
   ) {
     self.name = name
     self.summary = summary
     self.full = full
     self.rendersMarkdown = rendersMarkdown
     self.subagent = subagent
+    self.toolUseID = toolUseID
+    self.changes = changes
+  }
+}
+
+/// The lines one tool call added and removed, as the engine's own patch for it counts them.
+public struct LineChanges: Equatable {
+  public var added: Int
+  public var removed: Int
+
+  public init(added: Int, removed: Int) {
+    self.added = added
+    self.removed = removed
   }
 }
 
@@ -895,8 +915,12 @@ public enum Transcript {
   /// is opened (see `ToolCallToken.subagent`). A subagent is no row on the rail, so the call that
   /// sent it is where what it did is read — in the conversation that sent it, at the point it was
   /// sent.
+  ///
+  /// `changes` is what the call did to the file it wrote, drawn at the end of its line; `id` is the
+  /// call's own, which is how a result arriving after the line is drawn finds it.
   public static func toolUse(
-    name: String, input: [String: Any], subagent: (() -> NSAttributedString?)? = nil
+    name: String, input: [String: Any], subagent: (() -> NSAttributedString?)? = nil,
+    id: String? = nil, changes: LineChanges? = nil
   ) -> NSAttributedString {
     // Nothing at all for a call that has a card — and nothing rather than a filter in `render`,
     // so the time separators land in exactly the same places whether a conversation is rendered
@@ -925,16 +949,19 @@ public enum Transcript {
     let child = launchesSubagent(tool: name) ? subagent : nil
     if let argument, argument.full != argument.summary || child != nil {
       let token = ToolCallToken(
-        name: name, summary: argument.summary, full: argument.full, subagent: child)
+        name: name, summary: argument.summary, full: argument.full, subagent: child,
+        toolUseID: id, changes: changes)
       result.append(toolCallLinkRun(token))
     } else {
-      result.append(
-        NSAttributedString(
-          string: name, attributes: [.font: mono, .foregroundColor: NSColor.secondaryLabelColor]))
-      result.append(
+      let line = NSMutableAttributedString(
+        string: name, attributes: [.font: mono, .foregroundColor: NSColor.secondaryLabelColor])
+      line.append(
         NSAttributedString(
           string: "  " + (argument?.summary ?? ""),
           attributes: [.font: mono, .foregroundColor: NSColor.tertiaryLabelColor]))
+      if let id { line.addAttribute(toolUseIDKey, value: id, range: whole(line)) }
+      if let changes { line.append(changesRun(changes, attributes: [:])) }
+      result.append(line)
     }
     result.append(NSAttributedString(string: "\n", attributes: [.font: mono]))
     result.append(spacer(3))
@@ -946,6 +973,55 @@ public enum Transcript {
   /// Present across an opened tool call's whole extent, so a click on its header can find how
   /// far the block runs and fold all of it back into the one-line form.
   public static let toolExpandedKey = NSAttributedString.Key("hukan.toolCallExpanded")
+  /// The call's id, across the part of its line the lines it changed are drawn after — the name
+  /// and summary of a short call, the whole folded line, the header of an opened one.
+  public static let toolUseIDKey = NSAttributedString.Key("hukan.toolUseID")
+
+  /// `  +12 −3`, green then red, after a call's line: the lines that call changed. Only a count
+  /// the engine's own patch gave — a call that wrote nothing, or that failed, draws nothing.
+  /// `attributes` are the line's own (a fold's link and token), so the count belongs to it.
+  static func changesRun(_ changes: LineChanges, attributes: [NSAttributedString.Key: Any])
+    -> NSAttributedString
+  {
+    var base = attributes
+    base[toolUseIDKey] = nil
+    base[.font] = mono
+    let run = NSMutableAttributedString(
+      string: "  +\(changes.added)",
+      attributes: base.merging([.foregroundColor: NSColor.systemGreen]) { $1 })
+    run.append(
+      NSAttributedString(
+        string: " −\(changes.removed)",
+        attributes: base.merging([.foregroundColor: NSColor.systemRed]) { $1 }))
+    return run
+  }
+
+  /// Where a call's line takes the lines it changed, once its result has said, and what goes
+  /// there — the live path draws the line when the call goes out and learns what it did only from
+  /// the result. Nil when the line is not in `text`, or already says. Searched from the end, which
+  /// is where a call whose result just arrived is.
+  public static func addingChanges(
+    _ changes: LineChanges, toToolUse id: String, in text: NSAttributedString
+  ) -> (at: Int, run: NSAttributedString)? {
+    var found: NSRange?
+    text.enumerateAttribute(toolUseIDKey, in: whole(text), options: .reverse) {
+      value, range, stop in
+      guard value as? String == id else { return }
+      found = range
+      stop.pointee = true
+    }
+    guard let range = found else { return nil }
+    let attributes = text.attributes(at: range.location, effectiveRange: nil)
+    if let token = attributes[toolTokenKey] as? ToolCallToken {
+      guard token.changes == nil else { return nil }
+      token.changes = changes
+    }
+    return (NSMaxRange(range), changesRun(changes, attributes: attributes))
+  }
+
+  private static func whole(_ text: NSAttributedString) -> NSRange {
+    NSRange(location: 0, length: text.length)
+  }
 
   /// The folded tool call as one clickable transcript line: a `▸` disclosure, the tool name, and
   /// the clipped summary — no trailing newline, since the caller (or a collapse) places it.
@@ -961,6 +1037,8 @@ public enum Transcript {
       NSAttributedString(
         string: "  " + token.summary,
         attributes: [.font: mono, .foregroundColor: NSColor.tertiaryLabelColor]))
+    if let id = token.toolUseID { line.addAttribute(toolUseIDKey, value: id, range: whole(line)) }
+    if let changes = token.changes { line.append(changesRun(changes, attributes: [:])) }
     line.addAttributes(
       [.link: toolCallLinkURL, toolTokenKey: token],
       range: NSRange(location: 0, length: line.length))
@@ -981,6 +1059,12 @@ public enum Transcript {
         .font: mono, .foregroundColor: NSColor.secondaryLabelColor,
         .link: toolCallLinkURL,
       ])
+    if let id = token.toolUseID {
+      result.addAttribute(toolUseIDKey, value: id, range: whole(result))
+    }
+    if let changes = token.changes {
+      result.append(changesRun(changes, attributes: [.link: toolCallLinkURL]))
+    }
     result.append(NSAttributedString(string: "\n", attributes: [.font: mono]))
     result.append(codeBlock(token.full.components(separatedBy: "\n")))
     if let child = token.subagent?(), child.length > 0 {
@@ -1008,7 +1092,7 @@ public enum Transcript {
         ]))
     let body = NSMutableAttributedString(attributedString: child)
     let whole = NSRange(location: 0, length: body.length)
-    for key in [NSAttributedString.Key.link, toolTokenKey, toolExpandedKey] {
+    for key in [NSAttributedString.Key.link, toolTokenKey, toolExpandedKey, toolUseIDKey] {
       body.removeAttribute(key, range: whole)
     }
     result.append(body)

@@ -618,7 +618,7 @@ Workspace (one window)
   `git diff HEAD`'s — because a file nobody has run `git add` on is the whole of what a brand-new
   file is, and a brand-new file is what an agent produces most. While they were excluded, nothing hukan measures a
   change with counted the file an agent had just written: not the ± scope, not the toolbar's
-  diffstat, not the rail, not the row's own numbers — they all read this one diff. Ignored files
+  diffstat, not the row's own numbers — they all read this one diff. Ignored files
   stay out, which is the half of libgit2's default worth keeping.
 - **The gutter is where the diff signal reaches line granularity** — change bars beside the
   line numbers, never a second text mode. Stagedness is the bar's fill — solid working-tree,
@@ -857,12 +857,26 @@ Workspace (one window)
   under. A desk is a session's now (above), and an agent's `EnterWorktree` moved a row from one
   heading to another under a reader who had chosen nothing. Tags settled the rest, the ticket
   being what a row is looked for by where the worktree's name only stood in for it. **The line
-  under the title names the branch, then the tags, with what has moved in that worktree at the
-  trailing edge** — the branch rather than the worktree's directory, since git never checks one
-  branch out twice, so the branch names the worktree, and it is what the pull request and the
-  agent call it too; the path is the branch's tooltip. Every session row has that line, so the
+  under the title names the branch, then the tags** — the branch rather than the worktree's
+  directory, since git never checks one branch out twice, so the branch names the worktree, and
+  it is what the pull request and the agent call it too; the path is the branch's tooltip. Every session row has that line, so the
   rows are one height again apart from tags that wrap. The heading drops the branch it carried,
-  the rows below saying it already. **A worktree no session stands in is not on the rail** — a
+  the rows below saying it already. **What has moved in the worktree is not on the row, and a tool
+  call says what it changed instead.** The row carried the worktree's diffstat at its trailing
+  edge, and that number is the worktree's, not the session's: with no worktrees in use every row
+  stands on main and the same `+120 −30` ran down the column, saying nothing about any one row
+  and reading as though each session had written it. The selected session's worktree is the
+  toolbar's to measure, as it already was. What a session did is said where it did it — an
+  `Edit` or `Write` line in the transcript ends in the lines that call changed, the engine's own
+  patch out of the result (`toolUseResult.structuredPatch`, `tool_use_result` on the stream),
+  so nothing is diffed and a checkout shared by several sessions cannot mix them up. The result
+  arrives after the line is drawn, so it is put on the line in place, the one edit inside the
+  transcript besides a fold. **Never summed**: a total needs a start, and every start on offer
+  is a number that wants explaining — counting committed work for ever, or emptying on each
+  send — where one call's count can only mean what it says. A file changed by a shell command has
+  no patch and is not counted; measuring git around each call would catch it, at the price of
+  counting whatever the session next door wrote in the meantime.
+  **A worktree no session stands in is not on the rail** — a
   terminal's `git worktree add`, what a Remote Control worker leaves — and is reached by starting
   a session there, from the heading's right-click: the heading's `+` is main's. The worktrees
   under a repository are still kept in order by name, compared the Finder's way, for the readers

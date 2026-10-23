@@ -776,7 +776,7 @@ final class AgentSession {
         switch tail {
         case .unchanged:
           break
-        case .appended(let records, let cursor, let title):
+        case .appended(let records, let cursor, let title, let changes):
           self.historyCursor = cursor
           // Nothing of this session is hukan's, so the file is the only place its tip is said.
           if let tip = cursor.lastUUID { self.lastRecordUUID = tip }
@@ -784,8 +784,8 @@ final class AgentSession {
             self.title = title
             self.onStateChange?()
           }
-          guard !records.isEmpty else { return }
-          self.appendFollowed(records)
+          if !records.isEmpty { self.appendFollowed(records) }
+          for (id, changed) in changes { self.addChanges(changed, toToolUse: id) }
         case .rewritten:
           // The branch moved under us: the process that owns this conversation rolled it back,
           // which re-parents the tail rather than extending it. Nothing short of walking the
@@ -1979,6 +1979,15 @@ final class AgentSession {
     onAppend?(fragment)
   }
 
+  /// Put the lines a call changed on its line, which was drawn when the call went out — the result
+  /// that says what it did arrives after. An edit inside the transcript rather than an append, so
+  /// it goes the way a fold does.
+  private func addChanges(_ changes: LineChanges, toToolUse id: String) {
+    guard let (at, run) = Transcript.addingChanges(changes, toToolUse: id, in: transcript)
+    else { return }
+    editTranscript(in: NSRange(location: at, length: 0), with: run)
+  }
+
   /// An in-place edit that did not come from the engine: a tool call folding open or closed.
   /// The transcript here and the view's storage mirror each other by offset — every streaming
   /// replace assumes it — so the edit must land in both (via `onEdit`), and `streamStart`,
@@ -2082,7 +2091,9 @@ final class AgentSession {
         markTime()
         let renderer = subagentRenderer
         let subagent = (block["id"] as? String).map { id in { renderer(id) } }
-        append(Transcript.toolUse(name: name, input: input, subagent: subagent))
+        append(
+          Transcript.toolUse(
+            name: name, input: input, subagent: subagent, id: block["id"] as? String))
       }
 
     case "user":
@@ -2119,6 +2130,13 @@ final class AgentSession {
         else { continue }
         // The call is not the list; the directory is, so the answer is always to go and read it.
         if Self.writesTasks(tool: name) { refreshTasks() }
+        // What the call did to the file it wrote is said only here, after its line was drawn.
+        if ClaudeSessionStore.answeredToolUseID(in: blocks) == id,
+          let changes = ClaudeSessionStore.lineChanges(
+            inToolResult: event.payload["tool_use_result"])
+        {
+          addChanges(changes, toToolUse: id)
+        }
         guard let text = block["content"] as? String else { continue }
         switch name {
         case "EnterWorktree":

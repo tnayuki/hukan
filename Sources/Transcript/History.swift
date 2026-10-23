@@ -31,6 +31,9 @@ struct HistoryRecord {
   /// A tool call's own id, which is what names the subagent an `Agent` call launched in the
   /// engine's record of it (`toolUseId`). Carried only for `toolUse`.
   let toolUseID: String?
+  /// The lines a `toolUse` changed, as its result reported them — filled in once the result has
+  /// been read, which is a later line of the file than the call.
+  var changes: LineChanges?
 
   init(
     kind: Kind, stamp: Date?, forkAnchor: String? = nil, messageUUID: String? = nil,
@@ -84,7 +87,10 @@ extension Transcript {
         result.append(text("\n"))
       case .toolUse(let name, let input):
         let child = record.toolUseID.flatMap { id in subagent.map { find in { find(id) } } }
-        result.append(toolUse(name: name, input: input, subagent: child))
+        result.append(
+          toolUse(
+            name: name, input: input, subagent: child, id: record.toolUseID,
+            changes: record.changes))
       }
     }
     return result

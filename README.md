@@ -84,8 +84,9 @@ process holds can be forked, but not rolled back.
 
 **Worktrees.** Repositories are opened and closed; their worktrees are enumerated from git, never
 stored. The rail lists a repository's sessions under its heading, whichever worktree each is in:
-the line under a session's title names the branch it stands on, then its tags, with what has
-changed in that worktree at the trailing edge, and the worktree's path is the branch's tooltip.
+the line under a session's title names the branch it stands on, then its tags, and the
+worktree's path is the branch's tooltip. What has changed in the worktree is the toolbar's, for the
+selected session's; on the row it would read the same down every session sharing a checkout.
 The sessions are in the order you last instructed them unless you sort them otherwise — by
 branch, or by the value of one kind of tag (`JIRA`, `PR`), a session without one coming after —
 from the glyph beside the rail's filter, from View ▸ Sort Sessions By, or from the rail's own
@@ -93,7 +94,7 @@ right-click; the window keeps its choice across a relaunch. A session whose agen
 subagents off says so on its row, a line for each one working — what it was sent to do and the
 last tool it used, three at most and the rest counted — and a
 worktree a subagent made (`isolation: "worktree"`) is listed under the branch of the session that
-sent it, with what has changed in it. What a subagent did is read in the transcript: opening the
+sent it. What a subagent did is read in the transcript: opening the
 `Agent` call that sent it shows the subagent's own conversation under its prompt.
 A worktree is not a row of its own, so one with no session in it is not on the rail. An agent
 moving worktree (`EnterWorktree`) takes its session, and its desk, with it, and leaving it
@@ -341,6 +342,11 @@ that starts on one still selects.
 A code block carries a copy mark at its top-right corner — a fenced block the agent wrote and an
 opened tool call's command alike — which takes the block whole, with no trailing newline, and
 shows a tick for a beat to say it did.
+
+**What a call changed.** An `Edit` or a `Write` line ends in the lines it added and removed, once
+its result has come back — the engine's own patch for that call, so it counts this session's
+write and nobody else's, even with several sessions in one checkout. A file changed from the shell
+is not counted, and the counts are never added up.
 
 **Search.** Two questions, two places. *Which conversation* is the rail's field, with the same two
 gestures as the panel's: typing filters the sessions by title, `⏎` searches the transcripts

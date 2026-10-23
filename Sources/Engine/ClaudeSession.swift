@@ -1303,7 +1303,12 @@ enum ClaudeSessionStore {
     /// still being written.
     case unchanged
     /// Records to put after what is already shown, and where to read from next.
-    case appended(records: [HistoryRecord], cursor: HistoryCursor, title: String?)
+    ///
+    /// `changes` are the lines changed by calls drawn before this read, whose results arrived in
+    /// it — keyed by the call's id, for the caller to put on lines it already shows.
+    case appended(
+      records: [HistoryRecord], cursor: HistoryCursor, title: String?,
+      changes: [String: LineChanges])
     /// The file cannot be continued from where it was left: it shrank, or what was appended
     /// hangs off something other than the last line taken. That is a rollback, which moves the
     /// branch rather than extending it, so the conversation has to be walked again from the top.
@@ -1494,10 +1499,12 @@ enum ClaudeSessionStore {
     // it is read separately rather than from the walk below.
     title = aiTitle(inTranscript: data)
 
+    var changes: [String: LineChanges] = [:]
     let branch = liveBranch(inTranscript: data, sidechain: sidechain)
     for record in branch {
       let read = parsed(record)
       records.append(contentsOf: read.records)
+      changes.merge(read.changes) { $1 }
       if let stamp = read.records.compactMap(\.stamp).last { lastStamp = stamp }
       if read.usd > 0 { costUSD = (costUSD ?? 0) + read.usd }
       if read.unpriced { costApproximate = true }
@@ -1507,6 +1514,7 @@ enum ClaudeSessionStore {
       }
     }
 
+    attach(changes, to: &records)
     return History(
       title: title, records: records, lastStamp: lastStamp,
       cost: CostEstimate(
@@ -1524,6 +1532,62 @@ enum ClaudeSessionStore {
     var unpriced = false
     var tokens: TokenTotals?
     var model: String?
+    /// The lines a tool call changed, by the call's id, from its result — which is a line of its
+    /// own after the call's, so it is put on the call's record by whoever holds both.
+    var changes: [String: LineChanges] = [:]
+  }
+
+  /// Put the lines each call changed on the record of that call; what is left names calls that
+  /// are not among `records`.
+  @discardableResult
+  private static func attach(_ changes: [String: LineChanges], to records: inout [HistoryRecord])
+    -> [String: LineChanges]
+  {
+    var left = changes
+    guard !left.isEmpty else { return left }
+    for index in records.indices {
+      guard let id = records[index].toolUseID, let found = left.removeValue(forKey: id) else {
+        continue
+      }
+      records[index].changes = found
+    }
+    return left
+  }
+
+  /// The lines a tool's result says it changed, from the patch the engine attaches to an Edit's
+  /// or a Write's result (`toolUseResult`, `tool_use_result` on the stream) — the engine's own
+  /// count, so nothing is diffed here. A file created whole has no patch, only its content, every
+  /// line of which is new. Nil for a result with no patch — a failure is reported as a string —
+  /// and for one that changed nothing.
+  static func lineChanges(inToolResult result: Any?) -> LineChanges? {
+    guard let result = result as? [String: Any] else { return nil }
+    var changes = LineChanges(added: 0, removed: 0)
+    if let hunks = result["structuredPatch"] as? [[String: Any]], !hunks.isEmpty {
+      for hunk in hunks {
+        for line in hunk["lines"] as? [String] ?? [] {
+          if line.hasPrefix("+") {
+            changes.added += 1
+          } else if line.hasPrefix("-") {
+            changes.removed += 1
+          }
+        }
+      }
+    } else if result["type"] as? String == "create", let content = result["content"] as? String,
+      !content.isEmpty
+    {
+      var lines = content.split(separator: "\n", omittingEmptySubsequences: false).count
+      if content.hasSuffix("\n") { lines -= 1 }
+      changes.added = lines
+    } else {
+      return nil
+    }
+    return changes.added + changes.removed > 0 ? changes : nil
+  }
+
+  /// The id of the call a user record answers, when it carries a tool's result.
+  static func answeredToolUseID(in content: Any?) -> String? {
+    (content as? [[String: Any]])?
+      .first { $0["type"] as? String == "tool_result" }?["tool_use_id"] as? String
   }
 
   private static func parsed(_ record: [String: Any]) -> ParsedRecord {
@@ -1542,6 +1606,11 @@ enum ClaudeSessionStore {
       // One message is one bubble, however many text blocks it was sent as: a file attached
       // beside the words rides in as a block of its own holding its path, and drawn apart it
       // read as two messages where the one sent here was drawn as one.
+      if let id = answeredToolUseID(in: message["content"]),
+        let changes = lineChanges(inToolResult: record["toolUseResult"])
+      {
+        out.changes[id] = changes
+      }
       let texts = userTexts(in: message["content"])
       if !texts.isEmpty {
         out.records.append(
@@ -1626,6 +1695,7 @@ enum ClaudeSessionStore {
     guard whole > 0 else { return .unchanged }
 
     var records: [HistoryRecord] = []
+    var changes: [String: LineChanges] = [:]
     var last = cursor.lastUUID
     var title: String?
     let complete = data[data.startIndex..<data.index(data.startIndex, offsetBy: whole)]
@@ -1639,11 +1709,14 @@ enum ClaudeSessionStore {
       else { continue }
       guard record["parentUuid"] as? String == last else { return .rewritten }
       last = uuid
-      records.append(contentsOf: parsed(record).records)
+      let read = parsed(record)
+      records.append(contentsOf: read.records)
+      changes.merge(read.changes) { $1 }
     }
     return .appended(
       records: records,
-      cursor: HistoryCursor(offset: cursor.offset + whole, lastUUID: last), title: title)
+      cursor: HistoryCursor(offset: cursor.offset + whole, lastUUID: last), title: title,
+      changes: attach(changes, to: &records))
   }
 
   /// Estimated cost for a session, re-read from its transcript without building the styled
