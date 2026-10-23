@@ -90,6 +90,18 @@ final class WordSelectionTests: XCTestCase {
       "https://github.com/tnayuki/hukan/commit/756ae49")
   }
 
+  func testAbsolutePathKeepsItsRoot() {
+    XCTAssertEqual(
+      word("/Users/tnayuki/hukan/Model.swift:120 を見て", clicking: "tnayuki"),
+      "/Users/tnayuki/hukan/Model.swift:120")
+    XCTAssertEqual(
+      word("出力は (/tmp/hukan-preview.png) に", clicking: "tmp"), "/tmp/hukan-preview.png")
+    XCTAssertEqual(word("ファイルは/tmp/x.png です", clicking: "x"), "/tmp/x.png")
+    XCTAssertEqual(word("/commit を実行", clicking: "commit"), "/commit")
+    // A slash after a component was already crossed, and a scheme's slashes are not a root.
+    XCTAssertNil(word("a//b は別", clicking: "b"))
+  }
+
   func testOptionKeepsItsLeadingDashes() {
     XCTAssertEqual(corrected("xcodebuild --strict を実行"), ["xcodebuild", "--strict"])
     XCTAssertEqual(

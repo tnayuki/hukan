@@ -149,6 +149,14 @@ enum WordSelection {
         break
       }
     }
+    // An absolute path keeps its root: the slash that starts it has nothing before it to be a
+    // component of, so the walk above stops one character short. Only where it starts the word —
+    // after a component it was already crossed, and after a colon or a second slash it belongs to
+    // a scheme the walk handles on its own.
+    if lo > 0, s.character(at: lo - 1) == slash {
+      let before = lo >= 2 ? s.character(at: lo - 2) : 0
+      if lo == 1 || !(isComponent(before) || before == slash || before == colon) { lo -= 1 }
+    }
     // An option keeps its leading dashes, but only where they start the word: an infix `a--b` is
     // two words, and a bullet's `- item` has a space in the way.
     if lo > 0, s.character(at: lo - 1) == hyphen {
