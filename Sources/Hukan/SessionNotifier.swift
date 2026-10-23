@@ -109,7 +109,7 @@ final class SessionNotifier: NSObject, UNUserNotificationCenterDelegate {
     center.add(request)
   }
 
-  // Tapping a banner is the same move as Cmd+Return: jump to the session that wants you.
+  // Tapping a banner jumps to the session that wants you.
   func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,

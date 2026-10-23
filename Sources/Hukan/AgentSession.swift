@@ -127,11 +127,10 @@ final class AgentSession {
   var updatedAt = Date.distantPast
 
   /// When you last gave this session an instruction (a composer send). This — not `updatedAt` —
-  /// orders the rail and assigns its time bucket, so the order reflects what you most recently
-  /// delegated and holds still while an agent works, instead of churning as the chattiest one
-  /// streams. The cost, accepted deliberately: a session you instructed long ago but which is
-  /// working or waiting now sinks by its instruction time and can fall into the collapsed
-  /// "Older" bucket — `Cmd+Return` is how you reach a waiting session, not its rail position.
+  /// orders the rail, so the order reflects what you most recently delegated and holds still
+  /// while an agent works, instead of churning as the chattiest one streams. The cost, accepted
+  /// deliberately: a session you instructed long ago but which is working or waiting now sinks
+  /// by its instruction time — its dot and its notification are what reach you, not its position.
   /// Seeded from the transcript mtime for a restored session (a proxy until you send), then set
   /// precisely on each send. `/login` and a dropped signed-out send do not count.
   var lastInstructedAt = Date.distantPast

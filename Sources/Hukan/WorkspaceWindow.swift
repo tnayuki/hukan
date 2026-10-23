@@ -2113,9 +2113,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     session.interrupt()
   }
 
-  /// The approval card's two buttons, as commands. The card is the visible surface, but the
-  /// clear-the-queue flow is keyboard-first — ⌘⏎ lands on the session that is waiting, so the
-  /// decision itself needs shortcuts too (Session ▸ Allow ⇧⌘⏎ / Deny ⌘.).
+  /// The approval card's two buttons, as commands, so a decision can be made without leaving
+  /// the keyboard (Session ▸ Allow ⇧⌘⏎ / Deny ⌘.).
   @objc func allowPendingApproval(_ sender: Any?) {
     workspace.selectedSession?.resolveApproval(allow: true)
   }
@@ -2863,8 +2862,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   }
 
   /// Bring a session into view across every open window — the target of a tapped notification.
-  /// Like `focusNextPending`, it selects the session's worktree; unlike it, the session is
-  /// named, so it also fronts the window that holds it. Activation is the caller's job.
+  /// It selects the session and fronts the window that holds it. Activation is the caller's job.
   static func focusSession(id: UUID) {
     for controller in all where controller.workspace.sessions.contains(where: { $0.id == id }) {
       // A maximized column has the rail folded away whichever one it is, and being sent to a
@@ -2882,25 +2880,6 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
   }
 
-  /// With N running in parallel, the human's job reduces to clearing whatever is blocked,
-  /// one after another. This is that, bound to a single key.
-  @objc func focusNextPending(_ sender: Any?) {
-    // Same as `focusSession`: what is waiting on you is on the rail and in the transcript, so
-    // going to it puts the columns back.
-    setMaximized(nil)
-    // A signed-out or failed session is blocked on you too — it needs /login, or a look at what
-    // went wrong — so both rank with the things waiting, above the merely-done idle ones.
-    let order: [RunState] = [.needsAttention, .signedOut, .failed, .idle]
-    for state in order {
-      if let session = workspace.sessions.first(where: { $0.state == state }) {
-        workspace.selectedWorktreeID = session.worktreeID
-        reload()
-        running.focusPendingQuestion()
-        return
-      }
-    }
-  }
-
   // MARK: - Menu validation
 
   /// Enablement, plus the state-reflecting titles: a toggle's menu item names the action it
@@ -2911,8 +2890,6 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       return workspace.selectedSession?.pendingApproval != nil
     case #selector(interruptSession(_:)):
       return workspace.selectedSession?.isRunning == true
-    case #selector(focusNextPending(_:)):
-      return !workspace.sessions.isEmpty
     case #selector(closeRepository(_:)):
       return workspace.selectedWorktreeID != nil
     case #selector(saveFile(_:)):

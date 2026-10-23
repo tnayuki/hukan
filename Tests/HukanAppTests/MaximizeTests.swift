@@ -334,10 +334,9 @@ final class MaximizeTests: XCTestCase {
 
     controller.focusComposer()
     controller.toggleMaximize(nil)
-    controller.focusNextPending(nil)
+    WorkspaceWindowController.focusSession(id: workspace.sessions.first!.id)
 
     XCTAssertNil(controller.maximizedColumn)
     XCTAssertTrue(controller.showingColumns.rail)
-    _ = workspace
   }
 }

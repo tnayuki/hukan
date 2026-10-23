@@ -425,14 +425,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     viewItem.submenu = viewMenu
     main.addItem(viewItem)
 
-    // The app-specific menu, between View and Window. Allow/Deny make an approval answerable
-    // without the mouse — ⌘⏎ lands on the session that is waiting, ⇧⌘⏎ allows, and ⌘. (the
-    // standard cancel key) denies. The card's buttons stay as the visible, clickable surface.
+    // The app-specific menu, between View and Window. Allow/Deny make the selected session's
+    // approval answerable without the mouse — ⇧⌘⏎ allows, and ⌘. (the standard cancel key)
+    // denies. The card's buttons stay as the visible, clickable surface.
     let sessionItem = NSMenuItem()
     let sessionMenu = NSMenu(title: "Session")
-    sessionMenu.addItem(
-      withTitle: "Go to Next Pending",
-      action: #selector(WorkspaceWindowController.focusNextPending(_:)), keyEquivalent: "\r")
     // Where the rail has been. ⌃⌘←/→, Xcode's keys for its navigation history: ⌘[ / ⌘] are the
     // web tab's, and a focused web view claims every ⌘-key put to it, so the two cannot share one
     // pair and be told apart by the focus. ⌃⌘ is already the family of what the window shows.

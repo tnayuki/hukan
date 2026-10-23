@@ -1094,7 +1094,7 @@ final class RunningColumnViewController: NSViewController {
     refreshComposerAccessories()
 
     // Only the session on screen, since the cards sit above its own composer. Decisions
-    // waiting in other sessions show as a badge in the rail and are reached with Cmd+Return.
+    // waiting in other sessions show as a badge in the rail.
     guard let session = attached else { return }
     if session.hasOpenTasks {
       cards.append(
