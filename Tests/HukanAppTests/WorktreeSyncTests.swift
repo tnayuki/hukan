@@ -188,6 +188,51 @@ final class WorktreeSyncTests: XCTestCase {
     XCTAssertEqual(session.worktreeID, home.id)
   }
 
+  /// The engine files a session's transcript under the checkout it is standing in, and moves the
+  /// file when `EnterWorktree` or `ExitWorktree` moves the session — so every read of that file
+  /// has to look where the last move put it. While it looked where the session was started, a
+  /// stop after an `EnterWorktree` found nothing there: the row stayed on the green check and the
+  /// next send opened a fresh conversation instead of resuming this one.
+  func testTheTranscriptIsLookedForWhereTheLastMovePutIt() throws {
+    let (main, linked) = try makeRepositoryWithWorktree()
+    let session = AgentSession(worktreeID: UUID())
+    session.loadHistoryIfNeeded(at: main)
+    XCTAssertEqual(session.lastKnownWorktree, main)
+
+    func toolCall(_ name: String, id: String, result: String) {
+      session.apply(
+        ClaudeEvent(
+          type: "assistant", subtype: nil,
+          payload: [
+            "message": [
+              "content": [["type": "tool_use", "id": id, "name": name, "input": [:]]]
+            ]
+          ]))
+      session.apply(
+        ClaudeEvent(
+          type: "user", subtype: nil,
+          payload: [
+            "message": [
+              "content": [["type": "tool_result", "tool_use_id": id, "content": result]]
+            ]
+          ]))
+    }
+
+    toolCall(
+      "EnterWorktree", id: "t1",
+      result:
+        "Created worktree at \(linked.path) on branch feature. The session is now working in the worktree."
+    )
+    XCTAssertEqual(session.lastKnownWorktree?.path, linked.path, "the transcript went with it")
+
+    toolCall(
+      "ExitWorktree", id: "t2",
+      result:
+        "Exited worktree. Your work is preserved at \(linked.path). Session is now back in \(main.path)."
+    )
+    XCTAssertEqual(session.lastKnownWorktree?.path, main.path, "and came back with it")
+  }
+
   /// The exit never registers a worktree. The engine's original directory is where the session
   /// was started — a worktree root this window holds — so a result naming anything else is not
   /// a place to make: a Worktree git does not list is what the next reconcile drops, and the

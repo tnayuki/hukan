@@ -247,9 +247,16 @@ final class AgentSession {
   /// tooltip's per-model breakdown. Empty until history loads.
   var costTokensByModel: [String: ClaudeSessionStore.TokenTotals] = [:]
 
-  /// The worktree this session last ran/loaded in, kept so the `result` handler can recompute
-  /// `costUSD` from disk without the window threading a URL through. A move updates it.
-  private var lastKnownWorktree: URL?
+  /// The checkout this session's transcript is filed under in Claude Code's store, kept so the
+  /// reads of that file — the cost, the subagents, the title, and whether a stopped engine left
+  /// anything to `--resume` — need no URL threaded through by the window. It follows the engine
+  /// rather than the rail: `EnterWorktree` and `ExitWorktree` move the transcript along with the
+  /// working directory, so their results move this too (`apply`), and a stranded session's file
+  /// stays under the gone checkout whichever checkout it is started from (`start`). While it
+  /// stayed at the checkout a session was started in, a stop after `EnterWorktree` found no file
+  /// there and left the row on the green check, and the next send opened a fresh conversation
+  /// rather than resuming this one.
+  private(set) var lastKnownWorktree: URL?
 
   /// Per-session choices shown in the composer. Both apply at launch (`--model`,
   /// `--permission-mode`) and can be changed on a live session, so a picker is honest at any
@@ -975,7 +982,7 @@ final class AgentSession {
   /// `holdIdle` starts the process without flipping to `.running`, for a New Session brought up
   /// only to read the roster: no turn exists yet, so the rail row stays idle until the first send.
   func start(at url: URL, tools: [String]? = nil, holdIdle: Bool = false) {
-    lastKnownWorktree = url
+    lastKnownWorktree = goneWorktree?.url ?? url
     guard runner == nil else { return }
     // `runner == nil` only guards this process. The registry Claude Code itself maintains
     // (~/.claude/sessions/<pid>.json) also sees a terminal `claude --resume`, a second window
@@ -2141,10 +2148,12 @@ final class AgentSession {
         switch name {
         case "EnterWorktree":
           guard let path = Self.worktreePath(fromToolResult: text) else { continue }
+          lastKnownWorktree = path
           append(Transcript.note("→ worktree: \(path.path)"))
           onEnterWorktree?(path)
         case "ExitWorktree":
           guard let path = Self.exitedCwd(fromToolResult: text) else { continue }
+          lastKnownWorktree = path
           append(Transcript.note("→ back in: \(path.path)"))
           onExitWorktree?(path)
         default:
