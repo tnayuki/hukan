@@ -214,6 +214,78 @@ final class SessionPathTests: XCTestCase {
       URL(fileURLWithPath: "/Users/x/wt/f"))
   }
 
+  // MARK: as the engine has worded them since 2.1.309 — every path quoted
+
+  /// Copied from a 2.1.309 transcript. The unquoted reading took `“/…”` for the path, found it
+  /// not absolute and gave up, so no session followed its agent into a worktree or back out.
+  func testWorktreePathOutOfAQuotedResult() {
+    let text =
+      "Created worktree at “/Users/x/Developer/github.com/x/app/.claude/worktrees/fix-schemes” "
+      + "on branch “worktree-fix-schemes”. The session is now working in the worktree. "
+      + "Use ExitWorktree to leave mid-session, or exit the session to be prompted."
+    XCTAssertEqual(
+      AgentSession.worktreePath(fromToolResult: text),
+      URL(fileURLWithPath: "/Users/x/Developer/github.com/x/app/.claude/worktrees/fix-schemes"))
+  }
+
+  func testExitedCwdOutOfAQuotedResult() {
+    let kept =
+      "Exited worktree. Your work is preserved at “/Users/x/wt/feature” on branch “feature-x”. "
+      + "Session is now back in “/Users/x/Developer/github.com/x/app”."
+    XCTAssertEqual(
+      AgentSession.exitedCwd(fromToolResult: kept),
+      URL(fileURLWithPath: "/Users/x/Developer/github.com/x/app"))
+    let removed =
+      "Exited and removed worktree at “/Users/x/wt/feature”. Discarded 2 commits. "
+      + "Session is now back in “/Users/x/main”."
+    XCTAssertEqual(
+      AgentSession.exitedCwd(fromToolResult: removed), URL(fileURLWithPath: "/Users/x/main"))
+  }
+
+  /// The engine cleans a path up to print it when it holds what it will not show, and says so.
+  /// What it printed then names no directory, so the sentence is not read at all.
+  func testAPathTheEngineRespeltIsRefused() {
+    XCTAssertNil(
+      AgentSession.worktreePath(
+        fromToolResult:
+          "Created worktree at “/Users/x/a'b” (not its exact spelling) on branch “b”. Ready."))
+  }
+
+  // MARK: the structured half, which is read before either sentence
+
+  func testTheStructuredResultWinsOverTheSentence() {
+    let enter: [String: Any] = [
+      "worktreePath": "/Users/x/wt/feature", "worktreeBranch": "feature",
+    ]
+    XCTAssertEqual(
+      AgentSession.enteredWorktree(result: enter, text: "worded some way nobody has seen yet"),
+      URL(fileURLWithPath: "/Users/x/wt/feature"))
+    let exit: [String: Any] = [
+      "action": "keep", "originalCwd": "/Users/x/main", "restoredCwd": "/Users/x/main",
+      "worktreePath": "/Users/x/wt/feature",
+    ]
+    XCTAssertEqual(
+      AgentSession.exitedCwd(result: exit, text: nil), URL(fileURLWithPath: "/Users/x/main"),
+      "not worktreePath, which an exit result carries too: that is where the session left")
+  }
+
+  /// An engine older than `restoredCwd` sends only `originalCwd`, which is not where the session
+  /// went when that directory was gone — then the sentence is what says where it did go.
+  func testAnExitWithoutRestoredCwdFallsBackOnlyWhenTheOriginalWasThere() {
+    XCTAssertEqual(
+      AgentSession.exitedCwd(
+        result: ["action": "keep", "originalCwd": "/Users/x/main"], text: nil),
+      URL(fileURLWithPath: "/Users/x/main"))
+    XCTAssertEqual(
+      AgentSession.exitedCwd(
+        result: [
+          "action": "keep", "originalCwd": "/Users/x/gone", "originalCwdMissing": true,
+        ],
+        text: "Exited worktree. The original directory “/Users/x/gone” no longer exists, "
+          + "so the session is now in “/Users/x/wt/feature”."),
+      URL(fileURLWithPath: "/Users/x/wt/feature"))
+  }
+
   func testExitedCwdRejectsWhatIsNotAPath() {
     XCTAssertNil(AgentSession.exitedCwd(fromToolResult: "Session is now back in main."))
     XCTAssertNil(

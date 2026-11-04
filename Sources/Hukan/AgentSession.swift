@@ -1918,17 +1918,61 @@ final class AgentSession {
   func forceStop() { runner?.forceTerminate() }
   func killStop() { runner?.forceKill() }
 
+  /// Where an `EnterWorktree` put the session. The result's structured half says it as a field
+  /// (`worktreePath`, `tool_use_result` on the stream), and that is read first: the sentence is
+  /// the engine's phrasing and it moves — 2.1.309 started quoting every path in it, which read
+  /// as no path at all, so for as long as nobody noticed no session followed its agent anywhere.
+  /// The sentence is what is left for a result that arrives without the field.
+  static func enteredWorktree(result: Any?, text: String?) -> URL? {
+    if let path = (result as? [String: Any])?["worktreePath"] as? String, path.hasPrefix("/") {
+      return URL(fileURLWithPath: path)
+    }
+    return text.flatMap(worktreePath(fromToolResult:))
+  }
+
+  /// Where an `ExitWorktree` left the session: `restoredCwd`, which is the directory it actually
+  /// ended up in, fallback included. An engine too old to send that sends `originalCwd`, which is
+  /// the same place unless the original directory was gone — and then only the sentence says
+  /// where it went instead.
+  static func exitedCwd(result: Any?, text: String?) -> URL? {
+    if let result = result as? [String: Any] {
+      if let path = result["restoredCwd"] as? String, path.hasPrefix("/") {
+        return URL(fileURLWithPath: path)
+      }
+      if result["originalCwdMissing"] as? Bool != true,
+        let path = result["originalCwd"] as? String, path.hasPrefix("/")
+      {
+        return URL(fileURLWithPath: path)
+      }
+    }
+    return text.flatMap(exitedCwd(fromToolResult:))
+  }
+
   /// Pull the path out of "Created worktree at <path> on branch <branch>. …". Every way in says
   /// `worktree at <path>` — created, entered by `path`, switched from another — so the verb is
   /// not read; only the phrase and what follows it. Give up if it does not match.
   static func worktreePath(fromToolResult text: String) -> URL? {
     guard let start = text.range(of: "worktree at ") else { return nil }
     let rest = text[start.upperBound...]
+    if rest.hasPrefix("\u{201C}") { return quotedPath(in: rest) }
     let path =
       rest.range(of: " on branch ")
       .map { String(rest[..<$0.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines) }
       ?? pathClosingSentence(in: rest)
     guard path.hasPrefix("/") else { return nil }
+    return URL(fileURLWithPath: path)
+  }
+
+  /// A path the engine quoted, as it has since 2.1.309: `“/path”`, which is the path exactly —
+  /// unless it is followed by `(not its exact spelling)`, the engine's word for a path it had to
+  /// clean up to print, which names no directory on disk and is refused rather than guessed at.
+  private static func quotedPath(in text: Substring) -> URL? {
+    let inner = text.dropFirst()
+    guard let close = inner.firstIndex(of: "\u{201D}") else { return nil }
+    let path = String(inner[..<close])
+    guard path.hasPrefix("/"),
+      !inner[inner.index(after: close)...].hasPrefix(" (not its exact spelling)")
+    else { return nil }
     return URL(fileURLWithPath: path)
   }
 
@@ -1954,6 +1998,7 @@ final class AgentSession {
     let anchors = ["Session is now back in ", "so the session is now in "]
     guard let start = anchors.lazy.compactMap({ text.range(of: $0) }).first else { return nil }
     let rest = text[start.upperBound...]
+    if rest.hasPrefix("\u{201C}") { return quotedPath(in: rest) }
     let path = pathClosingSentence(in: rest)
     guard path.hasPrefix("/") else { return nil }
     return URL(fileURLWithPath: path)
@@ -2127,7 +2172,7 @@ final class AgentSession {
       // A tool's result is where two things become true. The store a task tool wrote is on disk
       // by now (the call going out says only that it is about to be), and a move into a worktree
       // is announced — the agent that created it is the only one who knows, so it is read out of
-      // the result text.
+      // the result.
       guard let message = event.payload["message"] as? [String: Any],
         let blocks = message["content"] as? [[String: Any]]
       else { return }
@@ -2137,22 +2182,25 @@ final class AgentSession {
         else { continue }
         // The call is not the list; the directory is, so the answer is always to go and read it.
         if Self.writesTasks(tool: name) { refreshTasks() }
+        // The structured half of a result rides beside the message, so it is this call's only
+        // when the message answers this call.
+        let result =
+          ClaudeSessionStore.answeredToolUseID(in: blocks) == id
+          ? event.payload["tool_use_result"] : nil
         // What the call did to the file it wrote is said only here, after its line was drawn.
-        if ClaudeSessionStore.answeredToolUseID(in: blocks) == id,
-          let changes = ClaudeSessionStore.lineChanges(
-            inToolResult: event.payload["tool_use_result"])
-        {
+        if let changes = ClaudeSessionStore.lineChanges(inToolResult: result) {
           addChanges(changes, toToolUse: id)
         }
-        guard let text = block["content"] as? String else { continue }
+        guard block["is_error"] as? Bool != true else { continue }
+        let text = block["content"] as? String
         switch name {
         case "EnterWorktree":
-          guard let path = Self.worktreePath(fromToolResult: text) else { continue }
+          guard let path = Self.enteredWorktree(result: result, text: text) else { continue }
           lastKnownWorktree = path
           append(Transcript.note("→ worktree: \(path.path)"))
           onEnterWorktree?(path)
         case "ExitWorktree":
-          guard let path = Self.exitedCwd(fromToolResult: text) else { continue }
+          guard let path = Self.exitedCwd(result: result, text: text) else { continue }
           lastKnownWorktree = path
           append(Transcript.note("→ back in: \(path.path)"))
           onExitWorktree?(path)

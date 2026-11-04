@@ -199,7 +199,8 @@ final class WorktreeSyncTests: XCTestCase {
     session.loadHistoryIfNeeded(at: main)
     XCTAssertEqual(session.lastKnownWorktree, main)
 
-    func toolCall(_ name: String, id: String, result: String) {
+    // Both halves of the result, the way the engine sends them on the stream since 2.1.309.
+    func toolCall(_ name: String, id: String, result: String, structured: [String: Any]) {
       session.apply(
         ClaudeEvent(
           type: "assistant", subtype: nil,
@@ -214,21 +215,27 @@ final class WorktreeSyncTests: XCTestCase {
           payload: [
             "message": [
               "content": [["type": "tool_result", "tool_use_id": id, "content": result]]
-            ]
+            ],
+            "tool_use_result": structured,
           ]))
     }
 
     toolCall(
       "EnterWorktree", id: "t1",
       result:
-        "Created worktree at \(linked.path) on branch feature. The session is now working in the worktree."
+        "Created worktree at “\(linked.path)” on branch “feature”. The session is now working in the worktree.",
+      structured: ["worktreePath": linked.path, "worktreeBranch": "feature"]
     )
     XCTAssertEqual(session.lastKnownWorktree?.path, linked.path, "the transcript went with it")
 
     toolCall(
       "ExitWorktree", id: "t2",
       result:
-        "Exited worktree. Your work is preserved at \(linked.path). Session is now back in \(main.path)."
+        "Exited worktree. Your work is preserved at “\(linked.path)”. Session is now back in “\(main.path)”.",
+      structured: [
+        "action": "keep", "originalCwd": main.path, "restoredCwd": main.path,
+        "worktreePath": linked.path,
+      ]
     )
     XCTAssertEqual(session.lastKnownWorktree?.path, main.path, "and came back with it")
   }
