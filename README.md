@@ -268,6 +268,12 @@ its emphasis drawn bold and italic — with a gutter carrying its changes agains
 solid while not. The bars measure the buffer, so an edit is marked as it is typed; hover one for
 the lines it replaced. Lines never wrap.
 
+An agent rewriting an open file reaches the tab showing it, on every desk and not only the one in
+front of you — a clean buffer re-reads where it was scrolled, a tab off screen when it comes up.
+A buffer with an unsaved edit keeps it, and wears a warning beside its dot saying the file moved
+underneath; undo back to what was read and the file arrives, and ⌘S over it asks first — overwrite
+with your edits, reload and drop them, or cancel.
+
 A patch — `.diff`, `.patch`, `.rej` — reads as the file it patches: the payload of each hunk is
 colored as the language the patch names, with the added and removed rows carrying the commit
 tab's own bands behind them rather than a color of their own.

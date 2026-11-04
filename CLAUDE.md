@@ -1663,6 +1663,22 @@ Workspace (one window)
   a move). Echoing the question was a race: a read asked for wholesale observes whatever lands
   while it runs, so an edit made during one was reported as everything having moved and cost
   every open tab a re-read.
+  **A tab that cannot take the change notes it, and a note is spent, never dropped.** Two panes
+  refuse a re-read for good reasons — one on a desk nobody is looking at, which must not pay that
+  parse off screen, and one holding an unsaved edit, which must not lose it — and both used to
+  refuse in silence, which is how a refusal becomes a tab quietly showing a file as it stood an
+  hour ago. Now each marks itself instead, and the mark is spent at the one moment it can be: the
+  desk coming up, or an undo taking the edit back off, which is the one moment a pane stops having
+  anything to protect. A clean buffer re-reads where it was scrolled; a dirty one keeps the edit
+  and keeps the mark, beside the dot on its tab, since those are two facts about one tab and the
+  dot cannot carry both. **The write is where it is asked about**, because that is the act with
+  something to lose: ⌘S over a marked buffer offers Overwrite, Reload and Cancel — the closing
+  tab's three answers read from the other side — where before it replaced the agent's file with
+  the buffer and said nothing. No Compare, the answer VS Code puts beside those: the file pane has
+  no diff at all, and what the other side wrote is git's to show. **Every tab on the worktree
+  hears, wherever it stands**: a write lands in a checkout and a desk belongs to a session, so two
+  sessions in one checkout hold a tab each on the file an agent just wrote, and telling only the
+  desk on screen left the other one behind for as long as the window lived.
   **The same batch narrows what git is asked, and that is where the size of a checkout is paid.**
   The working-tree diff stats every file there is, which on a very large one is seconds, and it
   ran per batch — so an agent's write cost a walk of the whole checkout. It is now

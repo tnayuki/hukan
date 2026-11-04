@@ -1569,17 +1569,18 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// A worktree's files moved while the app watched it — from an agent editing in it, a
   /// terminal command, an external editor. Every worktree is watched so a parallel agent's
   /// work keeps that worktree's rail badge live even off-screen (the whole point of the
-  /// bird's-eye view). The rail always refreshes; the file column and the top-bar diffstat
-  /// only when it is the worktree on screen, and then in place so an active edit does not yank
-  /// the selection or scroll.
+  /// bird's-eye view). The rail always refreshes, and so does every open tab on that worktree,
+  /// wherever it stands — a write lands in a checkout, and the tab holding it may be on a desk
+  /// nobody is looking at. Only the top-bar diffstat is the showing worktree's, that being the
+  /// one thing in the bar measuring it.
   private func worktreeFilesChanged(_ worktreeID: UUID, changed: Set<String>?) {
     rail.reload()
+    files.filesChangedOnDisk(worktreeID: worktreeID, changed: changed)
     guard worktreeID == workspace.selectedWorktreeID,
       let worktree = workspace.worktree(id: worktreeID)
     else { return }
     let stat = worktree.diffstat
     setDiffStat(added: stat.added, removed: stat.removed)
-    files.refreshInPlace(changed: changed)
   }
 
   /// Coming back after a `/login` terminal is the cue to restart that session, so a fresh

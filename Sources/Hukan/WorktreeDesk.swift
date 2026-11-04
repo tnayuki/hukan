@@ -802,6 +802,9 @@ final class WorktreeDeskViewController: NSViewController {
     // The dot goes up and comes down on the tab; the pin above rides the same first edit, so
     // one rebuild here covers both.
     tab.content.onDirtyChanged = { [weak self] in self?.rebuildTabBar() }
+    // And the mark for a file that moved on disk under that edit, which the dot cannot carry:
+    // they are two facts about one tab and only one of them is "there is something unsaved".
+    tab.content.onDiskChangeChanged = { [weak self] in self?.rebuildTabBar() }
     addChild(tab.content)
   }
 
@@ -922,6 +925,7 @@ final class WorktreeDeskViewController: NSViewController {
     loadViewIfNeeded()
     self.deskID = deskID
     terminals = deskID.flatMap { workspace?.terminals(inDesk: $0) } ?? []
+    catchUpWithDisk()
     pruneClosedDesks()
     reconcileSurface()
     rebuildTabBar()
@@ -1589,16 +1593,31 @@ final class WorktreeDeskViewController: NSViewController {
   ///
   /// `worktreeID` is the worktree that moved: the desk on screen may hold a tab on another one,
   /// and a path relative to this worktree says nothing about that tab.
+  ///
+  /// Every desk's tabs on that worktree are told, and only the showing desk's read: a pane off
+  /// screen notes the change and spends it when its desk comes up (`catchUpWithDisk`), which is
+  /// what keeps the parse where somebody is looking while leaving no tab stale. Telling only the
+  /// showing desk was the bug — a desk is a session's, so two sessions in one checkout each hold
+  /// their own tab on the file an agent just wrote, and the one not on screen kept the text it
+  /// was opened with for as long as the window lived.
   func refreshOpenFiles(worktreeID: UUID, changed: Set<String>? = nil) {
+    let showing = Set((deskID.flatMap { fileTabsByDesk[$0] } ?? []).map(\.id))
     // A restored tab nobody has opened has nothing read to refresh; it reads the file when it is
     // looked at, which is later than this and so newer.
-    for tab in fileTabs
-    where tab.worktreeID == worktreeID && !tab.isPending
-      && (changed == nil || changed?.contains(tab.path) == true)
-    {
-      tab.content.refreshCurrent()
+    for tab in fileTabs(onWorktree: worktreeID)
+    where !tab.isPending && (changed == nil || changed?.contains(tab.path) == true) {
+      tab.content.noteDiskChange()
+      guard showing.contains(tab.id) else { continue }
+      tab.content.catchUpWithDisk()
       if tab.isRendered, let deskID { followBuffer(of: tab, in: deskID) }
     }
+  }
+
+  /// A desk coming on screen takes whatever moved on disk while it was away: a clean buffer
+  /// re-reads where it was scrolled, a dirty one keeps its edit and its mark. A no-op per tab
+  /// with nothing noted, which is nearly always, so it costs the walk and no more.
+  private func catchUpWithDisk() {
+    for tab in fileTabs where !tab.isPending { tab.content.catchUpWithDisk() }
   }
 
   /// Every file tab on a worktree, whichever desk it stands on — what a write to that worktree's
@@ -1753,15 +1772,23 @@ final class WorktreeDeskViewController: NSViewController {
         let name =
           (file.path as NSString).lastPathComponent + (elsewhere.map { " — \($0)" } ?? "")
         // A preview wears the glyph for rendered text, which is what tells it from the source tab
-        // of the same name beside it; it has no edit of its own to put a dot up for.
+        // of the same name beside it; it has no edit of its own to put a dot up for. A source tab
+        // whose file moved on disk under the edit it is holding wears the warning instead — the
+        // state ⌘S is about to ask about, said where the dot and the ✕ already are.
+        let stale = file.content.hasDiskChangeUnderEdit
+        let symbol = file.isRendered ? "doc.richtext" : stale ? "exclamationmark.triangle" : nil
         let tab = makeTab(
           index: index, title: (file.content.hasUnsavedEdit ? "• " : "") + name,
-          image: file.isRendered
-            ? NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: "Preview") : nil,
+          image: symbol.flatMap {
+            NSImage(
+              systemSymbolName: $0,
+              accessibilityDescription: file.isRendered ? "Preview" : "Changed on disk")
+          },
           selected: surface == item, preview: file.isPreview)
         tab.toolTip =
           (file.isRendered ? "Preview of \(file.path)" : file.path)
           + (elsewhere.map { " in \($0)" } ?? "")
+          + (stale ? " — changed on disk since this edit" : "")
         tabs.append(tab)
       case .commit(let id):
         guard let commit = commits.first(where: { $0.id == id }) else { continue }

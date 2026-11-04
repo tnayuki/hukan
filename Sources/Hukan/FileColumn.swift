@@ -128,6 +128,18 @@ final class FileContentViewController: NSViewController {
       onDirtyChanged?()
     }
   }
+  /// The file moved on disk and this pane has not taken it. Two things note it and neither of
+  /// them can read: a pane on a desk nobody is looking at, which must not pay a whole-file parse
+  /// for a tab off screen, and one holding an unsaved edit, which must not lose it. `catchUpWith`
+  /// is what spends the note — when the desk comes up, and when an undo takes the edit back off —
+  /// so the only state it survives in is the one it cannot be spent in: a buffer still dirty.
+  /// That is what the tab marks, and what ⌘S asks about.
+  private var hasDiskChange = false {
+    didSet {
+      guard hasDiskChange != oldValue else { return }
+      onDiskChangeChanged?()
+    }
+  }
   /// Set once the current path's text has landed, so a reveal asked for mid-load can wait.
   private var isLoaded = false
   private var pendingReveal: (line: Int, term: String?)?
@@ -142,6 +154,10 @@ final class FileContentViewController: NSViewController {
   /// down. Separate from `onEdited` because that one is the pin and fires once; this one has to
   /// catch the save, and the Don't Save that throws the edit away.
   var onDirtyChanged: (() -> Void)?
+  /// Fired when the pane learns the file moved under its edit, and when that is resolved, so the
+  /// tab can put its mark up beside the dot. A second hook rather than `onDirtyChanged`'s, since
+  /// a note landing on a buffer that is already dirty crosses nothing that one reports.
+  var onDiskChangeChanged: (() -> Void)?
 
   init(rendered: Bool = false) {
     (scrollView, textView) = makeEditorTextView()
@@ -251,6 +267,10 @@ final class FileContentViewController: NSViewController {
     let edited = textView.string != savedText
     if edited, !isDirty { onEdited?() }
     isDirty = edited
+    // An undo back to what the file said leaves nothing to protect, so a change noted while the
+    // buffer was dirty is taken now — the one moment a pane can stop refusing the disk without
+    // anybody deciding anything.
+    if !edited { catchUpWithDisk() }
     scheduleLineChanges()
     onTextChanged?(textView.string)
   }
@@ -261,11 +281,17 @@ final class FileContentViewController: NSViewController {
   /// Whether the open file has an unsaved edit, so the Save menu item can enable itself.
   var hasUnsavedEdit: Bool { isDirty }
 
+  /// Whether the file moved on disk under an edit this pane is still holding — what the tab marks.
+  /// Read together rather than off the note alone, so the mark can never stand on a pane that has
+  /// nothing to resolve: a clean one reads the file the moment it is looked at.
+  var hasDiskChangeUnderEdit: Bool { hasDiskChange && isDirty }
+
   /// Write the edited source back to disk, atomically, and let the column re-ask git so the
   /// file's changed state updates. Driven by Cmd+S, or by leaving the file. A no-op unless there
   /// is an unsaved edit to a real file.
   func save() {
     guard isDirty, textView.isEditable, let worktree, let path else { return }
+    guard !hasDiskChange || confirmOverwritingDiskChange() else { return }
     let url = Self.fileURL(worktree: worktree, path: path)
     do {
       try textView.string.write(to: url, atomically: true, encoding: .utf8)
@@ -274,6 +300,40 @@ final class FileContentViewController: NSViewController {
       onSaved?(worktree.id, path)
     } catch {
       NSSound.beep()
+    }
+  }
+
+  /// ⌘S over a buffer whose file moved on disk since it was read. An ordinary save replaces the
+  /// pane's own last reading of the file; this one replaces somebody else's writing of it —
+  /// nearly always an agent's — so it is the second thing in this pane worth a modal, beside the
+  /// unsaved edit above, and for the same reason: the loss cannot be undone and nothing else
+  /// would mention it.
+  ///
+  /// Three answers, the closing tab's read from the other side. Overwrite writes the edit and is
+  /// the default, ⌘S having been pressed deliberately; Reload drops it and takes the file as it
+  /// now stands; Cancel keeps both and leaves the mark up. No Compare, which VS Code offers
+  /// here: the file pane has no diff at all, and what the other side wrote is git's to show.
+  private func confirmOverwritingDiskChange() -> Bool {
+    let alert = NSAlert()
+    alert.messageText = "“\(baseFileName)” has changed on disk since you started editing it."
+    alert.informativeText =
+      "Overwrite replaces the file with your edits. Reload discards your edits and reads the file "
+      + "as it now stands."
+    alert.addButton(withTitle: "Overwrite")
+    alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+    alert.addButton(withTitle: "Reload")
+    switch alert.runModal() {
+    case .alertFirstButtonReturn:
+      // The note is spent either way: the file about to be written is the one this answered for.
+      hasDiskChange = false
+      return true
+    case .alertThirdButtonReturn:
+      // Dropping the edit is what lets the re-read through, so the flag goes down first.
+      isDirty = false
+      refreshCurrent()
+      return false
+    default:
+      return false
     }
   }
 
@@ -336,8 +396,29 @@ final class FileContentViewController: NSViewController {
     render(preservingScroll: true)
   }
 
+  /// The file moved on disk. Nothing is read here, and nothing is even built: this is called for
+  /// every tab on the worktree, most of them on desks nobody is looking at, so what it costs has
+  /// to be one flag.
+  func noteDiskChange() {
+    guard worktree != nil, path != nil else { return }
+    hasDiskChange = true
+  }
+
+  /// Spend a noted change: a clean buffer re-reads, a dirty one keeps its edit and stays marked.
+  /// Called when the pane's desk comes on screen, and when an undo takes the edit back off —
+  /// which is the moment there is nothing left to protect.
+  func catchUpWithDisk() {
+    guard hasDiskChange, !isDirty else { return }
+    refreshCurrent()
+  }
+
   func render(preservingScroll: Bool = false) {
     loadViewIfNeeded()
+    // Every caller here is "read this file now", so whatever had been noted is spent. Cleared in
+    // front of the read rather than behind it: a change landing while it runs notes itself again,
+    // and on a visible pane that note is spent by another read, where clearing afterwards would
+    // write over it and leave the newer file unread.
+    hasDiskChange = false
     if isRendered {
       renderPreview(preservingScroll: preservingScroll)
       return
@@ -962,13 +1043,14 @@ final class FileColumns {
     desk.reload(deskID: workspace?.selectedSession?.id)
   }
 
-  /// The selected worktree's files changed on disk: refresh every open file and the panel (its
-  /// tree if the list moved, its content hits so the worklist reflects the disk), then reload so
-  /// the rail's Changed section picks up the new diffstat.
-  func refreshInPlace(changed: Set<String>? = nil) {
-    if let worktreeID = workspace?.selectedWorktreeID {
-      desk.refreshOpenFiles(worktreeID: worktreeID, changed: changed)
-    }
+  /// A worktree's files changed on disk. Every open tab on that worktree hears about it,
+  /// whichever desk it stands on — a desk is a session's, and the write reaches a checkout rather
+  /// than a conversation, so narrowing this to the desk on screen left a second session's tab on
+  /// the same file showing what was there before. The panel and the reload are the showing
+  /// worktree's alone: the panel lists one worktree, and the ± measures one.
+  func filesChangedOnDisk(worktreeID: UUID, changed: Set<String>? = nil) {
+    desk.refreshOpenFiles(worktreeID: worktreeID, changed: changed)
+    guard worktreeID == workspace?.selectedWorktreeID else { return }
     panel.filesChangedOnDisk()
     onNeedsReload?()
   }
