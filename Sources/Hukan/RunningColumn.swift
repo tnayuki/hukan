@@ -137,6 +137,9 @@ final class RunningColumnViewController: NSViewController {
   /// which worktree's desk it belongs on, and whether it belongs in hukan at all, is the
   /// window's, the way forking and rolling back are.
   var onOpenURL: ((URL) -> Bool)?
+  /// A file named in the transcript, opened from the right-click menu. Where it opens is the
+  /// window's, by the one resolution every outside path takes.
+  var onOpenFile: ((URL) -> Void)?
   /// Ask the window for the whole width, or to put the other columns back — the desk's
   /// `onSetMaximized` for the column beside it. The columns are the window's, so maximizing is
   /// asked for here, never done here.
@@ -155,6 +158,13 @@ final class RunningColumnViewController: NSViewController {
     textView.onOpenURL = { [weak self] url in
       self?.onOpenURL?(url) ?? false
     }
+    // A relative path means the checkout the conversation stands in now — after an
+    // `EnterWorktree`, the agent's paths are that worktree's, not main's.
+    textView.resolvePath = { [weak self] token in
+      let root = self?.attached.flatMap { self?.workspace?.worktree(id: $0.worktreeID)?.url }
+      return TranscriptPath.file(named: token, relativeTo: root)
+    }
+    textView.onOpenFile = { [weak self] url in self?.onOpenFile?(url) }
     textView.messageActions = [
       ReadingView.MessageAction(title: "Fork Before This Message") {
         [weak self] anchor, range in
@@ -1466,5 +1476,41 @@ struct RemoteControlDisplay {
         : "Turn on to reach this conversation from claude.ai/code and the Claude app. The "
           + "conversation travels via Anthropic's servers."
     }
+  }
+}
+
+/// What a token in the transcript names on disk, if anything.
+///
+/// The token is what a double-click selects, so a path arrives with the `:120` an agent hands a
+/// file and its line in; the line is dropped, a tab having no way to be opened at one. A token
+/// the disk does not answer for names nothing — the file an old turn mentioned and a later one
+/// deleted, or a word that only looks like a path — and a directory is not offered either, the
+/// files panel and the Finder being where a directory is opened.
+enum TranscriptPath {
+  static func file(named token: String, relativeTo root: URL?) -> URL? {
+    var path = token
+    if let colon = path.lastIndex(of: ":"),
+      path[path.index(after: colon)...].allSatisfy(\.isNumber),
+      path.index(after: colon) < path.endIndex
+    {
+      path = String(path[..<colon])
+    }
+    guard !path.isEmpty, !path.contains("://") else { return nil }
+    let url: URL
+    if path.hasPrefix("/") {
+      url = URL(fileURLWithPath: path)
+    } else if path == "~" || path.hasPrefix("~/") {
+      url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+    } else if let root {
+      url = root.appendingPathComponent(path)
+    } else {
+      return nil
+    }
+    let standardized = url.standardizedFileURL
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: standardized.path, isDirectory: &isDirectory),
+      !isDirectory.boolValue
+    else { return nil }
+    return standardized
   }
 }

@@ -61,9 +61,11 @@ final class FilesPanelMenuTests: XCTestCase {
     XCTAssertTrue(file.contains("Copy Absolute Path"), "both paths are their own item")
     XCTAssertTrue(file.contains("Rename…") && file.contains("Delete…"), "\(file)")
     XCTAssertTrue(file.contains("Quick Look"), "Space's other end is in the menu: \(file)")
+    XCTAssertTrue(file.contains("Open With"), "another application is one item away: \(file)")
 
     let directory = panel.menuForScripting(path: "src").components(separatedBy: "\n")
     XCTAssertFalse(directory.contains("Open in New Tab"), "a directory has no tab: \(directory)")
+    XCTAssertFalse(directory.contains("Open With"), "the Finder is Reveal's: \(directory)")
     XCTAssertTrue(directory.contains("Rename…"), "\(directory)")
     XCTAssertTrue(
       directory.contains("Quick Look"), "a directory has no tab but it has a preview: \(directory)")

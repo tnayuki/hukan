@@ -293,6 +293,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       self?.rollBackSession(session, to: anchor, keeping: range.location)
     }
     running.onOpenURL = { [weak self] url in self?.openFromTranscript(url) ?? false }
+    running.onOpenFile = { [weak self] url in self?.openPath(url) }
     workspace.onSessionsChanged = { [weak self] in self?.reload() }
     rail.onSelectWorktree = { [weak self] worktreeID in
       guard let self else { return }

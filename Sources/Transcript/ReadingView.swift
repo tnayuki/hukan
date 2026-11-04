@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 
 /// The transcript, drawn by a view that owns its own height — and every other run of rendered
 /// prose that is read rather than edited (a plan card, a Markdown file's preview), since what it
@@ -119,6 +120,17 @@ public final class ReadingView: NSView {
 
   /// Where a real link goes. Left unset, a click hands the URL to the default browser.
   public var onOpenURL: ((URL) -> Bool)?
+
+  /// The file a token under a right-click names, or nil when it names none. The view finds the
+  /// token — by the double-click's rule, so what is offered is what a double-click would have
+  /// selected — and the owner decides what it is relative to, since a relative path means the
+  /// checkout the conversation stands in and this view does not know what a checkout is. Left
+  /// unset, a right-click offers no file at all.
+  public var resolvePath: ((String) -> URL?)?
+  /// Where Open takes the file `resolvePath` found.
+  public var onOpenFile: ((URL) -> Void)?
+  /// What the Quick Look panel is showing while this view feeds it.
+  fileprivate var quickLookFile: URL?
 
   /// What the `…` at the end of a message offers. Supplied by whoever owns the view, because
   /// `Sources/Transcript` may not know what a session is: the view finds the anchor and the
@@ -845,15 +857,31 @@ public final class ReadingView: NSView {
     menu(at: convert(event.locationInWindow, from: nil))
   }
 
-  /// A link under the pointer offers what its click and ⌘-click do, and its address; a selection
-  /// offers Copy whether or not the press landed on a link. The fold link is not an address and
-  /// offers nothing.
+  /// A link under the pointer offers what its click and ⌘-click do, and its address; a file named
+  /// under it offers to be opened here, in another application, or looked at; a selection offers
+  /// Copy whether or not the press landed on either. The fold link is not an address and offers
+  /// nothing — but the path on a tool call's line is a file like any other.
   func menu(at point: CGPoint) -> NSMenu? {
     let url = link(at: point)?.url ?? tableLink(at: point)
     let pressed = url == Transcript.toolCallLinkURL ? nil : url
+    let file = pressed == nil ? file(at: point) : nil
     let selected = selectedRange.length > 0 || selectedTable?.table.selectedText() != nil
-    guard pressed != nil || selected else { return nil }
+    guard pressed != nil || file != nil || selected else { return nil }
     let menu = NSMenu()
+    if let file {
+      let open = NSMenuItem(
+        title: "Open “\(file.lastPathComponent)”", action: #selector(openFile(_:)),
+        keyEquivalent: "")
+      open.target = self
+      open.representedObject = file
+      menu.addItem(open)
+      if let openWith = OpenWithMenu.item(for: file) { menu.addItem(openWith) }
+      let look = NSMenuItem(
+        title: "Quick Look", action: #selector(quickLookFile(_:)), keyEquivalent: "")
+      look.target = self
+      look.representedObject = file
+      menu.addItem(look)
+    }
     if let pressed {
       for (title, action) in [
         ("Open Link", #selector(openLink(_:))),
@@ -867,7 +895,7 @@ public final class ReadingView: NSView {
       }
     }
     if selected {
-      if pressed != nil { menu.addItem(.separator()) }
+      if pressed != nil || file != nil { menu.addItem(.separator()) }
       menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
     }
     return menu
@@ -877,6 +905,54 @@ public final class ReadingView: NSView {
   @objc func openLink(_ sender: NSMenuItem) {
     guard let url = sender.representedObject as? URL else { return }
     if let onOpenURL { _ = onOpenURL(url) } else { NSWorkspace.shared.open(url) }
+  }
+
+  /// The file named by the token under `point`. Nothing is coloured for it ahead of time — a
+  /// bare dot is not a link, and a code span is quoted rather than followed — so this is asked
+  /// only once someone has right-clicked, which is the one moment the question is cheap: one
+  /// token, one stat.
+  private func file(at point: CGPoint) -> URL? {
+    guard let resolvePath, let offset = characterOffset(at: point) else { return nil }
+    let word = wordRange(at: offset)
+    guard word.length > 0, let segment = segment(containing: word.location),
+      NSMaxRange(word) <= segment.start + segment.length
+    else { return nil }
+    let token = (segment.storage.string as NSString).substring(
+      with: NSRange(location: word.location - segment.start, length: word.length))
+    return resolvePath(token)
+  }
+
+  @objc func openFile(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    onOpenFile?(url)
+  }
+
+  /// The menu opens the panel rather than toggling it, as the files panel's item does. The view
+  /// takes the focus first, because the panel finds what feeds it up the responder chain.
+  @objc func quickLookFile(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    quickLookFile = url
+    window?.makeFirstResponder(self)
+    let panel = QLPreviewPanel.shared()
+    if panel?.dataSource === self {
+      panel?.reloadData()
+    } else {
+      panel?.updateController()
+    }
+    panel?.makeKeyAndOrderFront(nil)
+  }
+
+  public override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+    quickLookFile != nil
+  }
+
+  public override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+    panel.dataSource = self
+  }
+
+  public override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+    panel.dataSource = nil
+    quickLookFile = nil
   }
 
   @objc func openLinkInDefaultBrowser(_ sender: NSMenuItem) {
@@ -1526,4 +1602,17 @@ public func makeReadingView() -> (NSScrollView, ReadingView) {
   view.finder.isIncrementalSearchingEnabled = true
   view.finder.incrementalSearchingShouldDimContentView = false
   return (scrollView, view)
+}
+
+/// The one file a right-click's Quick Look asked for.
+extension ReadingView: QLPreviewPanelDataSource {
+  public func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+    quickLookFile == nil ? 0 : 1
+  }
+
+  public func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int)
+    -> (any QLPreviewItem)!
+  {
+    quickLookFile as NSURL?
+  }
 }

@@ -179,7 +179,8 @@ tab. It closes on the same key, it follows the arrows while it is up, and a dire
 too.
 
 A right-click on a row is where hukan writes to a worktree itself. It opens the row in a lasting
-tab, previews it in Quick Look, reveals it in the Finder, opens a terminal in its directory, and
+tab, or in another application from the Finder's Open With list, previews it in Quick Look,
+reveals it in the Finder, opens a terminal in its directory, and
 copies its path — twice over, relative to the worktree and absolute. Below that it makes a new file, renames the row and
 deletes it. A name is typed on the row itself: renaming edits it in place, and a new file is made
 under an untitled name and handed straight to the same edit. ⏎ on a row starts it, the way the
@@ -238,6 +239,11 @@ so on the page — with what went wrong, the address it was, and the offer to se
 typed instead, or to open it in Safari. A link in the transcript opens here rather than in the
 default browser, ⌘-click sends it out, and a bare URL is a link (code, quoted or fenced, is not).
 Right-clicking one offers both of those and copying its address.
+A path in the transcript is not coloured as a link, but right-clicking one — in a code span or
+on a tool call's line, what a double-click selects, `:120` and all — offers to open the file in
+a tab here, to open it with another application, or to look at it in Quick Look. A relative path
+is read against the worktree the session stands in, and a path with no file behind it offers
+nothing.
 Inside a page ⌘ is the browser's instead: ⌘-click opens the link as a tab of its own, behind the
 one being read, and ⌘⇧-click opens it in front.
 The tab does what a page expects of its browser: popups open as tabs and close themselves when

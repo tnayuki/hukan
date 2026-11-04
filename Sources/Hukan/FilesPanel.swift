@@ -1428,6 +1428,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       if WorktreeDeskViewController.isMarkdown(target.path) {
         add("Open Preview", #selector(openTargetPreview))
       }
+      if let file = url(for: target.path), let openWith = OpenWithMenu.item(for: file) {
+        menu.addItem(openWith)
+      }
     }
     // Space's other end. Every key this panel has is in this menu — ⏎ as Rename, ⌘↓ as Open in
     // New Tab — because the menu is where a key is found by someone who does not already know it
