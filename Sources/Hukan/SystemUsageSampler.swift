@@ -26,6 +26,13 @@ import Foundation
 /// exhaustive. The three that are not Hukan carry a process count, since "how many" is the other
 /// half of "how much" once the number is a sum.
 ///
+/// **A virtual machine is the one load that is not in the tree.** Virtualization.framework runs each
+/// guest in an XPC service whose parent is launchd, so ancestry cannot reach it — and that process
+/// is by far the heaviest thing hukan starts. They are found by name and kept to the ones the
+/// kernel says hukan is responsible for, which is what tells them from Apple Container's, the same
+/// binary run for somebody else. That question is private API, and only ever reads. Nothing says
+/// which window a guest belongs to, so like the root each window's figure carries them whole.
+///
 /// Sampling is `sysctl(KERN_PROC_ALL)` to walk the process table for our descendants, then
 /// `proc_pid_rusage` per pid — both work for same-user processes without a `task_for_pid`
 /// entitlement (which ad-hoc signing could not carry anyway). CPU is a rate, so it needs two
@@ -36,6 +43,9 @@ import Foundation
 /// rounded to a flat 0%). The total is Activity-Monitor-style — one busy core is 100%, so a
 /// parallel build across the tree can read well over 100%. State lives on the instance, so each
 /// window samples independently.
+@_silgen_name("responsibility_get_pid_responsible_for_pid")
+private func responsiblePID(_ pid: pid_t) -> pid_t
+
 struct SystemUsageSampler {
   /// Who a process in the tree belongs to.
   enum Kind: CaseIterable {
@@ -47,6 +57,8 @@ struct SystemUsageSampler {
     case spawned
     /// One of this window's terminals — the shell it opened, and everything running under it.
     case terminal
+    /// A virtual machine's process, which Virtualization.framework runs outside the tree.
+    case machine
   }
 
   /// One share of the tree.
@@ -87,8 +99,10 @@ struct SystemUsageSampler {
   mutating func sample(engines: Set<pid_t>, shells: Set<pid_t>) -> Snapshot {
     let now = DispatchTime.now().uptimeNanoseconds
     let root = getpid()
-    let kinds = Self.classify(
-      parents: Self.processTree(root: root), root: root, engines: engines, shells: shells)
+    let table = Self.processTree(root: root)
+    var kinds = Self.classify(
+      parents: table.tree, root: root, engines: engines, shells: shells)
+    for pid in table.machines { kinds[pid] = .machine }
 
     var currentCPU: [pid_t: UInt64] = [:]
     var buckets: [Kind: Bucket] = [:]
@@ -147,25 +161,33 @@ struct SystemUsageSampler {
   /// `root` and every process transitively descended from it, each with its parent, from a single
   /// `KERN_PROC_ALL` snapshot of the process table. Returns just the root if the table cannot be
   /// read.
-  private static func processTree(root: pid_t) -> [pid_t: pid_t] {
+  private static func processTree(root: pid_t) -> (tree: [pid_t: pid_t], machines: [pid_t]) {
     var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
     var length = 0
     guard sysctl(&mib, u_int(mib.count), nil, &length, nil, 0) == 0, length > 0 else {
-      return [root: 0]
+      return ([root: 0], [])
     }
 
     let capacity = length / MemoryLayout<kinfo_proc>.stride
     var procs = [kinfo_proc](repeating: kinfo_proc(), count: capacity)
-    guard sysctl(&mib, u_int(mib.count), &procs, &length, nil, 0) == 0 else { return [root: 0] }
+    guard sysctl(&mib, u_int(mib.count), &procs, &length, nil, 0) == 0 else {
+      return ([root: 0], [])
+    }
     // sysctl rewrites `length` with the bytes actually filled — the table can shrink between the
     // sizing call and this one — so trust it, not `capacity`, for how many entries are valid.
     let count = length / MemoryLayout<kinfo_proc>.stride
 
     var childrenByParent: [pid_t: [pid_t]] = [:]
+    var machines: [pid_t] = []
     for index in 0..<count {
       let pid = procs[index].kp_proc.p_pid
       let ppid = procs[index].kp_eproc.e_ppid
       childrenByParent[ppid, default: []].append(pid)
+      if ppid == 1, commandName(procs[index]) == machineServiceName,
+        responsiblePID(pid) == root
+      {
+        machines.append(pid)
+      }
     }
 
     var tree: [pid_t: pid_t] = [root: 0]
@@ -176,7 +198,17 @@ struct SystemUsageSampler {
         frontier.append(child)
       }
     }
-    return tree
+    return (tree, machines)
+  }
+
+  /// `com.apple.Virtualization.VirtualMachine` as the process table keeps it, cut to `MAXCOMLEN`.
+  private static let machineServiceName = String(
+    "com.apple.Virtualization.VirtualMachine".prefix(Int(MAXCOMLEN)))
+
+  private static func commandName(_ process: kinfo_proc) -> String {
+    withUnsafeBytes(of: process.kp_proc.p_comm) { bytes in
+      String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+    }
   }
 
   /// Cumulative CPU time (user + system, mach absolute-time units) and phys footprint (bytes) for

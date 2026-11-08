@@ -1402,6 +1402,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       share("Spawned by Claude Code", snapshot[.spawned]),
     ]
     if snapshot[.terminal].processes > 0 { lines.append(share("Terminals", snapshot[.terminal])) }
+    if snapshot[.machine].processes > 0 {
+      lines.append(share("Virtual Machines", snapshot[.machine]))
+    }
     systemUsageLabel.toolTip = lines.joined(separator: "\n")
   }
 
