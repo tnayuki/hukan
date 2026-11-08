@@ -31,6 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // notification permission, or steal focus. (Xcode sets this env var for the test run.)
     if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
 
+    // A template or an image left half-made by the last run cannot be finished; what it holds is
+    // only disk.
+    MachineStore.discardUnfinished()
+
     // Window restoration runs between willFinishLaunching and didFinishLaunching.
     // Only open a fresh window if nothing came back. Creating one ourselves makes it
     // a new window as far as AppKit is concerned, which loses the Space assignment.

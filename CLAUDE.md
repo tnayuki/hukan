@@ -372,6 +372,9 @@ Workspace (one window)
   reaches. That is the whole reason it is asked for, and the reason the hidden `browser` verb's
   loading half is guarded now — a session's agent reaches `osascript` with no prompt in the way,
   and that verb steered a logged-in tab with no card in front of it.
+- **Templates are made with nothing to answer**, SIP off through Recovery, because a permission
+  prompt with nobody there is a wall: a template is for automation and holds nothing worth
+  protecting.
 - **A client outside hukan reaches the sessions over stdio, from the executable the bundle
   already ships.** It was built for the Claude desktop app, which is where a person keeps track of
   their work as a whole, and what this window knows — which session is working, which is waiting on
@@ -1361,7 +1364,8 @@ Workspace (one window)
   it runs in, and it is not even in the command list a stream-json engine reports, so a composer
   that offered it would be offering a dead word. **The line this does not cross is the outbound
   one.** hukan opens no socket and sends no credential — the engine bridges, hukan only says
-  when — which is what leaves the cask check the one request hukan makes for itself. What it does
+  when — which is what leaves the cask check and a restore image the only requests hukan makes
+  for itself. What it does
   mean is that the conversation travels via Anthropic's servers, and that is why nothing about it
   is implicit.
   **Three facts arrive in the initialize reply and they are kept apart, because the engine keeps
@@ -1525,10 +1529,12 @@ Workspace (one window)
   npm updater and sets `autoUpdatesProtectedForNative`, which exempts its own — so there is nothing
   to tell you that will not have happened by morning anyway. The cask does not follow anything, so
   hukan is the one of the two that can go quietly stale.
-  **This is hukan's one outbound request, and the line around it is the whole of why it is
-  allowed**: one fixed URL, GET, nothing sent, no credentials, nothing about the work. libgit2 is
-  built network-less on purpose and the browser's traffic is the user's own; this is neither, so it
-  is stated as a constraint rather than as a beginning.
+  **Two outbound requests are hukan's own, and the line around them is the whole of why they are
+  allowed.** The cask check: one fixed URL, GET, nothing sent, no credentials, nothing about the
+  work. And a macOS restore image, fetched only when someone asks for one in the template sheet,
+  from the address Virtualization.framework names. libgit2 is built network-less on purpose and
+  the browser's traffic is the user's own; these are neither, so they are stated as a constraint
+  rather than as a beginning.
   **It reads the cask, not the tag's GitHub Release.** The two disagree for a minute at a time —
   `release.yml` publishes the Release and pushes the cask that points at it afterwards — so a check
   against the Release API lights up in a window where `brew` still has nothing to give, which is
@@ -1845,7 +1851,8 @@ file-system-synchronized, so a new file under `Sources/` just appears. `Resource
 `Resources/rg`, `Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework` and the
 query files under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
 step, not part of the build. `Resources/hukan-guest-agent` is the guest agent, built by
-`Vendor/build-guest-agent.sh`.
+`Vendor/build-guest-agent.sh`; `Resources/Hukan.entitlements` carries the one entitlement
+Virtualization.framework requires, which ad-hoc signing can hold.
 
 `Resources/rg` is ripgrep, and it is the one program hukan runs. The files panel's filter and its
 content search are a process each, per gesture, started by someone typing and killed by the next
