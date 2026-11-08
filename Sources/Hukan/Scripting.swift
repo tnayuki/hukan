@@ -302,6 +302,27 @@ final class TabsCommand: NSScriptCommand {
 /// the same reason `files menu` is: two of the three places it hangs are context menus, which
 /// cannot be opened at all without a right-click at coordinates. `opening "<path>"` takes one, the
 /// way clicking the row would.
+/// `machines` reports what the Virtual Machines window lists, and where a template build has got
+/// to; `machines building "<name>"` starts one, the way the window's `+` and its sheet do. Hidden:
+/// a build is a sheet, a window and minutes of a guest booting, and checking it any other way is
+/// clicking at coordinates and watching.
+@objc(MachinesCommand)
+final class MachinesCommand: NSScriptCommand {
+  override func performDefaultImplementation() -> Any? {
+    let window = VirtualMachinesWindowController.shared
+    if let title = evaluatedArguments?["building"] as? String, !title.isEmpty {
+      // A session's agent reaches osascript, and a build is minutes of a guest and a template
+      // nobody asked for — the window's `+` is a person's, so this stands in for one.
+      guard guardedScriptingEnabled() else {
+        return fail("building is honoured only under HUKAN_SCRIPTING_GUARDED=1")
+      }
+      if let problem = window.buildForScripting(title: title) { return fail(problem) }
+      return "building \(title)"
+    }
+    return window.scriptingReport
+  }
+}
+
 @objc(RecentsCommand)
 final class RecentsCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {

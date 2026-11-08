@@ -375,6 +375,9 @@ Workspace (one window)
 - **Templates are made with nothing to answer**, SIP off through Recovery, because a permission
   prompt with nobody there is a wall: a template is for automation and holds nothing worth
   protecting.
+  **Window ▸ Virtual Machines is the store, not a settings window**: every row is a thing on disk,
+  nothing in it is a preference. Images and session machines are excluded from Time Machine;
+  templates are not.
 - **A client outside hukan reaches the sessions over stdio, from the executable the bundle
   already ships.** It was built for the Claude desktop app, which is where a person keeps track of
   their work as a whole, and what this window knows — which session is working, which is waiting on

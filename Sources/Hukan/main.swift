@@ -151,6 +151,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     WorkspaceWindowController(workspace: Workspace()).showWindow(nil)
   }
 
+  /// Window ▸ Virtual Machines, and the end of File ▸ New Virtual Machine.
+  @objc func showVirtualMachines(_ sender: Any?) {
+    VirtualMachinesWindowController.shared.show()
+  }
+
   /// Open Recent ▸ Clear Menu. App-global, like the list itself, so it lives here rather than on a
   /// window — and it still answers with no window open, which is where a menu the user is tidying
   /// may well be reached from.
@@ -494,6 +499,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
     selectTab.submenu = selectTabMenu
     windowMenu.addItem(selectTab)
+    windowMenu.addItem(.separator())
+    // The store's own window, beside the other windows rather than among the desk's acts: what it
+    // holds belongs to no session.
+    let machineStore = windowMenu.addItem(
+      withTitle: "Virtual Machines", action: #selector(AppDelegate.showVirtualMachines(_:)),
+      keyEquivalent: "m")
+    machineStore.keyEquivalentModifierMask = [.command, .shift]
     windowMenu.addItem(.separator())
     windowMenu.addItem(
       withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)),

@@ -374,6 +374,14 @@
             <result type="text"/>
         </command>
 
+        <command name="machines" code="HuknMach" hidden="yes" description="Report the virtual machine store — templates, session machines, images — and a template build's progress; or start a build, for automated checks">
+            <cocoa class="MachinesCommand"/>
+            <parameter name="building" code="Bild" type="text" optional="yes" description="start making a macOS template with this name from the newest IPSW in Images, the way the window's + does">
+                <cocoa key="building"/>
+            </parameter>
+            <result type="text"/>
+        </command>
+
         <command name="recents" code="HuknRcnt" hidden="yes" description="Report what Open Recent would offer this window, one line per entry, for automated checks">
             <cocoa class="RecentsCommand"/>
             <parameter name="opening" code="Open" type="text" optional="yes" description="open this recent repository, the way clicking its row would">
