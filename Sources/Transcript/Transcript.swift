@@ -719,7 +719,7 @@ public enum Transcript {
   /// emphasis if it is also next to whitespace. Japanese hits that constantly, because
   /// emphasis lands on quoted or bracketed phrases — `**「…」**` and `**（…）**` both come
   /// back as literal asterisks. Delimiters are simply paired here, which is what a
-  /// transcript wants.
+  /// transcript wants — bar an underscore inside a word, which is an identifier's.
   fileprivate static func styled(_ line: String, base: NSFont) -> NSAttributedString {
     let result = NSMutableAttributedString()
     render(Substring(line), base: base, style: InlineStyle(), into: result)
@@ -742,6 +742,26 @@ public enum Transcript {
     /// The next occurrence of `marker` that could close a span opened here.
     func close(_ marker: String, from start: String.Index) -> Range<String.Index>? {
       text.range(of: marker, range: start..<text.endIndex)
+    }
+
+    /// An underscore is a delimiter only at a word's edge, CommonMark's one flanking rule kept:
+    /// `snake_case_name` written outside a code span is an identifier, not `case` in italics.
+    /// The word is ASCII's alone — CommonMark counts kana and kanji too, which would leave
+    /// `これは_重要_です` upright.
+    func isWordCharacter(_ character: Character) -> Bool {
+      character.isASCII && (character.isLetter || character.isNumber)
+    }
+
+    /// The next `_` that ends a word rather than sitting inside one.
+    func closeUnderscore(from start: String.Index) -> Range<String.Index>? {
+      var from = start
+      while let found = close("_", from: from) {
+        if found.upperBound == text.endIndex || !isWordCharacter(text[found.upperBound]) {
+          return found
+        }
+        from = found.upperBound
+      }
+      return nil
     }
 
     while index < text.endIndex {
@@ -774,7 +794,12 @@ public enum Transcript {
       // Longest marker first, so `**` is never mistaken for the start of `*`.
       if let marker = ["**", "~~", "*", "_"].first(where: { rest.hasPrefix($0) }) {
         let start = text.index(index, offsetBy: marker.count)
-        if let end = close(marker, from: start), start < end.lowerBound {
+        let end =
+          marker == "_"
+          ? (index > text.startIndex && isWordCharacter(text[text.index(before: index)])
+            ? nil : closeUnderscore(from: start))
+          : close(marker, from: start)
+        if let end, start < end.lowerBound {
           flush()
           var inner = style
           switch marker {
