@@ -1012,11 +1012,26 @@ Workspace (one window)
   is true whoever the other one is, so the kind is read where the row is made and nowhere else.
   An absent kind is an older CLI's and reads as a session, since the kinds worth excluding are
   ones the engine names.
+- **A session's name is the engine's to keep, and hukan only asks.** The engine draws one up from
+  the opening message when hukan asks it to (`generate_session_title`, since a `-p` engine names
+  nothing unasked), and *Rename…* on the row asks it to take one given by hand (`rename_session`
+  as the host, which the engine records as the person's own: `custom-title` and `agent-name`).
+  Either way the name lands in the transcript, so `claude --resume` and every other list of the
+  session show the same one, and hukan never holds a name the transcript does not — the same
+  stance as tags not being written into it, from the other side. **Which name wins is the kind,
+  not the place**: the engine re-appends a chosen name and then its drawn-up one every time it
+  starts, so a reader taking the last record would undo every rename at the next restart; the
+  order is the engine's own list's — agent name, then the chosen title, then the drawn-up one.
+  The sheet's *Suggest* is the drawn-up kind on demand (`persist: false`, from the opening and
+  the latest few messages, a subject drifting as the work does), offered to edit and kept only
+  by Rename. **A session with no engine running cannot be renamed** — the item is off — rather
+  than one being started for the length of a rename: renaming is not starting, and an engine
+  brought up and torn down for one string is more machinery than the act is worth.
 - **A session carries tags, and the agent is the one who writes them.** What a row says it is
   working on — the ticket, the issue, the pull request — is what a person scans the rail for, and
-  a title is the wrong place for it: the engine names a session once, early, from the opening
-  exchange, and nothing can rename it afterwards, while the ticket is often known only later and
-  changes as the work does. **Several, not one**, since a task's work is a ticket and its PR at
+  a title is the wrong place for it: the engine draws a name up once, early, from the opening
+  exchange, and a name is one string where the ticket is often known only later and changes as
+  the work does. **Several, not one**, since a task's work is a ticket and its PR at
   the least. Each is `kind: value`; **the row draws only the value and the kind picks its
   colour** — a row of `JIRA:` prefixes would be the same word down the column, and the colour
   still says which tracker each identifier is from. The colour is a hash of the kind over a

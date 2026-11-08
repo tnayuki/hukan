@@ -77,6 +77,68 @@ final class SessionTitleTests: XCTestCase {
     XCTAssertEqual(try title([userLine("typed"), titleLine("   ")]), "typed")
   }
 
+  /// A rename writes `custom-title` and `agent-name`, and the engine re-appends them every time it
+  /// starts — with the `ai-title` it drew up written after them. Read by position, the drawn-up
+  /// name would come back over the chosen one on every restart, so the kind outranks the place.
+  func testAChosenNameBeatsADrawnUpOneWrittenAfterIt() throws {
+    let lines = [
+      userLine("start"), titleLine("Drawn up"),
+      #"{"type":"custom-title","customTitle":"Chosen name"}"#,
+      #"{"type":"agent-name","agentName":"Chosen name"}"#,
+      // An engine starting again: the chosen name re-appended, then the drawn-up one.
+      #"{"type":"custom-title","customTitle":"Chosen name"}"#,
+      titleLine("Drawn up"),
+    ]
+    XCTAssertEqual(try title(lines), "Chosen name")
+  }
+
+  /// The engine's own list reads `agent-name` before `custom-title`, so hukan does too — they
+  /// only disagree when a name came from somewhere other than a rename.
+  func testAnAgentNameBeatsACustomTitle() throws {
+    let lines = [
+      userLine("start"), #"{"type":"agent-name","agentName":"Agent"}"#,
+      #"{"type":"custom-title","customTitle":"Custom"}"#,
+    ]
+    XCTAssertEqual(try title(lines), "Agent")
+  }
+
+  /// Followed live, the strongest name in what was appended is the one taken — the restart's
+  /// trailing `ai-title` must not undo the rename written just before it.
+  func testTheTailReadKeepsTheChosenName() throws {
+    let id = UUID()
+    let url = ClaudeSessionStore.transcriptURL(id: id, worktree: worktree)
+    try (userLine("start") + "\n").write(to: url, atomically: true, encoding: .utf8)
+    let cursor = ClaudeSessionStore.HistoryCursor(
+      offset: (try Data(contentsOf: url)).count, lastUUID: nil)
+    let handle = try FileHandle(forWritingTo: url)
+    handle.seekToEndOfFile()
+    handle.write(
+      Data(
+        ([#"{"type":"custom-title","customTitle":"Chosen name"}"#, titleLine("Drawn up")]
+          .joined(separator: "\n") + "\n").utf8))
+    try handle.close()
+    guard
+      case .appended(_, _, let title, _) = ClaudeSessionStore.historyTail(
+        id: id, worktree: worktree, since: cursor)
+    else { return XCTFail("expected the appended names to be read") }
+    XCTAssertEqual(title, "Chosen name")
+  }
+
+  /// What a suggestion is drawn from: everything the person typed, in order, and nothing else.
+  func testPromptsAreWhatThePersonTyped() throws {
+    let id = UUID()
+    try [
+      #"{"type":"user","isMeta":true,"message":{"role":"user","content":"boilerplate"}}"#,
+      userLine("first"), titleLine("Name"), userLine("second"),
+      #"{"type":"user","isSidechain":true,"message":{"role":"user","content":"subagent"}}"#,
+      userLine("third"),
+    ].joined(separator: "\n").write(
+      to: ClaudeSessionStore.transcriptURL(id: id, worktree: worktree),
+      atomically: true, encoding: .utf8)
+    XCTAssertEqual(
+      ClaudeSessionStore.prompts(id: id, worktree: worktree), ["first", "second", "third"])
+  }
+
   func testMissingTranscriptHasNoName() {
     XCTAssertNil(ClaudeSessionStore.title(id: UUID(), worktree: worktree))
   }

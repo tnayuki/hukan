@@ -230,6 +230,10 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   var onDeleteSession: ((AgentSession) -> Void)?
   /// Replace a session's tags with what was typed into the rail's editor.
   var onSetTags: ((AgentSession, [String]) -> Void)?
+  /// Rename… from a row: the session and the name typed for it.
+  var onRename: ((AgentSession, String) -> Void)?
+  /// The rename sheet's Suggest: a name drawn up from the conversation, or nil.
+  var onSuggestTitle: ((AgentSession, @escaping (String?) -> Void) -> Void)?
   /// A tag's chip was clicked: open the page it names, for the session it labels.
   var onOpenTag: ((URL, AgentSession) -> Void)?
   /// Fired whenever the query changes, so the window can re-highlight the open transcript for the
@@ -1961,7 +1965,17 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       // A third way to name it, and the one written by hand. One session at a time: a batch would
       // have to say whose tags the field opens on, and replacing five lists with one is a different
       // act from labelling a row.
-      if count == 1 { copy("Edit Tags…", #selector(editClickedTags(_:))) }
+      if count == 1 {
+        // The name first: it is what the row is read by, and the tags under it after. Off unless
+        // the engine is running: the name is the engine's to write, and starting one only to
+        // rename is more than a rename is worth.
+        copy("Rename…", #selector(renameClickedSession(_:)))
+        if let rename = menu.items.last, sessions.first?.isRunning != true {
+          rename.action = nil
+          rename.toolTip = "Start the session to rename it."
+        }
+        copy("Edit Tags…", #selector(editClickedTags(_:)))
+      }
       copy(
         count == 1 ? "Copy Transcript Path" : "Copy \(count) Transcript Paths",
         #selector(copyClickedTranscriptPaths(_:)))
@@ -2057,6 +2071,53 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     let apply = { [weak self] (response: NSApplication.ModalResponse) in
       guard response == .alertFirstButtonReturn else { return }
       self?.onSetTags?(session, SessionTags.parse(field.stringValue))
+    }
+    if let window = view.window {
+      alert.beginSheetModal(for: window, completionHandler: apply)
+    } else {
+      apply(alert.runModal())
+    }
+  }
+
+  /// The name typed in a sheet, like the tags beside it: a name is decided against what the
+  /// conversation is about rather than against the rows around it. Suggest asks the engine for one
+  /// drawn up from the conversation — the opening message and the latest few — and puts it in the
+  /// field to keep or edit; nothing is named until Rename is pressed.
+  @objc private func renameClickedSession(_ sender: NSMenuItem) {
+    guard let session = (sender.representedObject as? [AgentSession])?.first else { return }
+    let alert = NSAlert()
+    alert.messageText = "Rename Session"
+    alert.informativeText =
+      "Claude Code keeps the name in the conversation, so it is the one every list of it shows."
+    let field = NSTextField(string: session.title ?? "")
+    field.placeholderString = "What this session is for"
+    let suggest = SuggestButton(title: "Suggest", target: nil, action: nil)
+    suggest.bezelStyle = .rounded
+    suggest.toolTip = "Ask Claude Code for a name drawn up from the conversation"
+    suggest.onPress = { [weak self, weak field, weak suggest] in
+      guard let self, let onSuggestTitle = self.onSuggestTitle else { return }
+      suggest?.isEnabled = false
+      onSuggestTitle(session) { title in
+        suggest?.isEnabled = true
+        guard let title, let field else { return NSSound.beep() }
+        field.stringValue = title
+        field.currentEditor()?.selectAll(nil)
+      }
+    }
+    let row = NSStackView(views: [field, suggest])
+    row.orientation = .horizontal
+    row.frame = NSRect(x: 0, y: 0, width: 400, height: 24)
+    field.widthAnchor.constraint(greaterThanOrEqualToConstant: 300).isActive = true
+    alert.accessoryView = row
+    alert.addButton(withTitle: "Rename")
+    alert.addButton(withTitle: "Cancel")
+    alert.window.initialFirstResponder = field
+    let apply = { [weak self] (response: NSApplication.ModalResponse) in
+      let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard response == .alertFirstButtonReturn, !name.isEmpty, name != session.title else {
+        return
+      }
+      self?.onRename?(session, name)
     }
     if let window = view.window {
       alert.beginSheetModal(for: window, completionHandler: apply)
@@ -2559,4 +2620,25 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   private func selectionKey(of item: Any?) -> String? {
     (item as? RailNode)?.identityKey
   }
+}
+
+/// A button that runs a closure — for the one inside the rename sheet, whose target would
+/// otherwise have to outlive a sheet that keeps nothing alive itself.
+private final class SuggestButton: NSButton {
+  var onPress: (() -> Void)?
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    target = self
+    action = #selector(pressed)
+  }
+
+  required init?(coder: NSCoder) { fatalError() }
+
+  convenience init(title: String, target: AnyObject?, action: Selector?) {
+    self.init(frame: .zero)
+    self.title = title
+  }
+
+  @objc private func pressed() { onPress?() }
 }

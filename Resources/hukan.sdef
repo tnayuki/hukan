@@ -69,7 +69,7 @@
             <property name="id" code="ID  " type="text" access="r" description="Stable unique identifier">
                 <cocoa key="uniqueID"/>
             </property>
-            <property name="name" code="pnam" type="text" access="r" description="Session title (may be empty or repeat; use id to address reliably)">
+            <property name="name" code="pnam" type="text" description="Session title (may be empty or repeat; use id to address reliably). Setting it renames the session, as Rename… on its row does">
                 <cocoa key="title"/>
             </property>
             <property name="transcript" code="Tscr" type="text" access="r" description="The transcript as plain text">

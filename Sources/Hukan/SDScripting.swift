@@ -467,7 +467,23 @@ final class SDSession: NSObject {
 
   @objc var uniqueID: String { uuid.uuidString }
   /// Exposed to AppleScript as the `name` property (see the sdef `<cocoa key="title"/>`).
-  @objc var title: String { agentSession?.title ?? "" }
+  ///
+  /// Settable, the same act as the rail's Rename…: the engine is asked to keep the name, and the
+  /// value reads back once it has (see `WorkspaceWindowController.rename`). Only while the engine
+  /// is running, as on the rail. Not guarded — naming a session decides nothing anyone was asked.
+  @objc var title: String {
+    get { agentSession?.title ?? "" }
+    set {
+      guard let session = agentSession else { return }
+      guard session.isRunning else {
+        let command = NSScriptCommand.current()
+        command?.scriptErrorNumber = errAEEventNotHandled
+        command?.scriptErrorString = "The session's engine is not running; start it to rename it."
+        return
+      }
+      controller?.rename(session, to: newValue)
+    }
+  }
   @objc var transcript: String { agentSession?.transcript.string ?? "" }
   @objc var pendingApproval: String {
     // A grant card is a decision the session waits on the same way, so it reads back here too.

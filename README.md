@@ -419,6 +419,12 @@ hidden — and one you send a message to leaves the fold for good, since instruc
 deciding you are not done with it. Several rows can be selected at once, so a batch of finished attempts is one gesture. A
 repository's rows leave when it is closed.
 
+A session is named by Claude Code from the first thing asked of it, and *Rename…* on the row's
+right-click names it by hand. The sheet's *Suggest* asks Claude Code for a name drawn up from the
+conversation so far — its opening and its latest few messages — to keep or edit. The name is
+written into the conversation, so it is the one every list of it shows, `claude --resume`'s
+included — which is also why it needs the session's engine running.
+
 A session can carry tags — the ticket, the issue, the pull request it is working on — so a row
 says what it is for at a glance. Each is written `kind: value`, `JIRA: ABC-123` or `PR: #42`; the
 row shows the values under its title, wrapping onto further lines when there are many, in the

@@ -580,6 +580,28 @@ final class ClaudeSession {
     }
   }
 
+  /// A name drawn up from `description` and handed back, kept nowhere — what a rename is offered
+  /// as a starting point. `persist: false` is what makes it a fresh one: kept, the engine would
+  /// answer with the name it already holds (see `generateTitle`).
+  func suggestTitle(from description: String, completion: @escaping (String?) -> Void) {
+    ask("generate_session_title", ["description": description, "persist": false]) { reply in
+      completion(reply?["title"] as? String)
+    }
+  }
+
+  /// Give the conversation a name of its own. `source: "host"` is the engine's word for a rename
+  /// made in the application hosting it, which it counts as the person's own: it writes the name
+  /// as `custom-title` and `agent-name` — both outranking the `ai-title` it draws up, in its list
+  /// and in hukan's (`ClaudeSessionStore.namedTitle`) — and re-appends them every time it starts,
+  /// so the name outlives this process. Nothing is written for a conversation with no transcript
+  /// yet (measured: the request succeeds and no file appears). A nil reply is a refusal or a dead
+  /// engine.
+  func renameSession(to title: String, completion: @escaping (Bool) -> Void) {
+    ask("rename_session", ["title": title, "source": "host"]) { reply in
+      completion(reply != nil)
+    }
+  }
+
   /// Put this conversation on the bridge, or take it off — the request the VS Code extension
   /// sends down this same stream, verified against its shipped `extension.js` as well as the
   /// engine's own control dispatch.
@@ -805,7 +827,9 @@ final class ClaudeSession {
 
   /// True when this answered an `ask`, in which case its caller has been handed the payload and
   /// nothing further should see it. An `error` reply resolves the same call with nil: the caller
-  /// asked a question and there is no answer, which is all it needs to know.
+  /// asked a question and there is no answer, which is all it needs to know. A success with
+  /// nothing in it (`rename_session` replies that way) is an empty payload, not nil, or it would
+  /// read as the refusal it is not.
   private func consumePendingReply(_ object: [String: Any]) -> Bool {
     guard let response = object["response"] as? [String: Any],
       let requestID = response["request_id"] as? String
@@ -815,7 +839,8 @@ final class ClaudeSession {
     pendingRepliesLock.unlock()
     guard let completion else { return false }
     let payload =
-      response["subtype"] as? String == "success" ? response["response"] as? [String: Any] : nil
+      response["subtype"] as? String == "success"
+      ? (response["response"] as? [String: Any] ?? [:]) : nil
     DispatchQueue.main.async { completion(payload) }
     return true
   }
@@ -1202,10 +1227,27 @@ enum ClaudeSessionStore {
   static func title(id: UUID, worktree: URL) -> String? {
     let url = transcriptURL(id: id, worktree: worktree)
     guard let data = try? Data(contentsOf: url) else { return nil }
-    if let named = aiTitle(inTranscript: data) { return named }
+    if let named = namedTitle(inTranscript: data) { return named }
     guard let text = firstPrompt(inTranscript: data) else { return nil }
     let title = titleLine(from: text)
     return title.isEmpty ? nil : title
+  }
+
+  /// Everything the person typed into the session, in order — what a suggested name is drawn from
+  /// (see `AgentSession.suggestTitle`). Every message rather than the live branch: one a rollback
+  /// cut is still part of what the session has been about.
+  static func prompts(id: UUID, worktree: URL) -> [String] {
+    guard let data = try? Data(contentsOf: transcriptURL(id: id, worktree: worktree)) else {
+      return []
+    }
+    return data.split(separator: 0x0a).compactMap { line in
+      guard let record = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+        record["type"] as? String == "user", record["isMeta"] as? Bool != true,
+        record["isSidechain"] as? Bool != true,
+        let message = record["message"] as? [String: Any]
+      else { return nil }
+      return userTexts(in: message["content"]).first
+    }
   }
 
   /// The first thing the person typed into the session, whole — what the engine is asked to
@@ -1230,19 +1272,36 @@ enum ClaudeSessionStore {
     return nil
   }
 
-  /// The last `ai-title` in a whole transcript. The marker is the value, not `"type":"ai-title"`,
-  /// since key order is the writer's business. A line that merely mentions it parses to no name
-  /// and the search carries on.
-  private static func aiTitle(inTranscript data: Data) -> String? {
-    var searched = data.startIndex..<data.endIndex
-    while let marker = data.range(of: titleMarker, options: .backwards, in: searched) {
-      if let title = aiTitle(in: data[lineBounds(of: marker, in: data)]) { return title }
-      searched = data.startIndex..<marker.lowerBound
+  /// The names Claude Code keeps for a session, strongest first — the order its own session list
+  /// reads them in. A rename (`rename_session`, or `/rename` in a terminal) writes the first two
+  /// together; the third is the one the engine draws up itself. The engine re-appends whichever it
+  /// holds every time it starts, the drawn-up one after the chosen one, so which record is last in
+  /// the file says nothing: a name someone chose has to beat a drawn-up one wherever each lies.
+  private static let titleKinds: [(type: String, key: String)] = [
+    ("agent-name", "agentName"), ("custom-title", "customTitle"), ("ai-title", "aiTitle"),
+  ]
+
+  /// The session's name in a whole transcript: the last record of the strongest kind there is.
+  /// The marker is the type's value, not `"type":"ai-title"`, since key order is the writer's
+  /// business, and each kind is searched from the end, so finding one costs a line, not the
+  /// conversation. A line that merely mentions a marker parses to no name and the search goes on.
+  private static func namedTitle(inTranscript data: Data) -> String? {
+    for kind in titleKinds {
+      let marker = Data("\"\(kind.type)\"".utf8)
+      var searched = data.startIndex..<data.endIndex
+      while let found = data.range(of: marker, options: .backwards, in: searched) {
+        if let named = named(in: data[lineBounds(of: found, in: data)]), named.rank == rank(kind) {
+          return named.title
+        }
+        searched = data.startIndex..<found.lowerBound
+      }
     }
     return nil
   }
 
-  private static let titleMarker = Data(#""ai-title""#.utf8)
+  private static func rank(_ kind: (type: String, key: String)) -> Int {
+    titleKinds.firstIndex { $0.type == kind.type } ?? titleKinds.count
+  }
 
   /// The whole line `range` falls in — the newlines around it, or the ends of the file.
   private static func lineBounds(of range: Range<Data.Index>, in data: Data) -> Range<Data.Index> {
@@ -1253,26 +1312,29 @@ enum ClaudeSessionStore {
     return start..<end
   }
 
-  /// The name in one transcript line, or nil if it carries none. Empty and whitespace-only
-  /// names read as unnamed, so a search keeps looking past them.
-  private static func aiTitle(in line: Data.SubSequence) -> String? {
+  /// The name in one transcript line, with how strong a kind it is (0 is strongest), or nil if it
+  /// carries none. Empty and whitespace-only names read as unnamed, so a search keeps looking past
+  /// them.
+  private static func named(in line: Data.SubSequence) -> (rank: Int, title: String)? {
     guard let record = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any]
     else { return nil }
-    return aiTitle(inRecord: record)
+    return named(inRecord: record)
   }
 
   /// The same reading of an already-parsed line, for the tail read — which parses every line it
   /// takes anyway, and must not parse them twice to find a name among them.
-  private static func aiTitle(inRecord record: [String: Any]) -> String? {
-    guard record["type"] as? String == "ai-title", let named = record["aiTitle"] as? String
+  private static func named(inRecord record: [String: Any]) -> (rank: Int, title: String)? {
+    guard let type = record["type"] as? String,
+      let rank = titleKinds.firstIndex(where: { $0.type == type }),
+      let name = record[titleKinds[rank].key] as? String
     else { return nil }
-    let title = titleLine(from: named)
-    return title.isEmpty ? nil : title
+    let title = titleLine(from: name)
+    return title.isEmpty ? nil : (rank, title)
   }
 
   struct History {
-    /// Claude Code names the session itself and records it as `ai-title`, which beats
-    /// our guess from the first line the user typed.
+    /// The name Claude Code keeps for the session — one someone gave it, or the one it drew up
+    /// itself (`namedTitle`) — which beats our guess from the first line the user typed.
     let title: String?
     /// The parsed conversation, ready for `Transcript.render` — the store returns structured
     /// events, never styled text, so it stays free of rendering.
@@ -1494,10 +1556,10 @@ enum ClaudeSessionStore {
     var totals = TokenTotals()
     var byModel: [String: TokenTotals] = [:]
 
-    // The engine renames the session as it goes and never mentions it over the pipes, so the name
-    // is the last `ai-title` anywhere in the file — outside the conversation chain, which is why
-    // it is read separately rather than from the walk below.
-    title = aiTitle(inTranscript: data)
+    // The name is outside the conversation chain — the last record of the strongest kind anywhere
+    // in the file (`namedTitle`) — which is why it is read separately rather than from the walk
+    // below.
+    title = namedTitle(inTranscript: data)
 
     var changes: [String: LineChanges] = [:]
     let branch = liveBranch(inTranscript: data, sidechain: sidechain)
@@ -1697,12 +1759,16 @@ enum ClaudeSessionStore {
     var records: [HistoryRecord] = []
     var changes: [String: LineChanges] = [:]
     var last = cursor.lastUUID
-    var title: String?
+    var title: (rank: Int, title: String)?
     let complete = data[data.startIndex..<data.index(data.startIndex, offsetBy: whole)]
     for line in complete.split(separator: 0x0a) {
       guard let record = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any]
       else { continue }
-      if let named = aiTitle(inRecord: record) { title = named }
+      // The strongest kind in what was appended: an engine starting re-appends a chosen name and
+      // then its drawn-up one, and the second must not undo the first.
+      if let named = named(inRecord: record), named.rank <= (title?.rank ?? .max) {
+        title = named
+      }
       guard record["isSidechain"] as? Bool != true,
         let type = record["type"] as? String, conversationTypes.contains(type),
         let uuid = record["uuid"] as? String
@@ -1715,7 +1781,7 @@ enum ClaudeSessionStore {
     }
     return .appended(
       records: records,
-      cursor: HistoryCursor(offset: cursor.offset + whole, lastUUID: last), title: title,
+      cursor: HistoryCursor(offset: cursor.offset + whole, lastUUID: last), title: title?.title,
       changes: attach(changes, to: &records))
   }
 

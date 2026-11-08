@@ -324,6 +324,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     rail.onStartSession = { [weak self] session in self?.startSessionFromRail(session) }
     // The rail has already confirmed — deleting unlinks the transcript, so there is no undo.
     rail.onSetTags = { [weak self] session, tags in self?.setTags(tags, for: session) }
+    rail.onRename = { [weak self] session, name in self?.rename(session, to: name) }
+    rail.onSuggestTitle = { [weak self] session, done in
+      guard let self else { return done(nil) }
+      self.suggestTitle(for: session, done: done)
+    }
     rail.onOpenTag = { [weak self] url, session in self?.openTag(url, of: session) }
     rail.onDeleteSession = { [weak self] session in
       guard let self else { return }
@@ -1973,6 +1978,22 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// Replace a session's tags by hand — the rail's editor, or a script.
   func setTags(_ tags: [String], for session: AgentSession) {
     if session.setTags(tags) { tagsChanged(session) }
+  }
+
+  /// Name a session from the rail. The name is the engine's to write (see `AgentSession.rename`),
+  /// so only a session whose engine is running can be renamed — the menu item is off otherwise,
+  /// rather than an engine being started for the length of a rename.
+  func rename(_ session: AgentSession, to name: String) {
+    session.rename(to: name) { [weak self, weak session] taken in
+      if !taken { session?.note("The engine did not take the new name.") }
+      self?.reload()
+    }
+  }
+
+  /// A name for the rename sheet to start from, drawn up from the conversation by the session's
+  /// running engine.
+  func suggestTitle(for session: AgentSession, done: @escaping (String?) -> Void) {
+    session.suggestTitle(done: done)
   }
 
   /// A session's tags moved — the agent's `set_tags`, or an edit from the rail. The row redraws and

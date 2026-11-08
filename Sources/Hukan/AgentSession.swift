@@ -979,6 +979,47 @@ final class AgentSession {
     onStateChange?()
   }
 
+  /// Give the conversation a name of its own. The name is the engine's to keep — it writes it to
+  /// the transcript, where the rail reads it back and every other place that lists the session
+  /// does too — so hukan only asks; it never holds a name the transcript does not. That means a
+  /// live engine, which is why Rename… is off on a row with none. `done` says whether the engine
+  /// took it.
+  func rename(to name: String, done: @escaping (Bool) -> Void) {
+    let title = ClaudeSessionStore.titleLine(from: name)
+    guard let runner, !title.isEmpty else {
+      done(false)
+      return
+    }
+    runner.renameSession(to: title) { [weak self] taken in
+      if taken { self?.adoptEngineTitle(title) }
+      done(taken)
+    }
+  }
+
+  /// A name drawn up from what the conversation has been about — offered to a rename as a
+  /// starting point, never kept unless the person keeps it. Drawn from the opening message and the
+  /// latest few, since a session's subject drifts: the opening is what it was started for, and
+  /// the latest are what it has become. Nil when there is no engine, or no answer.
+  func suggestTitle(done: @escaping (String?) -> Void) {
+    guard let runner, let worktree = lastKnownWorktree else {
+      done(nil)
+      return
+    }
+    let id = self.id
+    DispatchQueue.global(qos: .userInitiated).async {
+      let prompts = ClaudeSessionStore.prompts(id: id, worktree: worktree)
+      let opening = prompts.first.map { [$0] } ?? []
+      let latest = prompts.dropFirst().suffix(3)
+      // Each capped, so a pasted log in one message cannot crowd out the rest.
+      let description = (opening + latest).map { String($0.prefix(1500)) }
+        .joined(separator: "\n\n")
+      DispatchQueue.main.async { [weak runner] in
+        guard let runner, !description.isEmpty else { return done(nil) }
+        runner.suggestTitle(from: description) { done($0.map(ClaudeSessionStore.titleLine)) }
+      }
+    }
+  }
+
   /// `holdIdle` starts the process without flipping to `.running`, for a New Session brought up
   /// only to read the roster: no turn exists yet, so the rail row stays idle until the first send.
   func start(at url: URL, tools: [String]? = nil, holdIdle: Bool = false) {
