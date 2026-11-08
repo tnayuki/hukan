@@ -425,11 +425,19 @@ final class Workspace {
     return pendingRestoredCommitTabs
   }
 
+  /// Machine tabs decoded from restoration state: the session machine each was showing.
+  private var pendingRestoredMachineTabs: [MachineTabState] = []
+
+  func takeRestoredMachineTabs() -> [MachineTabState] {
+    defer { pendingRestoredMachineTabs = [] }
+    return pendingRestoredMachineTabs
+  }
+
   /// A tab is named by its position among its own kind in the saved lists, so an order is one
   /// row per tab: which desk, which kind — nothing else.
   struct RestoredTabOrder: Hashable {
     enum Kind: String {
-      case browser, terminal, file, commit
+      case browser, terminal, file, commit, machine
     }
     let deskID: UUID
     let kind: Kind
@@ -1121,6 +1129,15 @@ final class Workspace {
     // Commit tabs: the desk they stand on and the oid, which is the tab's identity.
     static let commitDeskIDs = "commits.deskIDs"
     static let commitOids = "commits.oids"
+    // Machine tabs: the tab's own id (the one the agent was given), the desk, the session
+    // machine's id and name, and the template's name the tab shows. The machine is saved beside
+    // its disk, so this is all it takes to find it again.
+    static let machineTabIDs = "machines.tabIDs"
+    static let machineDeskIDs = "machines.deskIDs"
+    static let machineIDs = "machines.ids"
+    static let machineNames = "machines.names"
+    static let machineTitles = "machines.titles"
+    static let machinesStopped = "machines.stopped"
     // The strip's order across every kind, so a dragged tab does not spring back on relaunch:
     // one row per restorable tab, in strip order — the four lists above are saved in that same
     // order, which is what makes a row's kind enough to name its tab.
@@ -1150,6 +1167,7 @@ final class Workspace {
   func encodeState(
     to coder: NSCoder, browserTabs: [BrowserTabState] = [], terminals: [TerminalSession]? = nil,
     fileTabs: [FileTabState] = [], commitTabs: [CommitTabState] = [],
+    machineTabs: [MachineTabState] = [],
     tabOrder: [RestoredTabOrder] = [], selectedTabIndexes: [UUID: Int] = [:]
   ) {
     coder.encode(groups.map(\.id) as NSArray, forKey: Key.groupIDs)
@@ -1291,6 +1309,14 @@ final class Workspace {
 
     coder.encode(commitTabs.map(\.deskID.uuidString) as NSArray, forKey: Key.commitDeskIDs)
     coder.encode(commitTabs.map(\.oid) as NSArray, forKey: Key.commitOids)
+
+    coder.encode(
+      machineTabs.map { $0.tabID?.uuidString ?? "" } as NSArray, forKey: Key.machineTabIDs)
+    coder.encode(machineTabs.map(\.deskID.uuidString) as NSArray, forKey: Key.machineDeskIDs)
+    coder.encode(machineTabs.map(\.machineID) as NSArray, forKey: Key.machineIDs)
+    coder.encode(machineTabs.map(\.name) as NSArray, forKey: Key.machineNames)
+    coder.encode(machineTabs.map(\.title) as NSArray, forKey: Key.machineTitles)
+    coder.encode(machineTabs.map { $0.stopped ? "1" : "0" } as NSArray, forKey: Key.machinesStopped)
 
     coder.encode(tabOrder.map(\.deskID.uuidString) as NSArray, forKey: Key.tabOrderDeskIDs)
     coder.encode(tabOrder.map(\.kind.rawValue) as NSArray, forKey: Key.tabOrderKinds)
@@ -1521,6 +1547,24 @@ final class Workspace {
     for (index, idString) in commitDesks.enumerated() where index < commitOids.count {
       guard let deskID = UUID(uuidString: idString), !commitOids[index].isEmpty else { continue }
       pendingRestoredCommitTabs.append(CommitTabState(deskID: deskID, oid: commitOids[index]))
+    }
+
+    let machineTabIDs = strings(coder, Key.machineTabIDs)
+    let machineDesks = strings(coder, Key.machineDeskIDs)
+    let machineIDs = strings(coder, Key.machineIDs)
+    let machineNames = strings(coder, Key.machineNames)
+    let machineTitles = strings(coder, Key.machineTitles)
+    let machinesStopped = strings(coder, Key.machinesStopped)
+    pendingRestoredMachineTabs = []
+    for (index, idString) in machineDesks.enumerated()
+    where index < machineIDs.count && index < machineNames.count && index < machineTitles.count {
+      guard let deskID = UUID(uuidString: idString), !machineIDs[index].isEmpty else { continue }
+      pendingRestoredMachineTabs.append(
+        MachineTabState(
+          tabID: index < machineTabIDs.count ? UUID(uuidString: machineTabIDs[index]) : nil,
+          deskID: deskID, machineID: machineIDs[index], name: machineNames[index],
+          title: machineTitles[index],
+          stopped: index < machinesStopped.count && machinesStopped[index] == "1"))
     }
 
     let orderDesks = desks(Key.tabOrderDeskIDs, legacy: Key.Legacy.tabOrderWorktreeIDs)

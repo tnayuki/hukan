@@ -133,6 +133,23 @@ final class RestorableStateTests: XCTestCase {
     XCTAssertTrue(restored.takeRestoredBrowserTabs().isEmpty, "taken once")
   }
 
+  func testMachineTabsRoundTripWithTheirIDAndWhetherTheyWereStopped() throws {
+    let desk = UUID()
+    let tabs = [
+      MachineTabState(
+        tabID: UUID(), deskID: desk, machineID: UUID().uuidString, name: "a", title: "macOS",
+        stopped: true),
+      MachineTabState(
+        tabID: UUID(), deskID: desk, machineID: UUID().uuidString, name: "b", title: "Windows"),
+    ]
+    let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+    Workspace().encodeState(to: archiver, machineTabs: tabs)
+    archiver.finishEncoding()
+    let restored = Workspace()
+    restored.decodeState(from: try NSKeyedUnarchiver(forReadingFrom: archiver.encodedData))
+    XCTAssertEqual(restored.takeRestoredMachineTabs(), tabs)
+  }
+
   func testTerminalsRoundTripByWorktreeWithDirectoryAndSession() throws {
     let workspace = Workspace()
     let worktreeA = UUID()

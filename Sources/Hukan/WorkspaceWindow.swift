@@ -1488,6 +1488,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       to: state, browserTabs: files.desk.restorableBrowserTabs,
       terminals: files.desk.restorableTerminals(workspace.terminals),
       fileTabs: files.desk.restorableFileTabs, commitTabs: files.desk.restorableCommitTabs,
+      machineTabs: files.desk.restorableMachineTabs,
       tabOrder: files.desk.restorableTabOrder,
       selectedTabIndexes: files.desk.restorableSelectedTabIndexes)
   }
@@ -1525,6 +1526,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.desk.restoreBrowserTabs(workspace.takeRestoredBrowserTabs())
     files.desk.restoreFileTabs(workspace.takeRestoredFileTabs())
     files.desk.restoreCommitTabs(workspace.takeRestoredCommitTabs())
+    files.desk.restoreMachineTabs(workspace.takeRestoredMachineTabs())
     // Only once every kind is back, since the order names them by position.
     files.desk.restoreTabOrder(workspace.takeRestoredTabOrder())
     // And the tab each strip was showing only once it is in its order, since that is what a
@@ -2398,6 +2400,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     files.openBrowser()
   }
 
+  /// File ▸ New Virtual Machine ▸ <template>: a copy of the template the item names, made for the
+  /// selected session and shown on its desk.
+  @objc func newVirtualMachine(_ sender: NSMenuItem) {
+    guard let templateID = sender.representedObject as? String,
+      let id = UUID(uuidString: templateID), let template = MachineStore.template(id: id)
+    else { return }
+    files.desk.openMachine(template: template)
+  }
+
   /// A shell on a session's desk, started in the worktree the session is in unless `cwd` says
   /// otherwise.
   @discardableResult
@@ -2511,7 +2522,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
           sessionID: pending.sessionID.isEmpty ? nil : pending.sessionID,
           restoredScrollback: pending.scrollback))
     }
-    files.reload()
+    // No reload here: the restore that calls this reloads once every kind of tab is back, and a
+    // reload in the middle adopts each session machine from the disk before its saved tab is in.
   }
 
   /// File ▸ Close Tab (⌘W). Closes the active tab — an open file (after the unsaved-edit prompt)
@@ -2917,7 +2929,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       return workspace.selectedWorktreeID != nil
     case #selector(saveFile(_:)):
       return files.hasUnsavedEdit
-    case #selector(newTerminal(_:)), #selector(newBrowserTab(_:)):
+    case #selector(newTerminal(_:)), #selector(newBrowserTab(_:)),
+      #selector(newVirtualMachine(_:)):
       return files.hasDesk
     case #selector(closeTab(_:)):
       return files.hasClosableTab

@@ -307,6 +307,17 @@ final class WorktreeDeskViewController: NSViewController {
     init(pane: BrowserPaneViewController) { self.pane = pane }
   }
 
+  /// A machine on the desk: the session's own copy of a template, run in this process. It is saved
+  /// when hukan quits and resumed after — only closing the tab deletes it.
+  private final class MachineTab {
+    let id: UUID
+    let pane: MachinePaneViewController
+    init(pane: MachinePaneViewController, id: UUID = UUID()) {
+      self.pane = pane
+      self.id = id
+    }
+  }
+
   /// One open commit: its own read-only pane, kept per session like the rest of the desk. The
   /// oid is the identity — a commit is an object of the repository, not of the worktree, so the
   /// same one opened from two worktrees is the same text; what is per-session is which commits
@@ -345,11 +356,12 @@ final class WorktreeDeskViewController: NSViewController {
       let files = fileTabsByDesk.removeValue(forKey: id) ?? []
       let browsers = browserTabsByDesk.removeValue(forKey: id) ?? []
       let commits = commitTabsByDesk.removeValue(forKey: id) ?? []
+      let machines = machineTabsByDesk.removeValue(forKey: id) ?? []
       let order = tabOrderByDesk.removeValue(forKey: id)
       let selected = surfaceByDesk.removeValue(forKey: id)
       let panes: [NSViewController] =
         files.map { $0.content } + browsers.map { $0.pane }
-        + commits.map { $0.content }
+        + commits.map { $0.content } + machines.map { $0.pane }
       for pane in panes {
         if pane.isViewLoaded { pane.view.removeFromSuperview() }
         pane.removeFromParent()
@@ -358,11 +370,13 @@ final class WorktreeDeskViewController: NSViewController {
         desk.fileTabsByDesk[id] = files
         desk.browserTabsByDesk[id] = browsers
         desk.commitTabsByDesk[id] = commits
+        desk.machineTabsByDesk[id] = machines
         desk.tabOrderByDesk[id] = order
         desk.surfaceByDesk[id] = selected
         for tab in files { desk.wire(tab, in: id) }
         for tab in browsers { desk.wire(tab, in: id) }
         for tab in commits { desk.addChild(tab.content) }
+        for tab in machines { desk.wire(tab, in: id) }
       }
     }
     return DetachedTabs { desk in
@@ -390,6 +404,7 @@ final class WorktreeDeskViewController: NSViewController {
   private var fileTabsByDesk: [UUID: [FileTab]] = [:]
   private var browserTabsByDesk: [UUID: [BrowserTab]] = [:]
   private var commitTabsByDesk: [UUID: [CommitTab]] = [:]
+  private var machineTabsByDesk: [UUID: [MachineTab]] = [:]
   private var terminals: [TerminalSession] = []
   /// The worktree the desk's session is in now — what a file tab follows to.
   private var deskWorktreeID: UUID? {
@@ -408,6 +423,7 @@ final class WorktreeDeskViewController: NSViewController {
     case browser(UUID)
     case terminal(UUID)
     case commit(UUID)
+    case machine(UUID)
   }
   /// Which tab is showing, per desk — so the rail's selection moving away and coming back lands on
   /// the tab that was being read. The view holds every session's tabs at once and only shows one
@@ -435,6 +451,7 @@ final class WorktreeDeskViewController: NSViewController {
   var openFilePaths: [String] { fileTabs.filter { !$0.isRendered }.map(\.path) }
   private var browserTabs: [BrowserTab] { deskID.flatMap { browserTabsByDesk[$0] } ?? [] }
   private var commitTabs: [CommitTab] { deskID.flatMap { commitTabsByDesk[$0] } ?? [] }
+  private var machineTabs: [MachineTab] { deskID.flatMap { machineTabsByDesk[$0] } ?? [] }
 
   /// The commit tab showing right now, when the desk is on one. The scripting surface's handle on
   /// it: a commit tab has no specifier of its own, and checking one by clicking at coordinates is
@@ -466,6 +483,8 @@ final class WorktreeDeskViewController: NSViewController {
   /// image, which is the one surface here with no text in it for a find bar to reach.
   var canFind: Bool {
     guard surface != .none else { return false }
+    // A machine's screen is pixels from another computer: nothing here can search it.
+    if case .machine = surface { return false }
     return activeFileContent?.isShowingImage != true
   }
 
@@ -531,14 +550,14 @@ final class WorktreeDeskViewController: NSViewController {
       commitTabs.first { $0.id == id }?.content.performFind(sender)
     case .browser(let id):
       browserTabs.first { $0.id == id }?.pane.performFind(sender)
-    case .none:
+    case .machine, .none:
       break
     }
   }
 
   /// How many tabs the desk holds — ⌃⇥ tab-cycling validates on more than one.
   var tabCount: Int {
-    fileTabs.count + browserTabs.count + commitTabs.count + terminals.count
+    fileTabs.count + browserTabs.count + commitTabs.count + terminals.count + machineTabs.count
   }
 
   /// The tabs in strip order, so ⌃⇥ / ⌃⇧⇥ walk them the way they read: the order kept in
@@ -555,6 +574,7 @@ final class WorktreeDeskViewController: NSViewController {
       + (commitTabsByDesk[deskID] ?? []).map { .commit($0.id) }
       + (browserTabsByDesk[deskID] ?? []).map { .browser($0.id) }
       + terminals.map { .terminal($0.id) }
+      + (machineTabsByDesk[deskID] ?? []).map { .machine($0.id) }
     let known = (tabOrderByDesk[deskID] ?? []).filter(present.contains)
     return known + present.filter { !known.contains($0) }
   }
@@ -575,6 +595,13 @@ final class WorktreeDeskViewController: NSViewController {
           case .terminal: return .init(deskID: session.id, kind: .terminal)
           case .file: return .init(deskID: session.id, kind: .file)
           case .commit: return .init(deskID: session.id, kind: .commit)
+          case .machine(let id):
+            // A copy still being made has nothing to find again, so it is not saved.
+            guard
+              self.machineTabsByDesk[session.id]?.first(where: { $0.id == id })?.pane.machineID
+                != nil
+            else { return nil }
+            return .init(deskID: session.id, kind: .machine)
           case .none: return nil
           }
         }
@@ -592,8 +619,14 @@ final class WorktreeDeskViewController: NSViewController {
     var indexes: [UUID: Int] = [:]
     for session in workspace.sessions {
       guard let showing = surfaceByDesk[session.id], showing != .none else { continue }
+      // Counted without the machines that are not saved, so the index names the same tab in the
+      // strip that comes back.
       let order = orderedSurfaces(
-        in: session.id, terminals: workspace.terminals(inDesk: session.id))
+        in: session.id, terminals: workspace.terminals(inDesk: session.id)
+      ).filter { surface in
+        guard case .machine(let id) = surface else { return true }
+        return machineTabsByDesk[session.id]?.first(where: { $0.id == id })?.pane.machineID != nil
+      }
       guard let index = order.firstIndex(of: showing) else { continue }
       indexes[session.id] = index
     }
@@ -611,6 +644,71 @@ final class WorktreeDeskViewController: NSViewController {
       }
     }
   }
+
+  /// Every machine tab whose copy exists, across every desk, in strip order.
+  var restorableMachineTabs: [MachineTabState] {
+    machineTabsByDesk.flatMap { deskID, tabs in
+      inStripOrder(tabs, in: deskID, surface: { .machine($0.id) }).compactMap { tab in
+        tab.pane.machineID.map {
+          MachineTabState(
+            tabID: tab.id, deskID: deskID, machineID: $0, name: tab.pane.name,
+            title: tab.pane.machineTitle,
+            stopped: tab.pane.isStopped)
+        }
+      }
+    }
+  }
+
+  /// The machines this window's tabs are showing — what quitting saves first.
+  var machinePanes: [MachinePaneViewController] {
+    machineTabsByDesk.values.flatMap { $0.map(\.pane) }
+  }
+
+  /// Put last run's machine tabs back. Not started until looked at, like a file is not read: the
+  /// machine is saved beside its disk, so the tab only has to find it again.
+  func restoreMachineTabs(_ states: [MachineTabState]) {
+    loadViewIfNeeded()
+    // A machine already on a desk — adopted from the disk by a reload that ran first — is not
+    // given a second tab: two tabs on one copy is two machines' worth of closing, and closing
+    // either deletes the copy the other is showing. Nor is one whose copy is gone, which would
+    // only be a tab saying so.
+    let shown = Set(machinePanes.compactMap(\.machineID))
+    for state in states where workspace?.session(id: state.deskID) != nil {
+      guard !shown.contains(state.machineID),
+        UUID(uuidString: state.machineID).flatMap(MachineStore.session(id:)) != nil
+      else { continue }
+      adoptedMachineIDs.insert(state.machineID)
+      let tab = MachineTab(
+        pane: MachinePaneViewController(restoring: state), id: state.tabID ?? UUID())
+      wire(tab, in: state.deskID)
+      machineTabsByDesk[state.deskID, default: []].append(tab)
+    }
+  }
+
+  /// A session's machine with no tab — the window's saved state did not bring it back — gets its
+  /// tab again from the disk: the copy records whose it is, and as long as it is there, so is its
+  /// tab. Checked whenever the desk reloads; cheap, since `Sessions` holds a handful of
+  /// directories, and a machine is adopted only once per launch so closing its tab's view of it
+  /// cannot be undone by the next reload.
+  func adoptSessionMachines() {
+    guard let workspace else { return }
+    let shown = Set(machineTabsByDesk.values.flatMap { $0.compactMap(\.pane.machineID) })
+    for machine in MachineStore.sessions() {
+      let id = machine.id.uuidString
+      guard let session = machine.manifest.session, workspace.session(id: session) != nil,
+        !shown.contains(id), !adoptedMachineIDs.contains(id)
+      else { continue }
+      adoptedMachineIDs.insert(id)
+      let tab = MachineTab(
+        pane: MachinePaneViewController(
+          restoring: MachineTabState(
+            deskID: session, machineID: id, name: id, title: machine.manifest.title)))
+      wire(tab, in: session)
+      machineTabsByDesk[session, default: []].append(tab)
+    }
+  }
+
+  private var adoptedMachineIDs: Set<String> = []
 
   /// Every commit tab, across every desk, in strip order.
   var restorableCommitTabs: [CommitTabState] {
@@ -767,6 +865,10 @@ final class WorktreeDeskViewController: NSViewController {
         let tabs = commitTabsByDesk[row.deskID] ?? []
         guard index < tabs.count else { continue }
         order[row.deskID, default: []].append(.commit(tabs[index].id))
+      case .machine:
+        let tabs = machineTabsByDesk[row.deskID] ?? []
+        guard index < tabs.count else { continue }
+        order[row.deskID, default: []].append(.machine(tabs[index].id))
       }
     }
     for (deskID, surfaces) in order { tabOrderByDesk[deskID] = surfaces }
@@ -839,6 +941,10 @@ final class WorktreeDeskViewController: NSViewController {
       view.window?.makeFirstResponder(terminals.first { $0.id == id }?.view)
     case .browser(let id):
       view.window?.makeFirstResponder(browserTabs.first { $0.id == id }?.pane.webView)
+    case .machine(let id):
+      if let key = machineTabs.first(where: { $0.id == id })?.pane.keyView {
+        view.window?.makeFirstResponder(key)
+      }
     case .file, .commit, .none:
       break
     }
@@ -884,7 +990,7 @@ final class WorktreeDeskViewController: NSViewController {
     plusButton.isBordered = false
     plusButton.bezelStyle = .accessoryBarAction
     plusButton.contentTintColor = .secondaryLabelColor
-    plusButton.toolTip = "New Browser or Terminal"
+    plusButton.toolTip = "New Browser, Terminal or Virtual Machine"
     plusButton.target = self
     plusButton.action = #selector(showAddMenu(_:))
     plusButton.translatesAutoresizingMaskIntoConstraints = false
@@ -927,6 +1033,7 @@ final class WorktreeDeskViewController: NSViewController {
     terminals = deskID.flatMap { workspace?.terminals(inDesk: $0) } ?? []
     catchUpWithDisk()
     pruneClosedDesks()
+    adoptSessionMachines()
     reconcileSurface()
     rebuildTabBar()
     applySurface()
@@ -943,6 +1050,8 @@ final class WorktreeDeskViewController: NSViewController {
     guard previous != session.worktreeID,
       let worktree = workspace?.worktree(id: session.worktreeID)
     else { return }
+    // Its machine's share goes with it, the guest running or not.
+    for tab in machineTabsByDesk[session.id] ?? [] { tab.pane.shareChanged() }
     let showing = session.id == deskID
     let before = showing ? orderedSurfaces : []
     var tabs = fileTabsByDesk[session.id] ?? []
@@ -1027,6 +1136,71 @@ final class WorktreeDeskViewController: NSViewController {
     if let reveal { tab.content.reveal(line: reveal.line, term: reveal.term) }
   }
 
+  /// A machine on the session's desk: a copy of `template` made for this session, started and
+  /// shown in the tab.
+  @discardableResult
+  func openMachine(template: Machine, in session: UUID? = nil) -> UUID? {
+    loadViewIfNeeded()
+    guard let deskID = session ?? self.deskID, let workspace else { return nil }
+    let pane = MachinePaneViewController(template: template)
+    pane.sessionID = deskID
+    let tab = MachineTab(pane: pane)
+    wire(tab, in: deskID)
+    machineTabsByDesk[deskID, default: []].append(tab)
+    pane.start()
+    // Shown when it is the desk on screen; another session's desk carries it until it is looked at.
+    if deskID == self.deskID {
+      surface = .machine(tab.id)
+      terminals = workspace.terminals(inDesk: deskID)
+      rebuildTabBar()
+      applySurface()
+      focusActiveSurface()
+    }
+    view.window?.invalidateRestorableState()
+    return tab.id
+  }
+
+  /// The machine tab goes and its machine is deleted — asked already, by an alert or a card.
+  private func removeMachineTab(_ id: UUID, in deskID: UUID) {
+    guard var tabs = machineTabsByDesk[deskID], let index = tabs.firstIndex(where: { $0.id == id })
+    else { return }
+    let pane = tabs[index].pane
+    // Its directory goes a moment later, after the machine stops; until then the next reload
+    // must not take it for a machine whose tab went missing.
+    if let machineID = pane.machineID { adoptedMachineIDs.insert(machineID) }
+    pane.deleteMachine()
+    pane.removeFromParent()
+    tabs.remove(at: index)
+    machineTabsByDesk[deskID] = tabs
+    if deskID == self.deskID {
+      if surface == .machine(id) { surface = .none }
+      rebuildTabBar()
+      applySurface()
+    }
+    view.window?.invalidateRestorableState()
+  }
+
+  private func wire(_ tab: MachineTab, in deskID: UUID) {
+    addChild(tab.pane)
+    // The guest sees the checkout its session is standing in, and is moved when the session is.
+    tab.pane.sharedDirectory = { [weak self] in
+      guard let workspace = self?.workspace, let session = workspace.session(id: deskID) else {
+        return nil
+      }
+      return workspace.worktree(id: session.worktreeID)?.url
+    }
+    // The id, not the tab: the tab owns the pane that owns these closures.
+    let id = tab.id
+    tab.pane.onStateChange = { [weak self] in
+      // The screen takes the keyboard once it is up, if its tab is the one showing.
+      guard let self, self.surface == .machine(id) else { return }
+      self.focusActiveSurface()
+    }
+    tab.pane.onIdentified = { [weak self] in self?.view.window?.invalidateRestorableState() }
+    // The strip's menus are built with the strip, so a tick moves only when it is rebuilt.
+    tab.pane.onResolutionChange = { [weak self] in self?.rebuildTabBar() }
+  }
+
   /// Pin a preview tab so it stops behaving like one — what a double-click's first step does,
   /// and what the first edit does to the file it lands in. Returns whether there was a preview
   /// to pin, which is what tells a double-click to maximize instead; repainting is the caller's,
@@ -1042,7 +1216,7 @@ final class WorktreeDeskViewController: NSViewController {
       guard let tab = commitTabs.first(where: { $0.id == id }), tab.isPreview else { return false }
       tab.isPreview = false
       return true
-    case .browser, .terminal, .none:
+    case .browser, .terminal, .machine, .none:
       return false
     }
   }
@@ -1161,11 +1335,22 @@ final class WorktreeDeskViewController: NSViewController {
   /// order and open at which tab, is otherwise only checkable by clicking at coordinates.
   var tabStripReport: String {
     let order = orderedSurfaces
-    guard !order.isEmpty else { return "(no tabs)" }
-    return order.enumerated().map { index, item in
-      let marker = item == surface ? "●" : " "
-      return "\(index + 1) \(marker) \(describe(item))"
-    }.joined(separator: "\n")
+    // The machines on other desks, too: a machine runs whether or not its desk is the one on
+    // screen, and one whose tab stood on the wrong desk was the bug this line is here to show.
+    let elsewhere = machineTabsByDesk.filter { $0.key != deskID }.flatMap { desk, tabs in
+      tabs.map {
+        "- machine on desk \(desk.uuidString): \($0.pane.machineTitle)  \($0.pane.name)"
+          + "  (\($0.pane.stateDescription))"
+      }
+    }
+    guard !order.isEmpty else {
+      return (["(no tabs)"] + elsewhere).joined(separator: "\n")
+    }
+    return
+      (order.enumerated().map { index, item in
+        let marker = item == surface ? "●" : " "
+        return "\(index + 1) \(marker) \(describe(item))"
+      } + elsewhere).joined(separator: "\n")
   }
 
   private func describe(_ item: Surface) -> String {
@@ -1189,6 +1374,12 @@ final class WorktreeDeskViewController: NSViewController {
     case .terminal(let id):
       guard let terminal = terminals.first(where: { $0.id == id }) else { return "terminal" }
       return "terminal  \(terminal.title)"
+    case .machine(let id):
+      guard let tab = machineTabs.first(where: { $0.id == id }) else { return "machine" }
+      let pending = tab.pane.isPending ? "  (unread)" : ""
+      return
+        "machine   \(tab.pane.machineTitle)  \(tab.pane.name)  (\(tab.pane.stateDescription))"
+        + pending
     case .none:
       return "none"
     }
@@ -1562,6 +1753,26 @@ final class WorktreeDeskViewController: NSViewController {
       // A preview closing is not the editor exiting: an `edit … waiting` is waiting on the source.
       if !closed.isRendered { onFileTabClosed?(closed.worktreeID, closed.path) }
       return true
+    case .machine(let id):
+      guard let deskID, var tabs = machineTabsByDesk[deskID],
+        let index = tabs.firstIndex(where: { $0.id == id })
+      else { return true }
+      // Closing the tab is deleting the machine — the copy is the tab's and nothing else holds
+      // it — so it is asked, the way a file's unsaved edit is.
+      let pane = tabs[index].pane
+      if pane.machineID != nil {
+        let alert = NSAlert()
+        alert.messageText = "Delete the virtual machine “\(pane.machineTitle)”?"
+        alert.informativeText =
+          "This session's copy is stopped and deleted from this Mac, with everything"
+          + " done inside it. The template is not touched."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
+      }
+      removeMachineTab(id, in: deskID)
+      return true
     case .commit(let id):
       guard let deskID, var tabs = commitTabsByDesk[deskID],
         let index = tabs.firstIndex(where: { $0.id == id })
@@ -1717,6 +1928,15 @@ final class WorktreeDeskViewController: NSViewController {
       for tab in commitTabsByDesk[key] ?? [] { tab.content.removeFromParent() }
       commitTabsByDesk[key] = nil
     }
+    // A session gone takes its tabs, but not its machines: closing a repository is not a decision
+    // to delete what ran in it, so the machines are saved and kept on disk.
+    for key in machineTabsByDesk.keys where !live.contains(key) {
+      for tab in machineTabsByDesk[key] ?? [] {
+        tab.pane.suspendMachine()
+        tab.pane.removeFromParent()
+      }
+      machineTabsByDesk[key] = nil
+    }
     for key in tabOrderByDesk.keys where !live.contains(key) { tabOrderByDesk[key] = nil }
     for key in surfaceByDesk.keys where !live.contains(key) { surfaceByDesk[key] = nil }
   }
@@ -1740,7 +1960,8 @@ final class WorktreeDeskViewController: NSViewController {
     // Show the strip whenever anything is open, a lone file included — making a single tab the one
     // case that hides its own tab (and the `+` with it) was the odd exception. Only nothing open
     // collapses it.
-    let total = files.count + commits.count + browsers.count + terminals.count
+    let machines = machineTabs
+    let total = files.count + commits.count + browsers.count + terminals.count + machines.count
     defer { onTabsChanged?() }
     guard total > 0 else {
       tabScroll.isHidden = true
@@ -1822,6 +2043,14 @@ final class WorktreeDeskViewController: NSViewController {
             index: index, title: terminal.title,
             image: NSImage(systemSymbolName: "terminal", accessibilityDescription: nil),
             selected: surface == item))
+      case .machine(let id):
+        guard let machine = machines.first(where: { $0.id == id }) else { continue }
+        let tab = makeTab(
+          index: index, title: machine.pane.tabTitle,
+          image: NSImage(systemSymbolName: "desktopcomputer", accessibilityDescription: nil),
+          selected: surface == item)
+        tab.toolTip = machine.pane.machineTitle
+        tabs.append(tab)
       case .none:
         continue
       }
@@ -1953,6 +2182,34 @@ final class WorktreeDeskViewController: NSViewController {
     // Only a preview tab has anything to keep open; the rest already are.
     if preview { add("Keep Open", #selector(keepTabOpen(_:))) }
     add(isMaximized ? "Restore Layout" : "Maximize Tab", #selector(toggleMaximized(_:)))
+    // A machine's screen: follow the tab, or hold the guest at a size and scale it into the tab.
+    if orderedSurfaces.indices.contains(index), case .machine(let id) = orderedSurfaces[index],
+      let pane = machineTabs.first(where: { $0.id == id })?.pane
+    {
+      menu.addItem(.separator())
+      let resolution = NSMenu()
+      let fit = resolution.addItem(
+        withTitle: "Fit to Tab", action: #selector(setMachineResolution(_:)), keyEquivalent: "")
+      fit.target = self
+      fit.representedObject = id
+      fit.state = pane.fixedResolution == nil ? .on : .off
+      resolution.addItem(.separator())
+      for (width, height) in MachinePaneViewController.fixedResolutions {
+        let item = resolution.addItem(
+          withTitle: "\(width) × \(height)", action: #selector(setMachineResolution(_:)),
+          keyEquivalent: "")
+        item.target = self
+        item.representedObject = id
+        item.tag = width << 16 | height
+        item.state = pane.fixedResolution.map { $0 == (width, height) } == true ? .on : .off
+      }
+      menu.addItem(withTitle: "Resolution", action: nil, keyEquivalent: "").submenu = resolution
+      let save = menu.addItem(
+        withTitle: "Save as Template…", action: #selector(saveMachineAsTemplate(_:)),
+        keyEquivalent: "")
+      save.target = self
+      save.representedObject = id
+    }
     // A Markdown file's two faces, each offering the other: the source opens its preview, and
     // the preview opens the source where it is being read.
     let order = orderedSurfaces
@@ -2068,7 +2325,10 @@ final class WorktreeDeskViewController: NSViewController {
     rebuildTabBar()
     applySurface()
     // A terminal wants the keyboard as soon as it is showing; the rest are picked to be read.
-    if case .terminal = target { focusActiveSurface() }
+    switch target {
+    case .terminal, .machine: focusActiveSurface()
+    default: break
+    }
   }
 
   /// ⌘1…⌘9: the Nth tab of the strip, if the strip is that long.
@@ -2122,6 +2382,42 @@ final class WorktreeDeskViewController: NSViewController {
     rebuildTabBar()
   }
 
+  @objc private func saveMachineAsTemplate(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? UUID,
+      let pane = machineTabs.first(where: { $0.id == id })?.pane, let window = view.window
+    else { return }
+    let alert = NSAlert()
+    alert.messageText = "Save “\(pane.machineTitle)” as a template?"
+    alert.informativeText =
+      "The machine shuts down, is copied and starts again. What is in it, sign-ins included, is"
+      + " what every copy starts from."
+    let field = NSTextField(string: "\(pane.machineTitle) copy")
+    field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+    alert.accessoryView = field
+    alert.addButton(withTitle: "Save")
+    alert.addButton(withTitle: "Cancel")
+    alert.window.initialFirstResponder = field
+    alert.beginSheetModal(for: window) { response in
+      let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+      guard response == .alertFirstButtonReturn, !name.isEmpty else { return }
+      pane.saveAsTemplate(title: name) { result in
+        if case .failure(let error) = result { NSAlert(error: error).runModal() }
+      }
+    }
+  }
+
+  @objc private func setMachineResolution(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? UUID,
+      let pane = machineTabs.first(where: { $0.id == id })?.pane
+    else { return }
+    let size = sender.tag == 0 ? nil : (width: sender.tag >> 16, height: sender.tag & 0xFFFF)
+    do {
+      try pane.setResolution(size)
+    } catch {
+      NSAlert(error: error).runModal()
+    }
+  }
+
   @objc private func toggleMaximized(_ sender: Any?) {
     onSetMaximized?(!isMaximized)
   }
@@ -2132,6 +2428,10 @@ final class WorktreeDeskViewController: NSViewController {
       .target = self
     menu.addItem(withTitle: "New Terminal", action: #selector(addTerminalTab), keyEquivalent: "")
       .target = self
+    // The same list File ▸ New Virtual Machine shows; its items go up the responder chain to the
+    // window, which opens the machine on this desk.
+    menu.addItem(withTitle: "New Virtual Machine", action: nil, keyEquivalent: "").submenu =
+      VirtualMachinesMenu(title: "New Virtual Machine")
     menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
   }
 
@@ -2174,6 +2474,14 @@ final class WorktreeDeskViewController: NSViewController {
     case .terminal(let id):
       if let terminal = terminals.first(where: { $0.id == id }) {
         setSurfaceView(terminal.view)
+      } else {
+        setSurfaceView(placeholder)
+      }
+    case .machine(let id):
+      if let tab = machineTabs.first(where: { $0.id == id }) {
+        // A restored tab connects the first time it is looked at.
+        if tab.pane.isPending { tab.pane.startIfLeftRunning() }
+        setSurfaceView(tab.pane.view)
       } else {
         setSurfaceView(placeholder)
       }

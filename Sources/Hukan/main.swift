@@ -76,7 +76,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     for controller in WorkspaceWindowController.all where !controller.confirmClosingWindow() {
       return .terminateCancel
     }
-    return .terminateNow
+    // The machines on the desks run in this process, so they are saved before it goes — a machine
+    // not saved by then is a power cut — and a relaunch resumes each where it was. Waited for,
+    // and done here rather than as the windows close: closing lets go of the tabs that know
+    // which machines they are.
+    let machines = WorkspaceWindowController.all.flatMap(\.deskForScripting.machinePanes)
+      .filter(\.isRunning)
+    guard !machines.isEmpty else { return .terminateNow }
+    MachinePaneViewController.suspendAll(machines) {
+      NSApp.reply(toApplicationShouldTerminate: true)
+    }
+    return .terminateLater
   }
 
   /// Stop every agent before quitting. `claude -p` runs as a child process, and a child is not
@@ -268,6 +278,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       withTitle: "New Terminal", action: #selector(WorkspaceWindowController.newTerminal(_:)),
       keyEquivalent: "t")
     terminal.keyEquivalentModifierMask = [.command, .control]
+    // A submenu, like Open Recent: what it offers is the store's templates, which change under it. No key
+    // equivalent for the same reason, and because a machine is the rare tab — opened once for a
+    // task, not followed into by the dozen.
+    let machines = fileMenu.addItem(
+      withTitle: "New Virtual Machine", action: nil, keyEquivalent: "")
+    machines.submenu = VirtualMachinesMenu(title: "New Virtual Machine")
     fileMenu.addItem(.separator())
     // Save the edited source file. Only the Source pane is editable, so this is disabled unless
     // an edit is pending; plain ⌘S, since Hide Sidebar took ⌃⌘S.

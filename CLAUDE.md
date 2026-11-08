@@ -372,7 +372,11 @@ Workspace (one window)
   reaches. That is the whole reason it is asked for, and the reason the hidden `browser` verb's
   loading half is guarded now — a session's agent reaches `osascript` with no prompt in the way,
   and that verb steered a logged-in tab with no card in front of it.
-- **Templates are made with nothing to answer**, SIP off through Recovery, because a permission
+- **A session can have a macOS machine of its own, in this process, as a tab on its desk.** Built
+  in on Virtualization.framework rather than driving UTM or tart: what the agent needs — a channel
+  into the guest, a per-session copy, a saved state — is the part those tools do not hand over. A
+  copy is an APFS clone of a template; closing its tab deletes it, after asking, and quitting saves
+  it. **Templates are made with nothing to answer**, SIP off through Recovery, because a permission
   prompt with nobody there is a wall: a template is for automation and holds nothing worth
   protecting.
   **Window ▸ Virtual Machines is the store, not a settings window**: every row is a thing on disk,

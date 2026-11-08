@@ -851,7 +851,11 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   }
 
   /// The session machines a tab somewhere is running, which are not this window's to delete.
-  private static var runningMachineIDs: Set<String> { [] }
+  private static var runningMachineIDs: Set<String> {
+    Set(
+      WorkspaceWindowController.all.flatMap(\.deskForScripting.machinePanes)
+        .filter(\.isRunning).compactMap(\.machineID))
+  }
 }
 
 /// The rows of a machine's detail, the way System Settings groups them: a rounded panel the width

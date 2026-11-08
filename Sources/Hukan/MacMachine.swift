@@ -26,6 +26,15 @@ final class MacMachine: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
   private let helloListener = VZVirtioSocketListener()
   static let helloPort: UInt32 = 7739
 
+  /// Point the guest's share at another worktree while it runs. A share is the configuration's
+  /// only at boot; after that it is the device's, and the device takes a new one as it stands.
+  func share(_ directory: URL) {
+    guard let device = vm?.directorySharingDevices.first as? VZVirtioFileSystemDevice else {
+      return
+    }
+    device.share = Self.share(directory)
+  }
+
   init(machine: Machine, sharedDirectory: URL?) {
     self.machine = machine
     self.sharedDirectory = sharedDirectory
