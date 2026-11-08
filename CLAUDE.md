@@ -1844,7 +1844,8 @@ The project is hand-authored and tracked — edit `project.pbxproj` directly. Fo
 file-system-synchronized, so a new file under `Sources/` just appears. `Resources/hukan.icns`,
 `Resources/rg`, `Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework` and the
 query files under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
-step, not part of the build.
+step, not part of the build. `Resources/hukan-guest-agent` is the guest agent, built by
+`Vendor/build-guest-agent.sh`.
 
 `Resources/rg` is ripgrep, and it is the one program hukan runs. The files panel's filter and its
 content search are a process each, per gesture, started by someone typing and killed by the next
