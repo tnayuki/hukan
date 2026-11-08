@@ -1971,7 +1971,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
         done(.error("the session is gone"))
         return
       }
-      self.files.desk.performBrowserTool(call, for: session, completion: done)
+      if call.name.hasPrefix("vm_") || call.name.hasPrefix("guest_") {
+        self.files.desk.performMachineTool(call, for: session, completion: done)
+      } else {
+        self.files.desk.performBrowserTool(call, for: session, completion: done)
+      }
     }
     session.onNeedsStart = { [weak self] in self?.startSession(session) }
     session.onInstructed = { [weak self] in self?.unarchiveOnInstruction(session) }

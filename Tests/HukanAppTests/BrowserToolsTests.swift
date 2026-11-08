@@ -126,7 +126,10 @@ final class BrowserToolsTests: XCTestCase {
       tools.map { $0["name"] as? String },
       [
         "set_tags", "browser_tabs", "browser_open", "browser_read", "browser_navigate",
-        "browser_screenshot", "browser_run",
+        "browser_screenshot", "browser_run", "vm_open", "vm_stop", "vm_close", "vm_list",
+        "guest_exec",
+        "guest_read_file", "guest_write_file", "vm_set_resolution", "guest_screenshot",
+        "vm_save_template",
       ])
     for tool in tools
     where (tool["name"] as? String)?.hasPrefix("browser_") == true

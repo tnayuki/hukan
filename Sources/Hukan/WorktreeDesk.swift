@@ -1160,6 +1160,15 @@ final class WorktreeDeskViewController: NSViewController {
     return tab.id
   }
 
+  /// A machine was deleted from the Virtual Machines window: its tab has nothing left to show.
+  func closeTab(ofMachine machineID: String) {
+    for (deskID, tabs) in machineTabsByDesk {
+      for tab in tabs where tab.pane.machineID == machineID {
+        removeMachineTab(tab.id, in: deskID)
+      }
+    }
+  }
+
   /// The machine tab goes and its machine is deleted — asked already, by an alert or a card.
   private func removeMachineTab(_ id: UUID, in deskID: UUID) {
     guard var tabs = machineTabsByDesk[deskID], let index = tabs.firstIndex(where: { $0.id == id })
@@ -1412,6 +1421,363 @@ final class WorktreeDeskViewController: NSViewController {
   }
 
   // MARK: The agent's tools
+
+  /// A `vm_*` call from the session's agent: the machines on that session's own desk, never the
+  /// one on screen, each asked about once — the same card a web tab gets, with one answer, since a
+  /// command run in a machine is never only a read.
+  func performMachineTool(
+    _ call: HukanMCP.Call, for session: AgentSession,
+    completion: @escaping (HukanMCP.Outcome) -> Void
+  ) {
+    let deskID = session.id
+    let tabs = inStripOrder(
+      machineTabsByDesk[deskID] ?? [], in: deskID, surface: { .machine($0.id) })
+    if call.name == "vm_open" {
+      openMachineForAgent(call, for: session, existing: tabs.first, completion: completion)
+      return
+    }
+    if call.name == "vm_list" {
+      guard !tabs.isEmpty else {
+        completion(
+          .text("No virtual machines are open on this session's desk — vm_open opens one."))
+        return
+      }
+      let lines = tabs.map { tab in
+        let pane = tab.pane
+        return [
+          tab.id.uuidString, pane.machineTitle, pane.isRunning ? "running" : pane.stateDescription,
+          pane.resolutionDescription, pane.agentAllowed ? "allowed" : "not allowed",
+        ].joined(separator: "\t")
+      }
+      completion(
+        .text((["id\ttemplate\tstate\tresolution\tuse"] + lines).joined(separator: "\n")))
+      return
+    }
+    guard let id = call.string("machine").flatMap({ UUID(uuidString: $0) }),
+      let tab = tabs.first(where: { $0.id == id })
+    else {
+      completion(.error("No such machine on this session's desk — vm_list lists the ids."))
+      return
+    }
+    let pane = tab.pane
+    // Stopping is asked every time too: someone may be working in the machine.
+    if call.name == "vm_stop" {
+      guard pane.isRunning else {
+        completion(.text("\(pane.machineTitle) is not running."))
+        return
+      }
+      session.requestGrant(
+        tabID: id, title: pane.machineTitle, url: "", level: .drive, machine: true, stopping: true
+      ) { granted in
+        guard granted != nil else {
+          completion(.error("The user declined to stop the machine."))
+          return
+        }
+        pane.stopMachine { completion(.text("stopped — vm_open starts it again")) }
+      }
+      return
+    }
+    // Deleting is asked every time, whatever else the agent was allowed.
+    if call.name == "vm_close" {
+      session.requestGrant(
+        tabID: id, title: pane.machineTitle, url: "", level: .drive, machine: true, closing: true
+      ) { [weak self] granted in
+        guard let self, granted != nil else {
+          completion(.error("The user declined to delete the machine."))
+          return
+        }
+        self.removeMachineTab(id, in: deskID)
+        completion(.text("deleted \(id.uuidString)"))
+      }
+      return
+    }
+    if call.name == "vm_save_template" {
+      guard let name = call.string("name")?.trimmingCharacters(in: .whitespaces), !name.isEmpty
+      else {
+        completion(.error("vm_save_template needs a name."))
+        return
+      }
+      session.requestGrant(
+        tabID: id, title: pane.machineTitle, url: name, level: .drive, machine: true, saving: true
+      ) { granted in
+        guard granted != nil else {
+          completion(.error("The user declined to save the machine as a template."))
+          return
+        }
+        pane.saveAsTemplate(title: name) { result in
+          switch result {
+          case .failure(let error):
+            completion(.error(MacMachine.explain(error)))
+          case .success(let template):
+            Self.waitForAgent(tab) { outcome in
+              if case .error = outcome { return completion(outcome) }
+              completion(.text("template \(template.id.uuidString)\t\(name)"))
+            }
+          }
+        }
+      }
+      return
+    }
+    if pane.agentAllowed {
+      Self.runMachineTool(call, on: pane, completion: completion)
+      return
+    }
+    session.requestGrant(
+      tabID: id, title: pane.machineTitle, url: "", level: .drive, machine: true
+    ) { [weak pane] granted in
+      guard let pane, granted != nil else {
+        completion(.error("The user declined to let you use this machine."))
+        return
+      }
+      pane.agentAllowed = true
+      Self.runMachineTool(call, on: pane, completion: completion)
+    }
+  }
+
+  /// What each call does once the machine is the agent's to use.
+  private static func runMachineTool(
+    _ call: HukanMCP.Call, on pane: MachinePaneViewController,
+    completion: @escaping (HukanMCP.Outcome) -> Void
+  ) {
+    guard let vm = pane.virtualMachine else {
+      completion(.error("The machine is not running — vm_open starts it."))
+      return
+    }
+    // The resolution is the host's to set, not the guest agent's, so it needs no agent at all.
+    if call.name == "vm_set_resolution" {
+      let width = (call.arguments["width"] as? Int) ?? 0
+      let height = (call.arguments["height"] as? Int) ?? 0
+      let size = width > 0 && height > 0 ? (width: width, height: height) : nil
+      // Answered once the guest has taken it, so the screenshot that follows is the new size.
+      var answered = false
+      let answer: (String) -> Void = { report in
+        guard !answered else { return }
+        answered = true
+        completion(
+          .text(
+            "resolution: \(pane.resolutionDescription) — \(report)"))
+      }
+      do {
+        if size == nil {
+          try pane.setResolution(nil)
+          answer("the guest follows the tab")
+        } else {
+          try pane.setResolution(size, settled: answer)
+          DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+            answer("still settling after thirty seconds")
+          }
+        }
+      } catch {
+        completion(.error(error.localizedDescription))
+      }
+      return
+    }
+    let admin = call.arguments["admin"] as? Bool ?? false
+    // Never dial a half that has not said hello: a connection to a port nobody listens on has
+    // crashed Virtualization.framework.
+    guard pane.agentsHeard.contains(admin ? "root" : "user") else {
+      completion(
+        .error(
+          "The guest agent has not started yet — it comes up with the guest's login, and says so"
+            + " within fifteen seconds. Try again shortly."))
+      return
+    }
+    switch call.name {
+    case "guest_exec":
+      guard let command = call.string("command") else {
+        completion(.error("guest_exec needs a command."))
+        return
+      }
+      let timeout = (call.arguments["timeout"] as? Double) ?? 600
+      GuestAgent.exec(
+        ["/bin/zsh", "-c", command], on: vm, admin: admin, cwd: call.string("cwd"),
+        timeout: timeout
+      ) { result in
+        switch result {
+        case .failure(let error): completion(.error(error.localizedDescription))
+        case .success(let run):
+          var text = "exit \(run.exit)\(run.timedOut ? " (timed out)" : "")"
+          let out = String(decoding: run.stdout, as: UTF8.self)
+          let err = String(decoding: run.stderr, as: UTF8.self)
+          if !out.isEmpty { text += "\n--- stdout\n" + clip(out) }
+          if !err.isEmpty { text += "\n--- stderr\n" + clip(err) }
+          completion(.text(text))
+        }
+      }
+    case "guest_read_file":
+      guard let path = call.string("path") else {
+        completion(.error("guest_read_file needs a path."))
+        return
+      }
+      GuestAgent.read(path, on: vm, admin: admin) { result in
+        switch result {
+        case .failure(let error): completion(.error(error.localizedDescription))
+        case .success(let data):
+          guard !data.contains(0), let text = String(data: data, encoding: .utf8) else {
+            completion(.error("\(path) is not text."))
+            return
+          }
+          completion(.text(clip(text)))
+        }
+      }
+    case "guest_write_file":
+      guard let path = call.string("path"), let content = call.arguments["content"] as? String
+      else {
+        completion(.error("guest_write_file needs a path and content."))
+        return
+      }
+      GuestAgent.write(Data(content.utf8), to: path, on: vm, admin: admin) { result in
+        switch result {
+        case .failure(let error): completion(.error(error.localizedDescription))
+        case .success: completion(.text("wrote \(path)"))
+        }
+      }
+    case "guest_screenshot":
+      // Taken in the guest, by the agent in the user's session: what the person sees in the tab.
+      let path = "/tmp/hukan-screenshot.png"
+      GuestAgent.exec(["screencapture", "-x", "-t", "png", path], on: vm) { result in
+        guard case .success(let run) = result, run.exit == 0 else {
+          completion(
+            .error(
+              "The guest could not take a screenshot. Its login window may be up, or"
+                + " hukan-guest-agent may not have Screen Recording — the user can see which in"
+                + " the machine's tab."))
+          return
+        }
+        GuestAgent.read(path, on: vm) { result in
+          switch result {
+          case .failure(let error): completion(.error(error.localizedDescription))
+          case .success(let png): completion(.image(png, mimeType: "image/png"))
+          }
+        }
+      }
+    default:
+      completion(.error("Unknown tool \(call.name)."))
+    }
+  }
+
+  /// `vm_open`: the session's machine, started and answering. One per session — an open one is
+  /// started if it is stopped and returned, and only a new one is asked about, since a copy made
+  /// is disk spent and a guest the agent then runs.
+  private func openMachineForAgent(
+    _ call: HukanMCP.Call, for session: AgentSession, existing: MachineTab?,
+    completion: @escaping (HukanMCP.Outcome) -> Void
+  ) {
+    if let existing {
+      // A tab whose copy is gone has nothing to start: it goes, and a new machine is asked for.
+      if let machineID = existing.pane.machineID,
+        UUID(uuidString: machineID).flatMap(MachineStore.session(id:)) == nil
+      {
+        removeMachineTab(existing.id, in: session.id)
+        openMachineForAgent(call, for: session, existing: nil, completion: completion)
+        return
+      }
+      // Starting a machine runs whatever it holds, so a machine the agent has not been given is
+      // asked about first, as using it would be.
+      guard existing.pane.agentAllowed else {
+        session.requestGrant(
+          tabID: existing.id, title: existing.pane.machineTitle, url: "", level: .drive,
+          machine: true
+        ) { granted in
+          guard granted != nil else {
+            completion(.error("The user declined to let you use this machine."))
+            return
+          }
+          existing.pane.agentAllowed = true
+          existing.pane.start()
+          Self.waitForAgent(existing, completion: completion)
+        }
+        return
+      }
+      existing.pane.start()
+      Self.waitForAgent(existing, completion: completion)
+      return
+    }
+    let templates = MachineStore.templates()
+    let wanted = call.string("template")
+    let template: Machine
+    if let wanted {
+      guard
+        let found = templates.first(where: {
+          $0.id.uuidString.caseInsensitiveCompare(wanted) == .orderedSame
+            || $0.manifest.title == wanted
+        })
+      else {
+        completion(.error("No template \(wanted).\n" + Self.templateList(templates)))
+        return
+      }
+      template = found
+    } else if templates.count == 1 {
+      template = templates[0]
+    } else if templates.isEmpty {
+      completion(
+        .error(
+          "There are no templates. The user makes one in Window ▸ Virtual Machines, which"
+            + " takes about ten minutes."))
+      return
+    } else {
+      completion(.error("Say which template.\n" + Self.templateList(templates)))
+      return
+    }
+    let deskID = session.id
+    session.requestGrant(
+      tabID: UUID(), title: template.manifest.title, url: "", level: .drive, opening: true,
+      machine: true
+    ) { [weak self] granted in
+      guard let self, granted != nil else {
+        completion(.error("The user declined to open a virtual machine."))
+        return
+      }
+      guard let id = self.openMachine(template: template, in: deskID),
+        let tab = self.machineTabsByDesk[deskID]?.first(where: { $0.id == id })
+      else {
+        completion(.error("The machine could not be opened."))
+        return
+      }
+      // The yes was to a machine the agent asked for in order to use it.
+      tab.pane.agentAllowed = true
+      Self.waitForAgent(tab, completion: completion)
+    }
+  }
+
+  private static func templateList(_ templates: [Machine]) -> String {
+    (["id\tname"] + templates.map { "\($0.id.uuidString)\t\($0.manifest.title)" })
+      .joined(separator: "\n")
+  }
+
+  /// Wait until both halves of the guest agent have said hello, so the call that follows can use
+  /// them at once; a machine that fails or stops on the way says why instead.
+  private static func waitForAgent(
+    _ tab: MachineTab, completion: @escaping (HukanMCP.Outcome) -> Void
+  ) {
+    let deadline = Date().addingTimeInterval(600)
+    func check() {
+      let pane = tab.pane
+      let answer = "\(tab.id.uuidString)\t\(pane.machineTitle)\trunning"
+      if pane.agentsHeard.contains("user"), pane.agentsHeard.contains("root") {
+        completion(.text(answer))
+      } else if pane.stateDescription.hasPrefix("failed") {
+        completion(.error("\(pane.machineTitle) \(pane.stateDescription)"))
+      } else if pane.stateDescription == "stopped" {
+        completion(.error("\(pane.machineTitle) stopped before its agent answered."))
+      } else if Date() > deadline {
+        completion(
+          .text(
+            answer + "\n(the guest agent has not answered in ten minutes — try guest_exec later)"))
+      } else {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: check)
+      }
+    }
+    check()
+  }
+
+  /// Output past this is cut, with a line saying so: a command that prints a megabyte would
+  /// otherwise be a megabyte in the conversation.
+  private static func clip(_ text: String) -> String {
+    let limit = 100_000
+    guard text.count > limit else { return text }
+    return String(text.prefix(limit)) + "\n… (\(text.count - limit) more characters cut)"
+  }
 
   /// A browser tool call from `session`, against the tabs of its own desk — not the desk on
   /// screen, which is whichever the rail has selected and may be another task's. `browser_tabs`

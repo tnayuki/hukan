@@ -382,6 +382,9 @@ Workspace (one window)
   **Window ▸ Virtual Machines is the store, not a settings window**: every row is a thing on disk,
   nothing in it is a preference. Images and session machines are excluded from Time Machine;
   templates are not.
+  **The agent reaches the guest through an agent of hukan's, over vsock**, and tools named for
+  where they run: `vm_` acts on the machine from here, `guest_` runs inside it. Opening, first use,
+  stopping, saving a template and deleting are each a card.
 - **A client outside hukan reaches the sessions over stdio, from the executable the bundle
   already ships.** It was built for the Claude desktop app, which is where a person keeps track of
   their work as a whole, and what this window knows — which session is working, which is waiting on
@@ -1803,6 +1806,9 @@ Workspace (one window)
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
+- **Windows guests** — QEMU from Homebrew, the same tools under `guest_`, an agent written again
+  for Windows. The worktree share is the part that cannot be the same: virtiofs is not available
+  to QEMU on macOS.
 - **Browser** — what is left open is the login state: sharing Safari's is officially impossible
   (plan B: inject `Cookies.binarycookies`, needs Full Disk Access). Measured with a WKWebView
   harness (2026-08): SSO redirect chains and Kolide device trust **work**; passkeys and iCloud

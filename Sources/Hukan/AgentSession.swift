@@ -76,6 +76,19 @@ struct PendingGrant {
   /// card asks about opening rather than reading, and the answer decides what the new tab is
   /// shared for.
   var opening = false
+  /// The tab is a virtual machine rather than a page: the card asks whether the agent may use it
+  /// at all — run commands in it, move files in and out, look at its screen — since a command run
+  /// is never only a read. The level asked for is always `.drive`.
+  var machine = false
+  /// With `machine`: the machine is to be deleted, which is asked on its own every time — using
+  /// a machine is not consent to throw away what was done in it.
+  var closing = false
+  /// With `machine`: the machine is to be made a template named `url`, asked on its own for the
+  /// same reason — what is in it becomes what every later copy starts from.
+  var saving = false
+  /// With `machine`: the machine is to be stopped, asked on its own every time — someone may be
+  /// working in it, and using a machine is not consent to have it taken away from under them.
+  var stopping = false
   /// Answered exactly once: the level granted, or nil for declined.
   let decide: (BrowserGrant.Level?) -> Void
 }
@@ -1712,10 +1725,12 @@ final class AgentSession {
   /// first waits.
   func requestGrant(
     tabID: UUID, title: String, url: String, level: BrowserGrant.Level, opening: Bool = false,
+    machine: Bool = false, closing: Bool = false, saving: Bool = false, stopping: Bool = false,
     decide: @escaping (BrowserGrant.Level?) -> Void
   ) {
     pendingGrant = PendingGrant(
-      tabID: tabID, title: title, url: url, level: level, opening: opening, decide: decide)
+      tabID: tabID, title: title, url: url, level: level, opening: opening, machine: machine,
+      closing: closing, saving: saving, stopping: stopping, decide: decide)
     state = .needsAttention
     touch()  // needing you is activity; float it up so it is easy to find
     onStateChange?()
@@ -1726,8 +1741,24 @@ final class AgentSession {
   func resolveGrant(_ level: BrowserGrant.Level?) {
     guard let grant = pendingGrant else { return }
     pendingGrant = nil
-    let name = "\u{201C}\(grant.opening ? grant.url : grant.title)\u{201D}"
+    let name = "\u{201C}\(grant.opening && !grant.machine ? grant.url : grant.title)\u{201D}"
     let act = grant.opening ? "opened \(name) for the agent" : "shared \(name) with the agent"
+    if grant.machine {
+      let what =
+        grant.saving
+        ? "save \u{201C}\(grant.url)\u{201D} as a template"
+        : grant.closing
+          ? "delete \(name)"
+          : grant.stopping
+            ? "stop \(name)" : grant.opening ? "open a machine from \(name)" : "use \(name)"
+      append(
+        Transcript.note(
+          level == nil ? "→ declined to let the agent \(what)" : "→ let the agent \(what)"))
+      state = .running
+      onStateChange?()
+      grant.decide(level)
+      return
+    }
     switch level {
     case .read?: append(Transcript.note("→ \(act) (read)"))
     case .drive?: append(Transcript.note("→ \(act) (read and drive)"))

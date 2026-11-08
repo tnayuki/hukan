@@ -548,6 +548,11 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
       guard response == .alertFirstButtonReturn else { return }
       do {
         try FileManager.default.removeItem(at: url)
+        if case .session(let machine) = selected {
+          for controller in WorkspaceWindowController.all {
+            controller.deskForScripting.closeTab(ofMachine: machine.id.uuidString)
+          }
+        }
       } catch {
         NSAlert(error: error).runModal()
       }

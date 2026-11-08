@@ -404,6 +404,33 @@ session. It answers while hukan is running and never launches it, and the first 
 let the client's app reach hukan — allow it, or later under System Settings ▸ Privacy & Security ▸
 Automation.
 
+### Virtual machines
+
+A session can have a macOS guest of its own, running inside hukan on Virtualization.framework and
+shown as a tab on its desk. **Window ▸ Virtual Machines** is where they are kept: templates, the
+copies sessions are using, and the restore images templates are made from. Disk space is shown as
+what each takes on this Mac, since a copy shares its blocks with its template.
+
+A template is made from a restore image in about ten minutes with nothing to answer. Images come
+in through the window's `+` — the latest macOS, which hukan finds and downloads; an older one from
+its address on Apple's servers; or a file already on this Mac — and New Template… on the same menu
+makes one from what is there. hukan installs macOS, creates an account with a generated password,
+installs a guest agent reached over vsock, turns SSH back off, turns SIP off through Recovery so
+the agent can be given its permissions, and turns off sleep and the screen lock. A template is for
+automation: it has SIP off and is not a machine to keep anything in.
+
+The tab's `+` copies a template for that session (an APFS clone, so it costs only what changes),
+with the session's worktree as `/Volumes/My Shared Files/worktree` — and the next one there when the
+session moves to another, the machine running or not. The machine is
+saved when hukan quits and resumes after a relaunch; closing its tab deletes it, after asking. Its
+right-click menu sets the resolution — following the tab, or held at a size the tab scales — and
+saves it as a new template, which can itself be the source of another.
+
+The session's agent can do all of this through tools hukan hosts: open a machine, stop it, run
+commands as the guest's user or as root, read and write files, take screenshots, set the
+resolution, save a template, and close it. Opening one, using one for the first time, stopping
+one, saving a template and deleting a machine each put a card in front of you.
+
 ### Session lifetime
 
 Nothing leaves the rail by age, and nothing is deleted from disk except by asking — Delete

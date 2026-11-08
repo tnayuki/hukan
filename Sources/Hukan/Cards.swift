@@ -167,14 +167,26 @@ final class GrantCard: LayerSurface {
     }
 
     let icon = NSImageView()
-    icon.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Share a tab")
+    icon.image = NSImage(
+      systemSymbolName: grant.machine ? "desktopcomputer" : "sparkles",
+      accessibilityDescription: "Share a tab")
     icon.contentTintColor = .systemOrange
     icon.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
 
     // Opening names the site rather than a page: there is no page yet, and the address under
     // the question is what says where the tab is going.
     let question: String
-    if grant.opening {
+    if grant.machine && grant.saving {
+      question = "Let the agent save \u{201C}\(grant.url)\u{201D} as a template?"
+    } else if grant.machine && grant.closing {
+      question = "Let the agent delete \u{201C}\(grant.title)\u{201D}?"
+    } else if grant.machine && grant.stopping {
+      question = "Let the agent stop \u{201C}\(grant.title)\u{201D}?"
+    } else if grant.machine && grant.opening {
+      question = "Let the agent open a virtual machine from \u{201C}\(grant.title)\u{201D}?"
+    } else if grant.machine {
+      question = "Let the agent use \u{201C}\(grant.title)\u{201D}?"
+    } else if grant.opening {
       let site = URL(string: grant.url)?.host ?? grant.url
       question = "Let the agent open a tab on \(site)?"
     } else {
@@ -197,6 +209,13 @@ final class GrantCard: LayerSurface {
       button.bezelStyle = .rounded
       button.controlSize = .small
     }
+    // A machine has one answer, not two: running a command in it is never only reading.
+    if grant.machine {
+      decline.title = "Don\u{2019}t Allow"
+      drive.title = grant.closing ? "Delete" : grant.stopping ? "Stop" : "Allow"
+      drive.hasDestructiveAction = grant.closing
+      read.isHidden = true
+    }
 
     let header = NSStackView(views: [icon, title, spacer, decline, read, drive])
     header.orientation = .horizontal
@@ -205,7 +224,23 @@ final class GrantCard: LayerSurface {
 
     // The address under the question, the way a tool's argument sits under an approval's name:
     // the title says which page, the address says which site the answer is about.
-    let body = NSTextField(labelWithString: grant.url)
+    let body = NSTextField(
+      labelWithString: grant.machine && grant.saving
+        ? "The machine shuts down, is copied and starts again. What is in it, sign-ins included,"
+          + " is what every copy starts from."
+        : grant.machine && grant.closing
+          ? "This session's copy is stopped and deleted, with everything done inside it. The"
+            + " template is not touched."
+          : grant.machine && grant.stopping
+            ? "It is saved where it is, and starts again from there; anything being done in it"
+              + " waits until then."
+            : grant.machine && grant.opening
+              ? "A copy of the template on this session's desk, which the agent then uses —"
+                + " commands, files and the screen."
+              : grant.machine
+                ? "Commands, files and the screen — as the guest's user, and as its administrator"
+                  + " when asked."
+                : grant.url)
     body.font = monospace
     body.textColor = .secondaryLabelColor
     body.lineBreakMode = .byTruncatingTail

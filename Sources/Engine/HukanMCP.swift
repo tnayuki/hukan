@@ -76,113 +76,267 @@ enum HukanMCP {
   /// The host of the tabs: given a call, runs it and answers exactly once, on the main thread.
   typealias Handler = (Call, @escaping (Outcome) -> Void) -> Void
 
-  static let tools: [Tool] = [
+  static let tools: [Tool] =
+    [
+      Tool(
+        name: setTagsTool,
+        description:
+          "Replace this session's tags with the given list. Tags label the session on the user's "
+          + "list of sessions, so it can be found at a glance by what it is working on: write each "
+          + "as `kind: value` — `JIRA: ABC-123`, `Issue: #42`, `PR: #58886`. Only the value is shown; "
+          + "the kind picks the colour, so spell the same kind the same way every time. When you "
+          + "know the address of what a tag names, end the tag with it in angle brackets — "
+          + "`PR: #58886 <https://github.com/owner/repo/pull/58886>` — and clicking the tag opens "
+          + "that page. The list "
+          + "is the whole set, not a change to it: pass the tags to keep as well as the new one, "
+          + "and an empty list to clear them. Answers with the tags as they now stand.",
+        inputSchema: [
+          "type": "object",
+          "properties": [
+            "tags": [
+              "type": "array", "items": ["type": "string"],
+              "description": "Every tag the session should carry, each `kind: value`",
+            ]
+          ],
+          "required": ["tags"],
+          "additionalProperties": false,
+        ]),
+      Tool(
+        name: "browser_tabs",
+        description:
+          "List the web tabs open on this worktree's desk in hukan: each tab's id, title, address, "
+          + "and whether the user has shared it with you — \"read\", \"drive\", or \"not shared\". "
+          + "Reading or driving a tab that is not shared asks the user first; a tab is shared until "
+          + "the user withdraws it, and \"drive\" falls back to \"read\" when the tab moves to "
+          + "another site. These tabs carry the user's own logins, so a page behind a sign-in that "
+          + "WebFetch cannot reach is readable here.",
+        inputSchema: [
+          "type": "object", "properties": [String: Any](), "additionalProperties": false,
+        ]
+      ),
+      Tool(
+        name: "browser_open",
+        description:
+          "Open an http(s) address in a new web tab on this worktree's desk and share the new tab "
+          + "with you — the user is asked first and answers with "
+          + "\"read\" or \"drive\". Reports the new tab's id, title and address once the page has "
+          + "loaded. Use this when there is no tab to read yet; a tab already open at the same "
+          + "address is shared instead of opened twice.",
+        inputSchema: [
+          "type": "object",
+          "properties": ["url": ["type": "string", "description": "The http(s) address to open"]],
+          "required": ["url"],
+          "additionalProperties": false,
+        ]),
+      Tool(
+        name: "browser_read",
+        description:
+          "Read a shared web tab's page as text (the rendered text, not the HTML). Optionally narrow "
+          + "to a CSS selector. Needs the tab shared for reading; if it is not, the user is asked.",
+        inputSchema: [
+          "type": "object",
+          "properties": [
+            "tab": ["type": "string", "description": "The tab id from browser_tabs"],
+            "selector": [
+              "type": "string",
+              "description": "A CSS selector to read instead of the whole page",
+            ],
+          ],
+          "required": ["tab"],
+          "additionalProperties": false,
+        ]),
+      Tool(
+        name: "browser_navigate",
+        description:
+          "Load an address in a shared web tab and wait for the page, then report its title and "
+          + "address. Needs the tab shared for reading; if it is not, the user is asked. Moving to "
+          + "another site withdraws a \"drive\" share back to \"read\".",
+        inputSchema: [
+          "type": "object",
+          "properties": [
+            "tab": ["type": "string", "description": "The tab id from browser_tabs"],
+            "url": ["type": "string", "description": "The http(s) address to load"],
+          ],
+          "required": ["tab", "url"],
+          "additionalProperties": false,
+        ]),
+      Tool(
+        name: "browser_screenshot",
+        description:
+          "Take a screenshot of a shared web tab as it is showing. Needs the tab shared for reading; "
+          + "if it is not, the user is asked. The tab has to be the one on screen in its worktree.",
+        inputSchema: [
+          "type": "object",
+          "properties": ["tab": ["type": "string", "description": "The tab id from browser_tabs"]],
+          "required": ["tab"],
+          "additionalProperties": false,
+        ]),
+      Tool(
+        name: "browser_run",
+        description:
+          "Run JavaScript in a shared web tab's page and return what it evaluates to — this is how "
+          + "to click, type, submit, or inspect the DOM. A bare expression is returned as-is "
+          + "(`document.title`); code using `await` runs as an async function body and must "
+          + "`return` its value. Needs the tab shared for driving; if it is only shared for "
+          + "reading, or not at all, the user is asked.",
+        inputSchema: [
+          "type": "object",
+          "properties": [
+            "tab": ["type": "string", "description": "The tab id from browser_tabs"],
+            "javascript": ["type": "string", "description": "The code to run in the page"],
+          ],
+          "required": ["tab", "javascript"],
+          "additionalProperties": false,
+        ]),
+    ] + machineTools
+
+  /// The virtual machines on the desk — macOS guests hukan runs, reached through the guest agent
+  /// over vsock. One grant per machine, asked the first time a call touches it: running a command
+  /// is never only reading, so there is no read-only level to offer.
+  static let machineTools: [Tool] = [
     Tool(
-      name: setTagsTool,
+      name: "vm_open",
       description:
-        "Replace this session's tags with the given list. Tags label the session on the user's "
-        + "list of sessions, so it can be found at a glance by what it is working on: write each "
-        + "as `kind: value` — `JIRA: ABC-123`, `Issue: #42`, `PR: #58886`. Only the value is shown; "
-        + "the kind picks the colour, so spell the same kind the same way every time. When you "
-        + "know the address of what a tag names, end the tag with it in angle brackets — "
-        + "`PR: #58886 <https://github.com/owner/repo/pull/58886>` — and clicking the tag opens "
-        + "that page. The list "
-        + "is the whole set, not a change to it: pass the tags to keep as well as the new one, "
-        + "and an empty list to clear them. Answers with the tags as they now stand.",
+        "Open a virtual machine on this session's desk in hukan and start it: a throwaway copy of "
+        + "a macOS template, with the session's worktree mounted as /Volumes/My Shared Files/"
+        + "worktree — "
+        + "and the next one there when you change worktree. The user is asked first; once they allow it the machine is yours to "
+        + "use, and the call returns when its guest agent answers — a first boot takes a minute "
+        + "or two. A session has one machine: if it already has one, that one is started if it "
+        + "is stopped and returned. Without template, the only template there is is used; with "
+        + "several, the call lists them.",
       inputSchema: [
         "type": "object",
         "properties": [
-          "tags": [
-            "type": "array", "items": ["type": "string"],
-            "description": "Every tag the session should carry, each `kind: value`",
+          "template": [
+            "type": "string", "description": "A template's id or name, when there are several",
           ]
         ],
-        "required": ["tags"],
         "additionalProperties": false,
       ]),
     Tool(
-      name: "browser_tabs",
+      name: "vm_stop",
       description:
-        "List the web tabs open on this worktree's desk in hukan: each tab's id, title, address, "
-        + "and whether the user has shared it with you — \"read\", \"drive\", or \"not shared\". "
-        + "Reading or driving a tab that is not shared asks the user first; a tab is shared until "
-        + "the user withdraws it, and \"drive\" falls back to \"read\" when the tab moves to "
-        + "another site. These tabs carry the user's own logins, so a page behind a sign-in that "
-        + "WebFetch cannot reach is readable here.",
+        "Stop a virtual machine, saving it where it is: its tab and its disk stay, and vm_open "
+        + "starts it again from there. The user is asked first.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"]
+        ],
+        "required": ["machine"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "vm_close",
+      description:
+        "Close a virtual machine's tab and delete the machine, with everything done inside it. "
+        + "The user is asked first. The template is not touched.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"]
+        ],
+        "required": ["machine"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "vm_list",
+      description:
+        "List the virtual machines open on this session's desk in hukan: each one's id, the "
+        + "template it was copied from, whether it is running, and whether the user has let you "
+        + "use it. Each is the session's own throwaway macOS machine, with the session's "
+        + "worktree mounted as /Volumes/My Shared Files/worktree.",
       inputSchema: ["type": "object", "properties": [String: Any](), "additionalProperties": false]
     ),
     Tool(
-      name: "browser_open",
+      name: "guest_exec",
       description:
-        "Open an http(s) address in a new web tab on this worktree's desk and share the new tab "
-        + "with you — the user is asked first and answers with "
-        + "\"read\" or \"drive\". Reports the new tab's id, title and address once the page has "
-        + "loaded. Use this when there is no tab to read yet; a tab already open at the same "
-        + "address is shared instead of opened twice.",
-      inputSchema: [
-        "type": "object",
-        "properties": ["url": ["type": "string", "description": "The http(s) address to open"]],
-        "required": ["url"],
-        "additionalProperties": false,
-      ]),
-    Tool(
-      name: "browser_read",
-      description:
-        "Read a shared web tab's page as text (the rendered text, not the HTML). Optionally narrow "
-        + "to a CSS selector. Needs the tab shared for reading; if it is not, the user is asked.",
+        "Run a shell command in a virtual machine and get its exit status, stdout and stderr. "
+        + "It runs as the guest's logged-in user, in their desktop session, so `open -a` and GUI "
+        + "apps work; set admin to run it as root instead (there is no sudo password to give). "
+        + "The user is asked the first time you touch a machine.",
       inputSchema: [
         "type": "object",
         "properties": [
-          "tab": ["type": "string", "description": "The tab id from browser_tabs"],
-          "selector": [
-            "type": "string",
-            "description": "A CSS selector to read instead of the whole page",
-          ],
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "command": ["type": "string", "description": "A command for /bin/zsh -c"],
+          "admin": ["type": "boolean", "description": "Run as root"],
+          "cwd": ["type": "string", "description": "Working directory in the guest"],
+          "timeout": ["type": "number", "description": "Seconds before it is stopped (600)"],
         ],
-        "required": ["tab"],
+        "required": ["machine", "command"],
         "additionalProperties": false,
       ]),
     Tool(
-      name: "browser_navigate",
-      description:
-        "Load an address in a shared web tab and wait for the page, then report its title and "
-        + "address. Needs the tab shared for reading; if it is not, the user is asked. Moving to "
-        + "another site withdraws a \"drive\" share back to \"read\".",
+      name: "guest_read_file",
+      description: "Read a text file from a virtual machine.",
       inputSchema: [
         "type": "object",
         "properties": [
-          "tab": ["type": "string", "description": "The tab id from browser_tabs"],
-          "url": ["type": "string", "description": "The http(s) address to load"],
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "path": ["type": "string", "description": "Absolute path in the guest"],
+          "admin": ["type": "boolean", "description": "Read as root"],
         ],
-        "required": ["tab", "url"],
+        "required": ["machine", "path"],
         "additionalProperties": false,
       ]),
     Tool(
-      name: "browser_screenshot",
-      description:
-        "Take a screenshot of a shared web tab as it is showing. Needs the tab shared for reading; "
-        + "if it is not, the user is asked. The tab has to be the one on screen in its worktree.",
-      inputSchema: [
-        "type": "object",
-        "properties": ["tab": ["type": "string", "description": "The tab id from browser_tabs"]],
-        "required": ["tab"],
-        "additionalProperties": false,
-      ]),
-    Tool(
-      name: "browser_run",
-      description:
-        "Run JavaScript in a shared web tab's page and return what it evaluates to — this is how "
-        + "to click, type, submit, or inspect the DOM. A bare expression is returned as-is "
-        + "(`document.title`); code using `await` runs as an async function body and must "
-        + "`return` its value. Needs the tab shared for driving; if it is only shared for "
-        + "reading, or not at all, the user is asked.",
+      name: "guest_write_file",
+      description: "Write a text file in a virtual machine, making its directory if needed.",
       inputSchema: [
         "type": "object",
         "properties": [
-          "tab": ["type": "string", "description": "The tab id from browser_tabs"],
-          "javascript": ["type": "string", "description": "The code to run in the page"],
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "path": ["type": "string", "description": "Absolute path in the guest"],
+          "content": ["type": "string", "description": "The file's whole new content"],
+          "admin": ["type": "boolean", "description": "Write as root"],
         ],
-        "required": ["tab", "javascript"],
+        "required": ["machine", "path", "content"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "vm_set_resolution",
+      description:
+        "Hold a virtual machine's screen at a fixed size in pixels, so coordinates stay the same "
+        + "whatever size its tab is — the tab scales it to fit. Give no width and height to let "
+        + "the guest follow its tab again. Kept with the machine. Answers the resolution now.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "width": ["type": "integer", "description": "Width in pixels, e.g. 1920"],
+          "height": ["type": "integer", "description": "Height in pixels, e.g. 1200"],
+        ],
+        "required": ["machine"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "guest_screenshot",
+      description:
+        "Take a screenshot of a virtual machine's screen, as a PNG at the pixels the guest is "
+        + "drawing — with a resolution set by vm_set_resolution, exactly those.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"]
+        ],
+        "required": ["machine"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "vm_save_template",
+      description:
+        "Save a virtual machine as a new template, for vm_open to copy later. The user is asked "
+        + "first. The machine shuts down, is copied and starts again, and the call returns once "
+        + "its guest agent answers; anything running in it is lost, so finish first.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "name": ["type": "string", "description": "What to call the template"],
+        ],
+        "required": ["machine", "name"],
         "additionalProperties": false,
       ]),
   ]
