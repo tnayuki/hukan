@@ -314,14 +314,135 @@ enum HukanMCP {
     Tool(
       name: "guest_screenshot",
       description:
-        "Take a screenshot of a virtual machine's screen, as a PNG at the pixels the guest is "
-        + "drawing — with a resolution set by vm_set_resolution, exactly those.",
+        "Take a screenshot of a virtual machine's screen, or of one window, as a PNG at the pixels "
+        + "the guest is drawing — with a resolution set by vm_set_resolution, exactly those. A "
+        + "window comes out whole even when something covers it or it runs off the screen.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "window": ["type": "integer", "description": "A window id from guest_list_windows"],
+        ],
+        "required": ["machine"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "guest_list_windows",
+      description:
+        "List the windows on a virtual machine's screen, front to back: id, application, title "
+        + "and frame in the pixels of a screenshot of the screen.",
       inputSchema: [
         "type": "object",
         "properties": [
           "machine": ["type": "string", "description": "The machine id from vm_list"]
         ],
         "required": ["machine"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "guest_ui_tree",
+      description:
+        "Read the interface of an application in a virtual machine through Accessibility, one "
+        + "element a line, indented: its id, role, title, value, frame and the actions it takes. "
+        + "Frames are in the pixels of a screenshot — of that window's own, given a window. Prefer "
+        + "this and guest_ui_press to clicking at coordinates. Ids are positions in the tree, so read "
+        + "it again after anything changes.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "app": [
+            "type": "string",
+            "description": "An application's name or bundle id; the frontmost one if left out",
+          ],
+          "menus": ["type": "boolean", "description": "Include the menu bar"],
+          "window": [
+            "type": "integer", "description": "Just this window, from guest_list_windows",
+          ],
+        ],
+        "required": ["machine"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "guest_ui_press",
+      description:
+        "Perform an action on an element from guest_ui_tree — Press by default, or another the "
+        + "tree lists for it, such as ShowMenu.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "id": ["type": "string", "description": "The element's id from guest_ui_tree"],
+          "action": ["type": "string", "description": "The action's name (Press)"],
+        ],
+        "required": ["machine", "id"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "guest_ui_set_value",
+      description: "Set the value of an element from guest_ui_tree, such as a text field's text.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "id": ["type": "string", "description": "The element's id from guest_ui_tree"],
+          "value": ["type": "string", "description": "The new value"],
+        ],
+        "required": ["machine", "id", "value"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "guest_click",
+      description:
+        "Click in a virtual machine, at a position in the pixels of a screenshot — of that "
+        + "window's own, given a window, wherever it has moved to since. Given a window, it is "
+        + "refused if something else is on top at that point. For what guest_ui_tree cannot reach.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "x": ["type": "number", "description": "Pixels from the left of a screenshot"],
+          "y": ["type": "number", "description": "Pixels from the top of a screenshot"],
+          "count": ["type": "integer", "description": "2 for a double-click"],
+          "right": ["type": "boolean", "description": "Use the right button"],
+          "window": ["type": "integer", "description": "A window id from guest_list_windows"],
+        ],
+        "required": ["machine", "x", "y"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "guest_type",
+      description:
+        "Type text in a virtual machine, into whatever has the keyboard focus. macOS's own "
+        + "corrections apply, as they would to anyone typing, so read it back when the exact text "
+        + "matters — or use guest_ui_set_value.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "text": ["type": "string", "description": "The text"],
+        ],
+        "required": ["machine", "text"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "guest_key",
+      description: "Press a key in a virtual machine, with modifiers if any.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"],
+          "key": [
+            "type": "string",
+            "description": "A letter or digit, or return, tab, space, delete, escape, an arrow "
+              + "(left, right, up, down), f1…f12",
+          ],
+          "modifiers": [
+            "type": "array", "items": ["type": "string"],
+            "description": "Any of command, shift, option, control",
+          ],
+        ],
+        "required": ["machine", "key"],
         "additionalProperties": false,
       ]),
     Tool(

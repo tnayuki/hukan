@@ -10,6 +10,10 @@ final class MachineToolsTests: XCTestCase {
       "vm_save_template": ["machine", "name"], "vm_set_resolution": ["machine"],
       "guest_exec": ["machine", "command"], "guest_read_file": ["machine", "path"],
       "guest_write_file": ["machine", "path", "content"], "guest_screenshot": ["machine"],
+      "guest_list_windows": ["machine"], "guest_ui_tree": ["machine"],
+      "guest_ui_press": ["machine", "id"], "guest_ui_set_value": ["machine", "id", "value"],
+      "guest_click": ["machine", "x", "y"], "guest_type": ["machine", "text"],
+      "guest_key": ["machine", "key"],
     ]
     XCTAssertEqual(Set(HukanMCP.machineTools.map(\.name)), Set(required.keys))
     XCTAssertEqual(HukanMCP.machineTools.count, required.count)

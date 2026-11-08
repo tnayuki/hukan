@@ -427,9 +427,17 @@ right-click menu sets the resolution — following the tab, or held at a size th
 saves it as a new template, which can itself be the source of another.
 
 The session's agent can do all of this through tools hukan hosts: open a machine, stop it, run
-commands as the guest's user or as root, read and write files, take screenshots, set the
-resolution, save a template, and close it. Opening one, using one for the first time, stopping
-one, saving a template and deleting a machine each put a card in front of you.
+commands as the guest's user or as root, read and write files, take screenshots of the screen or
+of one window, set the resolution, save a template, and close it. It can drive the guest's
+interface too: read an application's interface through Accessibility and press what it finds, or
+click, type and press keys, with positions in the pixels of the screenshot being looked at. Opening
+one, using one for the first time, stopping one, saving a template and deleting a machine each put
+a card in front of you.
+
+The guest agent inside a machine is kept current by hukan: when a machine starts, what it has is
+compared with what this build of hukan ships and replaced if they differ, so a template does not
+have to be made again for that. The toolbar's CPU and memory include the machines this app is
+running.
 
 ### Session lifetime
 

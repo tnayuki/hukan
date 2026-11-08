@@ -836,7 +836,7 @@ final class MacTemplateBuilder {
   /// the user's. By path, with no code requirement, so a rebuilt agent keeps them. macOS 27 keeps
   /// the user's database in a ProtectedSystem container, found by asking which file the user's
   /// tccd has open; older systems keep it in the home folder.
-  private static func grantScript(user: String) -> String {
+  static func grantScript(user: String) -> String {
     let agent = GuestAgent.guestBinaryPath
     let rows =
       [

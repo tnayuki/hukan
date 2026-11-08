@@ -384,7 +384,8 @@ Workspace (one window)
   templates are not.
   **The agent reaches the guest through an agent of hukan's, over vsock**, and tools named for
   where they run: `vm_` acts on the machine from here, `guest_` runs inside it. Opening, first use,
-  stopping, saving a template and deleting are each a card.
+  stopping, saving a template and deleting are each a card. The guest agent is replaced at boot when it
+  differs from the one this build ships, so a change to it costs no template.
 - **A client outside hukan reaches the sessions over stdio, from the executable the bundle
   already ships.** It was built for the Claude desktop app, which is where a person keeps track of
   their work as a whole, and what this window knows — which session is working, which is waiting on

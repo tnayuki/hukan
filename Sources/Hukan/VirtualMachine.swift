@@ -80,7 +80,9 @@ final class MachinePaneViewController: NSViewController {
   /// The running machine, for the guest agent to be reached through.
   var virtualMachine: VZVirtualMachine? { runner?.vm }
   /// Which halves of the guest agent have said they are up; only those are dialled.
-  var agentsHeard: Set<String> { runner?.agentsHeard ?? [] }
+  /// Empty until the guest's agent is known to be the one hukan ships, since an agent about to be
+  /// replaced is a port about to go away, and dialling one has crashed Virtualization.framework.
+  var agentsHeard: Set<String> { agentUpdate == .ready ? runner?.agentsHeard ?? [] : [] }
 
   // MARK: Resolution
 
@@ -293,30 +295,11 @@ final class MachinePaneViewController: NSViewController {
     show(status: resuming ? "Resuming \(machineTitle)…" : "Starting \(machineTitle)…")
     let runner = MacMachine(machine: machine, sharedDirectory: sharedDirectory())
     self.runner = runner
-    // The guest's mode is set through its agent, which comes up after the display does: a fixed
-    // size is put to it once the agent first says hello — not on every hello, which repeats.
-    var asked = false
-    runner.onAgentHello = { [weak self] half in
-      guard half == "user", !asked, let self, let size = self.fixedResolution else { return }
-      asked = true
-      self.matchGuestMode(
-        to: CGSize(width: size.width, height: size.height), request: self.resolutionRequest,
-        triesLeft: 10)
-    }
-    runner.onStop = { [weak self] error in
-      guard let self else { return }
-      self.screen.virtualMachine = nil
-      self.runner = nil
-      if let whenStopped = self.whenStopped {
-        self.whenStopped = nil
-        whenStopped(error)
-        return
-      }
-      if let error {
-        self.show(failure: MacMachine.explain(error), retry: true)
-      } else {
-        self.show(stopped: "\(self.machineTitle) shut down.")
-      }
+    agentUpdate = .unchecked
+    modeAsked = false
+    runner.onAgentHello = { [weak self, weak runner] half in
+      guard let self, let runner, self.runner === runner else { return }
+      self.agentSaidHello(half, on: runner)
     }
     runner.start { [weak self] error in
       guard let self else { return }
@@ -353,6 +336,97 @@ final class MachinePaneViewController: NSViewController {
       self.show(stopped: "\(self.machineTitle) is stopped, saved where it was.")
       self.onStateChange?()
       completion()
+    }
+  }
+
+  // MARK: Keeping the guest's agent current
+
+  /// Where this boot has got to in making the guest's agent the one this build of hukan ships.
+  private enum AgentUpdate {
+    case unchecked, checking, updating
+    /// The old agents are gone; a hello from now on is one of the new ones.
+    case restarting
+    case ready
+  }
+  private var agentUpdate = AgentUpdate.unchecked
+  /// A fixed size is put to the guest once per boot, when its agent is first usable.
+  private var modeAsked = false
+
+  private func agentSaidHello(_ half: String, on runner: MacMachine) {
+    switch agentUpdate {
+    case .unchecked:
+      if half == "root", let vm = runner.vm {
+        agentUpdate = .checking
+        checkAgent(on: vm, runner: runner)
+      }
+    case .restarting:
+      if runner.agentsHeard.isSuperset(of: ["user", "root"]) { agentUpdate = .ready }
+    case .checking, .updating, .ready:
+      break
+    }
+    askForGuestMode()
+  }
+
+  /// The guest's mode is set through its agent, which comes up after the display does.
+  private func askForGuestMode() {
+    guard !modeAsked, agentsHeard.contains("user"), let size = fixedResolution else { return }
+    modeAsked = true
+    matchGuestMode(
+      to: CGSize(width: size.width, height: size.height), request: resolutionRequest, triesLeft: 10)
+  }
+
+  /// Compared byte for byte rather than by a version number, so a build nobody remembered to
+  /// number is still delivered. A machine this cannot be read from carries on with what it has.
+  private func checkAgent(on vm: VZVirtualMachine, runner: MacMachine) {
+    GuestAgent.read(GuestAgent.guestBinaryPath, on: vm, admin: true) { result in
+      DispatchQueue.main.async { [weak self, weak runner] in
+        guard let self, let runner, self.runner === runner else { return }
+        guard case .success(let installed) = result,
+          let bundled = GuestAgent.bundledBinary.flatMap({ try? Data(contentsOf: $0) }),
+          installed != bundled
+        else {
+          self.agentUpdate = .ready
+          self.askForGuestMode()
+          return
+        }
+        self.replaceAgent(with: bundled, on: vm, runner: runner)
+      }
+    }
+  }
+
+  /// Written beside the old one and moved over it, so the two running copies keep the file they
+  /// started from; then both are killed and launchd's KeepAlive starts the new one. What was heard
+  /// is forgotten once the old ones are gone, since only a hello from the new ones says there is a
+  /// port to dial. The permissions are written again first: a row goes in by path, but the first
+  /// capture has tccd add the code requirement of the binary that made it, and an ad-hoc signature's
+  /// requirement is its hash, so the new binary lost Screen Recording until the row was rewritten.
+  private func replaceAgent(with bundled: Data, on vm: VZVirtualMachine, runner: MacMachine) {
+    agentUpdate = .updating
+    let path = GuestAgent.guestBinaryPath
+    let incoming = path + ".new"
+    let install =
+      "chmod 755 '\(incoming)' && chown root:wheel '\(incoming)' && mv -f '\(incoming)' '\(path)'"
+      + " && { (sleep 0.5; killall hukan-guest-agent) >/dev/null 2>&1 & }"
+    let username = machineID.flatMap(UUID.init(uuidString:)).flatMap(MachineStore.session(id:))?
+      .manifest.username
+    let grant = username.map { MacTemplateBuilder.grantScript(user: $0) } ?? "true"
+    GuestAgent.write(bundled, to: incoming, on: vm, admin: true) { written in
+      guard case .success = written else {
+        DispatchQueue.main.async { [weak self] in self?.agentUpdate = .ready }
+        return
+      }
+      GuestAgent.exec(["/bin/sh", "-c", grant], on: vm, admin: true) { _ in
+        GuestAgent.exec(["/bin/sh", "-c", install], on: vm, admin: true) { _ in
+          // A hello the old ones sent on their way out must not count as the new ones being up,
+          // which is what `.updating` ignoring them is for: it read as ready, `vm_open` answered
+          // with nothing there to talk to, and a size put to a dying agent was never asked again.
+          DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self, weak runner] in
+            runner?.forgetAgents()
+            self?.modeAsked = false
+            self?.agentUpdate = .restarting
+          }
+        }
+      }
     }
   }
 

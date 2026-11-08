@@ -1582,6 +1582,16 @@ final class WorktreeDeskViewController: NSViewController {
             + " within fifteen seconds. Try again shortly."))
       return
     }
+    if let request = Self.interfaceRequest(for: call) {
+      GuestAgent.request(request, to: vm) { result in
+        switch result {
+        case .failure(let error): completion(.error(error.localizedDescription))
+        case .success(let reply):
+          completion(.text((reply["text"] as? String).map(clip) ?? "done"))
+        }
+      }
+      return
+    }
     switch call.name {
     case "guest_exec":
       guard let command = call.string("command") else {
@@ -1635,7 +1645,10 @@ final class WorktreeDeskViewController: NSViewController {
     case "guest_screenshot":
       // Taken in the guest, by the agent in the user's session: what the person sees in the tab.
       let path = "/tmp/hukan-screenshot.png"
-      GuestAgent.exec(["screencapture", "-x", "-t", "png", path], on: vm) { result in
+      // `-o` leaves the window's shadow out, or a picture of it would be larger than the window
+      // and a position read off it would not be a position in the window.
+      let scope = (call.arguments["window"] as? Int).map { ["-o", "-l\($0)"] } ?? []
+      GuestAgent.exec(["screencapture", "-x"] + scope + ["-t", "png", path], on: vm) { result in
         guard case .success(let run) = result, run.exit == 0 else {
           completion(
             .error(
@@ -1654,6 +1667,21 @@ final class WorktreeDeskViewController: NSViewController {
     default:
       completion(.error("Unknown tool \(call.name)."))
     }
+  }
+
+  /// The guest agent's request for a tool that reads or drives the interface — each is a call's
+  /// arguments under the agent's own names, and nil for the tools that are not one of these.
+  // Internal so tests can verify tool requests without booting a guest.
+  static func interfaceRequest(for call: HukanMCP.Call) -> [String: Any]? {
+    let ops = [
+      "guest_list_windows": "windows", "guest_ui_tree": "ui_tree", "guest_ui_press": "ui_press",
+      "guest_ui_set_value": "ui_set",
+      "guest_click": "click", "guest_type": "type", "guest_key": "key",
+    ]
+    guard let op = ops[call.name] else { return nil }
+    var request = call.arguments.filter { $0.key != "machine" }
+    request["op"] = op
+    return request
   }
 
   /// `vm_open`: the session's machine, started and answering. One per session — an open one is
