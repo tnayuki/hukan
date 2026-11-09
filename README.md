@@ -445,6 +445,9 @@ compared with what this build of hukan ships and replaced if they differ, so a t
 have to be made again for that. The toolbar's CPU and memory include the machines this app is
 running.
 
+A Windows on Arm ISO makes a Windows template the same way, unattended in about twenty minutes,
+on QEMU from Homebrew, which the cask installs. It does not run on a tab yet.
+
 ### Session lifetime
 
 Nothing leaves the rail by age, and nothing is deleted from disk except by asking — Delete

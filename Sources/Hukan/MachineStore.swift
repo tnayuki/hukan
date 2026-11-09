@@ -30,12 +30,18 @@ enum MachineStore {
 
   /// Make the store's directories, and keep the two that hold nothing worth backing up out of Time
   /// Machine. Idempotent; the mark is sticky, so setting it again costs nothing.
+  /// What a Windows guest needs from outside itself: not an image a template is made from, so not
+  /// listed with them.
+  static var driversURL: URL {
+    imagesURL.deletingLastPathComponent().appendingPathComponent("Drivers")
+  }
+
   static func prepare() {
     let fm = FileManager.default
-    for url in [templatesURL, sessionsURL, imagesURL] {
+    for url in [templatesURL, sessionsURL, imagesURL, driversURL] {
       try? fm.createDirectory(at: url, withIntermediateDirectories: true)
     }
-    for var url in [sessionsURL, imagesURL] {
+    for var url in [sessionsURL, imagesURL, driversURL] {
       var values = URLResourceValues()
       values.isExcludedFromBackup = true
       try? url.setResourceValues(values)
@@ -135,6 +141,7 @@ enum MachineStore {
     manifest.created = Date()
     try? FileManager.default.removeItem(
       at: building.appendingPathComponent(Machine.stateFileName))
+    try? FileManager.default.removeItem(at: building.appendingPathComponent("qemu.log"))
     var copy = Machine(url: building, manifest: manifest)
     try copy.save()
     let url = templatesURL.appendingPathComponent(id.uuidString)
@@ -200,6 +207,10 @@ struct MachineManifest: Codable, Equatable {
   var username: String?
   var password: String?
   var created: Date
+  /// Windows: the QEMU machine type it was made on, `virt-11.1` — never the bare `virt`, which is
+  /// whatever the installed QEMU is newest at. A saved state only loads into the hardware it was
+  /// saved from, and a versioned type is QEMU's promise that a later QEMU still builds that.
+  var qemuMachine: String? = nil
 
   static func randomMACAddress() -> String {
     // Locally administered, unicast: the first octet's low bits are 10.

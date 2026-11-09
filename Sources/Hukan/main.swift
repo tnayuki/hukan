@@ -105,6 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// waiter would die with the process before ever escalating. The trailing wait after SIGKILL
   /// lets the kernel actually reap the children before we exit, so none reparents.
   func applicationWillTerminate(_ notification: Notification) {
+    // A Windows build's QEMU is a process of its own, and its half-made disk goes at next launch.
+    WindowsTemplateBuilder.running?.terminate()
     // The sessions being deleted are in it too: their engines are mid-exit, and one nobody
     // closes is orphaned exactly like any other — while the unlink each is waiting for has to
     // land before we go, or the conversation is back on the rail next launch.

@@ -1726,7 +1726,7 @@ final class WorktreeDeskViewController: NSViewController {
       Self.waitForAgent(existing, completion: completion)
       return
     }
-    let templates = MachineStore.templates()
+    let templates = MachineStore.templates().filter { $0.manifest.kind == .macOS }
     let wanted = call.string("template")
     let template: Machine
     if let wanted {

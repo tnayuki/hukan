@@ -400,6 +400,19 @@ Workspace (one window)
   sent at all but turned into the guest's agent selecting the input source. What a boot tells the
   guest — that Japanese input, and this Mac's time zone — is told every boot rather than once in
   the template, so a template outlives a change of keyboard or of place.
+- **A Windows machine runs in QEMU from Homebrew, because Virtualization.framework cannot run
+  Windows.** It is the one kind of machine that is not in this process. QEMU is a dependency of
+  the cask, as ripgrep is: hukan is built for one person, who uses Windows guests, so the size it
+  adds is paid by the one person it is for. **A machine is held at the QEMU machine type it was
+  made on** — `virt-11.1`, recorded with it, never the bare `virt`, which means whichever QEMU is
+  installed now — because a saved state only loads into the hardware it was saved from, and a
+  versioned type is QEMU's promise to keep building that hardware; a Homebrew upgrade must not
+  strand a saved machine. There is **no TPM**: Setup's checks are turned
+  off by the answer file, and nothing a template is for needs one, which is one program fewer beside
+  every machine. **Its screen is spoken to over a unix socket by a small client of hukan's own**,
+  since RoyalVNCKit connects only to a host and a port and a listener on localhost is open to every
+  process here; having one server to talk to is what keeps that client small. **Keys go by physical
+  position, so the guest's layout is set from the Mac's keyboard when the template is made.**
 - **A client outside hukan reaches the sessions over stdio, from the executable the bundle
   already ships.** It was built for the Claude desktop app, which is where a person keeps track of
   their work as a whole, and what this window knows — which session is working, which is waiting on
@@ -1564,10 +1577,11 @@ Workspace (one window)
   npm updater and sets `autoUpdatesProtectedForNative`, which exempts its own — so there is nothing
   to tell you that will not have happened by morning anyway. The cask does not follow anything, so
   hukan is the one of the two that can go quietly stale.
-  **Two outbound requests are hukan's own, and the line around them is the whole of why they are
+  **Three outbound requests are hukan's own, and the line around them is the whole of why they are
   allowed.** The cask check: one fixed URL, GET, nothing sent, no credentials, nothing about the
-  work. And a macOS restore image, fetched only when someone asks for one in the template sheet,
-  from the address Virtualization.framework names. libgit2 is built network-less on purpose and
+  work. A macOS restore image, fetched only when someone asks for one in the template sheet, from
+  the address Virtualization.framework names. And the virtio-win drivers, from one fixed address,
+  once, the first time a Windows template is made. libgit2 is built network-less on purpose and
   the browser's traffic is the user's own; these are neither, so they are stated as a constraint
   rather than as a beginning.
   **It reads the cask, not the tag's GitHub Release.** The two disagree for a minute at a time —
@@ -1831,9 +1845,8 @@ Workspace (one window)
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
-- **Windows guests** — QEMU from Homebrew, the same tools under `guest_`, an agent written again
-  for Windows. The worktree share is the part that cannot be the same: virtiofs is not available
-  to QEMU on macOS.
+- **Windows guests** — templates work. Still to do: running one on a tab, the `guest_` tools
+  against the Windows agent, its interface operations, and the worktree share.
 - **Browser** — what is left open is the login state: sharing Safari's is officially impossible
   (plan B: inject `Cookies.binarycookies`, needs Full Disk Access). Measured with a WKWebView
   harness (2026-08): SSO redirect chains and Kolide device trust **work**; passkeys and iCloud

@@ -34,6 +34,10 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   private let detail = MachineDetailView()
 
   private var builder: MacTemplateBuilder?
+  private var windowsBuilder: WindowsTemplateBuilder?
+  private var isBuilding: Bool { builder != nil || windowsBuilder != nil }
+  private var buildTitle: String { builder?.request.title ?? windowsBuilder?.request.title ?? "" }
+  private var buildSymbol: String { windowsBuilder != nil ? "pc" : "apple.logo" }
   /// The latest IPSW being fetched into Images, while it is.
   private var download: RestoreImageDownload?
   private var buildPhase: MacTemplateBuilder.Phase?
@@ -169,13 +173,14 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   // MARK: Rows
 
   func reload() {
+    titleImages()
     let selected = selectedRow
     let templates = MachineStore.templates()
     templateTitles = Dictionary(uniqueKeysWithValues: templates.map { ($0.id, $0.manifest.title) })
     let sessions = MachineStore.sessions()
     machines = templates + sessions
     var rows: [Row] = [.header("Templates")]
-    if builder != nil { rows.append(.building) }
+    if isBuilding { rows.append(.building) }
     // Each template under the one it was made from, so a derived template reads as what it adds.
     func appendTemplates(under parent: UUID?, depth: Int) {
       for template in templates where originParent(of: template) == parent {
@@ -256,7 +261,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
       return label
     case .building:
       return MachineRowView(
-        symbol: "apple.logo", title: builder?.request.title ?? "",
+        symbol: buildSymbol, title: buildTitle,
         subtitle: Self.describe(buildPhase), progress: Self.fraction(buildPhase))
     case .template(let machine):
       return MachineRowView(
@@ -294,7 +299,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
       canDelete = !Self.runningMachineIDs.contains(machine.id.uuidString)
     default: canDelete = false
     }
-    addRemove.setEnabled(builder == nil, forSegment: 0)
+    addRemove.setEnabled(!isBuilding, forSegment: 0)
     addRemove.setEnabled(canDelete, forSegment: 1)
 
     if case .building = selected {
@@ -304,10 +309,11 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     switch selected {
     case .building:
       detail.show(
-        symbol: "apple.logo", title: builder?.request.title ?? "",
+        symbol: buildSymbol, title: buildTitle,
         status: Self.describe(buildPhase), progress: Self.fraction(buildPhase), controls: [],
         facts: [],
-        screen: builder?.screenMachine == nil ? nil : builder?.screenView,
+        screen: windowsBuilder?.screenView
+          ?? (builder?.screenMachine == nil ? nil : builder?.screenView),
         canShutDown: Self.isSetupFailed(buildPhase), password: nil)
     case .template(let machine), .session(let machine):
       var facts = facts(machine)
@@ -440,7 +446,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     let menu = NSMenu()
     let template = menu.addItem(
       withTitle: "New Template…", action: #selector(newTemplate), keyEquivalent: "")
-    template.isEnabled = builder == nil
+    template.isEnabled = !isBuilding
     menu.addItem(.separator())
     let latest = menu.addItem(
       withTitle: "Download the Latest macOS", action: #selector(downloadLatest), keyEquivalent: "")
@@ -461,7 +467,8 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   @objc private func addImageFromFile() {
     guard let window else { return }
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [UTType(filenameExtension: "ipsw") ?? .data]
+    // A macOS restore image or a Windows ISO: which one is made from it is read off its kind.
+    panel.allowedContentTypes = ["ipsw", "iso"].compactMap { UTType(filenameExtension: $0) }
     panel.beginSheetModal(for: window) { [weak self] response in
       guard response == .OK, let url = panel.url else { return }
       self?.startDownload(.file(url))
@@ -499,9 +506,10 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   }
 
   @objc private func newTemplate() {
-    guard let window, builder == nil else { return }
+    guard let window, !isBuilding else { return }
     let sheet = NewMacTemplateSheet()
     sheet.onCreate = { [weak self] request in self?.startBuilding(request) }
+    sheet.onCreateWindows = { [weak self] request in self?.startBuilding(request) }
     newTemplateSheet = sheet
     window.beginSheet(sheet.window!) { [weak self] _ in self?.newTemplateSheet = nil }
   }
@@ -677,8 +685,8 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
       "session   \($0.manifest.title)  \($0.id.uuidString)"
     }
     lines += MachineStore.images().map { "image     \($0.lastPathComponent)" }
-    if builder != nil {
-      lines.append("building  \(builder?.request.title ?? "")  \(Self.describe(buildPhase))")
+    if isBuilding {
+      lines.append("building  \(buildTitle)  \(Self.describe(buildPhase))")
     } else if let buildPhase {
       lines.append("last build  \(Self.describe(buildPhase))")
     }
@@ -688,9 +696,16 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   /// Start a build from the newest IPSW in Images, with the sheet's defaults. Answers why not,
   /// when it cannot.
   func buildForScripting(title: String) -> String? {
-    guard builder == nil else { return "a template is already being made" }
-    guard let ipsw = MachineStore.images().first(where: { $0.pathExtension.lowercased() == "ipsw" })
-    else { return "no IPSW in Images" }
+    guard !isBuilding else { return "a template is already being made" }
+    guard let image = MachineStore.images().first else { return "no image in Images" }
+    if image.pathExtension.lowercased() == "iso" {
+      startBuilding(
+        WindowsTemplateBuilder.Request(
+          title: title, iso: image, diskSize: 64 << 30, cpuCount: nil, memorySize: nil,
+          username: NSUserName()))
+      return nil
+    }
+    let ipsw = image
     startBuilding(
       MacTemplateBuilder.Request(
         title: title, ipsw: ipsw, diskSize: 80 << 30, cpuCount: nil, memorySize: nil,
@@ -755,6 +770,18 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
 
   // MARK: Building
 
+  private func startBuilding(_ request: WindowsTemplateBuilder.Request) {
+    let builder = WindowsTemplateBuilder(request: request)
+    windowsBuilder = builder
+    buildPhase = .preparing
+    builder.onPhase = { [weak self] phase in self?.advance(phase) }
+    reload()
+    if let index = rows.firstIndex(of: .building) {
+      table.selectRowIndexes([index], byExtendingSelection: false)
+    }
+    builder.run()
+  }
+
   private func startBuilding(_ request: MacTemplateBuilder.Request) {
     let builder = MacTemplateBuilder(request: request)
     self.builder = builder
@@ -772,9 +799,11 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     switch phase {
     case .done:
       builder = nil
+      windowsBuilder = nil
       reload()
     case .failed(let message):
       builder = nil
+      windowsBuilder = nil
       reload()
       let alert = NSAlert()
       alert.messageText = "The template could not be made."
@@ -806,7 +835,10 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   private static func describe(_ phase: MacTemplateBuilder.Phase?) -> String {
     switch phase {
     case .preparing, nil: return "Preparing…"
-    case .installing(let fraction): return "Installing macOS… \(Int(fraction * 100))%"
+    case .installing(let fraction):
+      return fraction < 0
+        ? "Installing Windows… this takes about half an hour"
+        : "Installing macOS… \(Int(fraction * 100))%"
     case .firstBoot: return "Setting up the account and the agent…"
     case .disablingSIP: return "Turning SIP off in Recovery…"
     case .granting: return "Giving the agent its permissions…"
@@ -841,7 +873,44 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     if url.pathExtension.lowercased() == "ipsw", parts.count >= 3, parts[0] == "UniversalMac" {
       return "macOS \(parts[1]) (\(parts[2]))"
     }
-    return url.lastPathComponent
+    return storedTitle(url) ?? url.lastPathComponent
+  }
+
+  /// What an ISO said it was, kept on the file itself as an extended attribute: it is read once,
+  /// by mounting the image, and travels with the file rather than in a list beside it.
+  private static let titleAttribute = "dev.tnayuki.hukan.title"
+
+  static func storedTitle(_ url: URL) -> String? {
+    let size = getxattr(url.path, titleAttribute, nil, 0, 0, 0)
+    guard size > 0 else { return nil }
+    var bytes = [UInt8](repeating: 0, count: size)
+    guard getxattr(url.path, titleAttribute, &bytes, size, 0, 0) == size else { return nil }
+    return String(decoding: bytes, as: UTF8.self)
+  }
+
+  private static func storeTitle(_ title: String, on url: URL) {
+    let bytes = Array(title.utf8)
+    _ = setxattr(url.path, titleAttribute, bytes, bytes.count, 0, 0)
+  }
+
+  /// ISOs whose title is being read, so a reload while one is mounted does not mount it again.
+  private var titling: Set<URL> = []
+
+  /// Reads the title of every ISO that has none yet, off the main thread, and lists them again.
+  private func titleImages() {
+    for url in MachineStore.images()
+    where url.pathExtension.lowercased() == "iso" && Self.storedTitle(url) == nil
+      && !titling.contains(url)
+    {
+      titling.insert(url)
+      DispatchQueue.global(qos: .utility).async { [weak self] in
+        // An ISO that says nothing keeps its file name, and is not asked again until relaunch.
+        if let title = (try? WindowsTemplateBuilder.title(ofISO: url)) ?? nil {
+          Self.storeTitle(title, on: url)
+        }
+        DispatchQueue.main.async { self?.reload() }
+      }
+    }
   }
 
   /// A clone counts in full — APFS says nothing of which blocks are shared — so the size is what
@@ -1170,16 +1239,20 @@ private final class MachineDetailView: NSView {
   @objc private func shutDownPressed() { onShutDown?() }
 }
 
-/// What a macOS template needs from a person: what to call it, which macOS, and how big a disk.
-/// The account is the Mac's own short name with a password hukan makes up and keeps in the
-/// template's manifest.
+/// What a template needs from a person: which system, what to call it, which image, and how big a
+/// disk. The system is chosen first and the rest follows it — the images listed, the name offered,
+/// what the account is told to expect. The account is the Mac's own short name with a password
+/// hukan makes up and keeps in the template's manifest.
 private final class NewMacTemplateSheet: NSWindowController {
   var onCreate: ((MacTemplateBuilder.Request) -> Void)?
+  var onCreateWindows: ((WindowsTemplateBuilder.Request) -> Void)?
   /// Ask the window to fetch the latest IPSW; the sheet closes, since a download of tens of
   /// gigabytes is minutes away from being something to make a template from.
 
+  private let systemControl = NSSegmentedControl()
   private let titleField = NSTextField(string: "")
   private let imagePopUp = NSPopUpButton()
+  private let note = NSTextField(wrappingLabelWithString: "")
   private let diskField = NSTextField(string: "80")
   private let processorsPopUp = NSPopUpButton()
   private let memoryPopUp = NSPopUpButton()
@@ -1205,7 +1278,17 @@ private final class NewMacTemplateSheet: NSWindowController {
 
   private func build() {
     guard let content = window?.contentView else { return }
-    titleField.placeholderString = "macOS"
+    systemControl.segmentCount = 2
+    systemControl.setLabel("macOS", forSegment: 0)
+    systemControl.setLabel("Windows", forSegment: 1)
+    systemControl.trackingMode = .selectOne
+    // Windows when there is nothing to make macOS from and an ISO to make Windows from.
+    let images = MachineStore.images()
+    systemControl.selectedSegment =
+      !images.contains(where: { Self.kind(of: $0) == .macOS })
+        && images.contains(where: { Self.kind(of: $0) == .windows }) ? 1 : 0
+    systemControl.target = self
+    systemControl.action = #selector(systemChosen)
     // Half the Mac's cores up to eight, and 8 GB: enough for a desktop and a build, and leaves
     // the host room for a second guest. Changeable later from the template's detail.
     for count in VirtualMachinesWindowController.processorChoices {
@@ -1221,6 +1304,7 @@ private final class NewMacTemplateSheet: NSWindowController {
     memoryPopUp.selectItem(withTag: 8)
     reloadImages()
     suggestTitle()
+    describeAccount()
     imagePopUp.target = self
     imagePopUp.action = #selector(imageChosen)
     diskField.widthAnchor.constraint(equalToConstant: 60).isActive = true
@@ -1229,19 +1313,15 @@ private final class NewMacTemplateSheet: NSWindowController {
     diskNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     let disk = NSStackView(views: [diskField, NSTextField(labelWithString: "GB"), diskNote])
     let grid = NSGridView(views: [
+      [NSTextField(labelWithString: "System:"), systemControl],
       [NSTextField(labelWithString: "Name:"), titleField],
-      [NSTextField(labelWithString: "macOS:"), imagePopUp],
+      [NSTextField(labelWithString: "Image:"), imagePopUp],
       [NSTextField(labelWithString: "Disk:"), disk],
       [NSTextField(labelWithString: "Processors:"), processorsPopUp],
       [NSTextField(labelWithString: "Memory:"), memoryPopUp],
     ])
     grid.column(at: 0).xPlacement = .trailing
     grid.column(at: 1).width = 280
-    let note = NSTextField(
-      wrappingLabelWithString:
-        "The account “\(NSUserName())” is created on the first boot, logs in by itself and is"
-        + " reached over SSH with hukan's key. Its password is made up for you; copy it from the"
-        + " template when a prompt in the guest asks for it.")
     note.textColor = .secondaryLabelColor
     note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
@@ -1260,9 +1340,37 @@ private final class NewMacTemplateSheet: NSWindowController {
     stack.pin(to: content)
   }
 
+  private var system: MachineKind { systemControl.selectedSegment == 1 ? .windows : .macOS }
+
+  /// An IPSW is macOS and an ISO is Windows; nothing else makes a template.
+  private static func kind(of image: URL) -> MachineKind? {
+    switch image.pathExtension.lowercased() {
+    case "ipsw": return .macOS
+    case "iso": return .windows
+    default: return nil
+    }
+  }
+
+  @objc private func systemChosen() {
+    reloadImages()
+    suggestTitle()
+    describeAccount()
+  }
+
+  private func describeAccount() {
+    note.stringValue =
+      system == .windows
+      ? "The account “\(NSUserName())” is made during setup and logs in by itself. Its password is"
+        + " made up for you; copy it from the template when a prompt in the guest asks for it."
+      : "The account “\(NSUserName())” is created on the first boot, logs in by itself and is"
+        + " reached over SSH with hukan's key. Its password is made up for you; copy it from the"
+        + " template when a prompt in the guest asks for it."
+  }
+
   private func reloadImages() {
     imagePopUp.removeAllItems()
-    let urls = MachineStore.images().filter { $0.pathExtension.lowercased() == "ipsw" }
+    let urls = MachineStore.images().filter { Self.kind(of: $0) == system }
+    imagePopUp.isEnabled = true
     for url in urls {
       imagePopUp.addItem(withTitle: Self.versionTitle(url))
       imagePopUp.lastItem?.representedObject = url
@@ -1280,16 +1388,22 @@ private final class NewMacTemplateSheet: NSWindowController {
 
   /// The image's own name — `macOS 27.2` — as the template's, until someone types one.
   private func suggestTitle() {
-    guard let url = imagePopUp.selectedItem?.representedObject as? URL else { return }
-    let suggestion = Self.versionTitle(url)
+    let fallback = system == .windows ? "Windows 11" : "macOS"
+    titleField.placeholderString = fallback
+    let suggestion =
+      (imagePopUp.selectedItem?.representedObject as? URL).map(Self.versionTitle) ?? fallback
     if titleField.stringValue.isEmpty || titleField.stringValue == suggestedTitle {
       titleField.stringValue = suggestion
     }
     suggestedTitle = suggestion
   }
 
-  /// `macOS 27.2`, without the build the list shows beside it.
+  /// `macOS 27.2`, without the build the list shows beside it. An ISO's name says nothing a
+  /// template's should, so it is the system's.
   private static func versionTitle(_ url: URL) -> String {
+    if kind(of: url) == .windows {
+      return VirtualMachinesWindowController.storedTitle(url) ?? "Windows 11"
+    }
     let title = VirtualMachinesWindowController.imageTitle(url)
     guard let paren = title.range(of: " (") else { return title }
     return String(title[..<paren.lowerBound])
@@ -1312,6 +1426,16 @@ private final class NewMacTemplateSheet: NSWindowController {
     }
     let title = titleField.stringValue.isEmpty ? Self.versionTitle(ipsw) : titleField.stringValue
     let gigabytes = UInt64(diskField.integerValue)
+    if ipsw.pathExtension.lowercased() == "iso" {
+      window.sheetParent?.endSheet(window)
+      onCreateWindows?(
+        WindowsTemplateBuilder.Request(
+          title: title, iso: ipsw, diskSize: gigabytes << 30,
+          cpuCount: processorsPopUp.selectedItem?.tag,
+          memorySize: memoryPopUp.selectedItem.map { UInt64($0.tag) << 30 },
+          username: NSUserName()))
+      return
+    }
     let request = MacTemplateBuilder.Request(
       title: title, ipsw: ipsw, diskSize: gigabytes << 30,
       cpuCount: processorsPopUp.selectedItem?.tag,
