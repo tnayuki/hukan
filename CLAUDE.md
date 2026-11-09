@@ -1889,7 +1889,8 @@ file-system-synchronized, so a new file under `Sources/` just appears. `Resource
 `Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework` and the
 query files under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
 step, not part of the build. `Resources/hukan-guest-agent` is the guest agent, built by
-`Vendor/build-guest-agent.sh`; `Resources/Hukan.entitlements` carries the one entitlement
+`Vendor/build-guest-agent.sh`, and `Resources/hukan-guest-agent.exe` its Windows counterpart, built
+on the Mac by `Vendor/build-windows-agent.sh`; `Resources/Hukan.entitlements` carries the one entitlement
 Virtualization.framework requires, which ad-hoc signing can hold.
 
 ripgrep is the one program hukan runs. The files panel's filter and its
