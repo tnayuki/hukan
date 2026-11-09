@@ -1544,9 +1544,24 @@ final class WorktreeDeskViewController: NSViewController {
     _ call: HukanMCP.Call, on pane: MachinePaneViewController,
     completion: @escaping (HukanMCP.Outcome) -> Void
   ) {
-    guard let vm = pane.virtualMachine else {
+    guard let vm = pane.guestLink else {
       completion(.error("The machine is not running — vm_open starts it."))
       return
+    }
+    if pane.runsOnQEMU {
+      if call.name == "vm_set_resolution" {
+        completion(.error("A Windows machine's resolution cannot be changed yet."))
+        return
+      }
+      if call.name == "guest_screenshot", let qemu = pane.qemuMachine {
+        qemu.screenshot { result in
+          switch result {
+          case .failure(let error): completion(.error(error.localizedDescription))
+          case .success(let png): completion(.image(png, mimeType: "image/png"))
+          }
+        }
+        return
+      }
     }
     // The resolution is the host's to set, not the guest agent's, so it needs no agent at all.
     if call.name == "vm_set_resolution" {
@@ -1605,7 +1620,8 @@ final class WorktreeDeskViewController: NSViewController {
       }
       let timeout = (call.arguments["timeout"] as? Double) ?? 600
       GuestAgent.exec(
-        ["/bin/zsh", "-c", command], on: vm, admin: admin, cwd: call.string("cwd"),
+        Self.guestCommand(command, windows: pane.runsOnQEMU),
+        on: vm, admin: admin, cwd: call.string("cwd"),
         timeout: timeout
       ) { result in
         switch result {
@@ -1674,6 +1690,16 @@ final class WorktreeDeskViewController: NSViewController {
     }
   }
 
+  // Internal so Windows shell selection can be tested without a running guest.
+  static func guestCommand(_ command: String, windows: Bool) -> [String] {
+    windows
+      ? [
+        "powershell.exe", "-NoProfile", "-Command",
+        // Its output is otherwise in the system's code page, which is not what is read back.
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; " + command,
+      ] : ["/bin/zsh", "-c", command]
+  }
+
   /// The guest agent's request for a tool that reads or drives the interface — each is a call's
   /// arguments under the agent's own names, and nil for the tools that are not one of these.
   // Internal so tests can verify tool requests without booting a guest.
@@ -1696,6 +1722,22 @@ final class WorktreeDeskViewController: NSViewController {
     _ call: HukanMCP.Call, for session: AgentSession, existing: MachineTab?,
     completion: @escaping (HukanMCP.Outcome) -> Void
   ) {
+    if let existing, let wanted = call.string("template"),
+      let machineID = existing.pane.machineID.flatMap(UUID.init(uuidString:)),
+      let parent = MachineStore.session(id: machineID)?.manifest.parent,
+      let named = MachineStore.templates().first(where: {
+        $0.id.uuidString.caseInsensitiveCompare(wanted) == .orderedSame
+          || $0.manifest.title == wanted
+      }), named.id != parent
+    {
+      // Asked for one template and holding a machine made from another: returning it would be
+      // answering a different question. A session has one machine, so that one has to go first.
+      completion(
+        .error(
+          "This session already has a machine, made from a different template. vm_close deletes"
+            + " it, and then vm_open can make one from \(wanted)."))
+      return
+    }
     if let existing {
       // A tab whose copy is gone has nothing to start: it goes, and a new machine is asked for.
       if let machineID = existing.pane.machineID,
@@ -1726,7 +1768,7 @@ final class WorktreeDeskViewController: NSViewController {
       Self.waitForAgent(existing, completion: completion)
       return
     }
-    let templates = MachineStore.templates().filter { $0.manifest.kind == .macOS }
+    let templates = MachineStore.templates()
     let wanted = call.string("template")
     let template: Machine
     if let wanted {

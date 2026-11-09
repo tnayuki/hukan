@@ -67,7 +67,6 @@ final class WindowsTemplateBuilder {
   let request: Request
   var onPhase: ((MacTemplateBuilder.Phase) -> Void)?
   private let password = MacTemplateBuilder.makePassword()
-  private var hostKeyboardIsJIS = false
   /// The install, for the Virtual Machines window to show.
   let screenView = QEMUScreenView()
 
@@ -77,9 +76,6 @@ final class WindowsTemplateBuilder {
 
   func run() {
     onPhase?(.preparing)
-    hostKeyboardIsJIS =
-      KBGetLayoutType(Int16(CGEventSource(stateID: .hidSystemState)?.keyboardType ?? 0))
-      == kKeyboardJIS
     guard FileManager.default.isExecutableFile(atPath: Self.qemu) else {
       onPhase?(
         .failed("Windows needs QEMU from Homebrew. Run `brew install qemu`, then try again."))
@@ -297,21 +293,6 @@ final class WindowsTemplateBuilder {
     throw MachineError("This ISO does not say which language it installs.")
   }
 
-  /// Keys reach the guest by position, so the guest has to believe in the keyboard that is really
-  /// on this Mac: left at Windows' 101-key default, a JIS keyboard's symbols come out wrong and its
-  /// IME keys do nothing. A guest cannot change this without restarting, so it is settled here, once,
-  /// from the keyboard the template is made on.
-  private var keyboardCommands: [String] {
-    guard hostKeyboardIsJIS else { return [] }
-    let key = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\i8042prt\\Parameters"
-    return [
-      "/v &quot;LayerDriver JPN&quot; /t REG_SZ /d kbd106.dll",
-      "/v OverrideKeyboardIdentifier /t REG_SZ /d PCAT_106KEY",
-      "/v OverrideKeyboardType /t REG_DWORD /d 7",
-      "/v OverrideKeyboardSubtype /t REG_DWORD /d 2",
-    ].map { "reg add &quot;\(key)&quot; \($0) /f" }
-  }
-
   // Internal so tests can validate the generated XML without preparing a template.
   func answerFile(language: String) -> String {
     let inputLocale = language.lowercased().hasPrefix("ja") ? "0411:00000411" : "0409:00000409"
@@ -343,8 +324,8 @@ final class WindowsTemplateBuilder {
     let setup =
       "cmd /c for %d in (D E F G H I J) do if exist %d:\\hukan-setup.cmd call %d:\\hukan-setup.cmd"
     let firstLogon =
-      (["cmd /c del /f /q C:\\Windows\\Panther\\unattend.xml"] + keyboardCommands
-      + [setup, "shutdown /s /t 5"]).enumerated().map { index, command in
+      (["cmd /c del /f /q C:\\Windows\\Panther\\unattend.xml", setup, "shutdown /s /t 5"])
+      .enumerated().map { index, command in
         """
         <SynchronousCommand wcm:action="add">
                         <Order>\(index + 1)</Order>
@@ -623,10 +604,206 @@ final class WindowsTemplateBuilder {
   }
 }
 
+/// Which keyboard a Windows guest believes it has. Keys go by physical position, so that has to be
+/// the keyboard on this Mac, and since a guest only takes a change by restarting, it is compared
+/// when a machine starts rather than settled once when a template is made: a Mac whose keyboard has
+/// changed needs no new template.
+enum WindowsKeyboard {
+  static let key = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\i8042prt\\Parameters"
+
+  /// Asked of the HID system rather than of the last key typed, which may be none yet.
+  static var hostIsJIS: Bool {
+    KBGetLayoutType(Int16(CGEventSource(stateID: .hidSystemState)?.keyboardType ?? 0))
+      == kKeyboardJIS
+  }
+
+  /// The commands that make the guest's keyboard match, as argv.
+  static func commands(jis: Bool) -> [[String]] {
+    guard jis else {
+      return [
+        "LayerDriver JPN", "OverrideKeyboardIdentifier", "OverrideKeyboardType",
+        "OverrideKeyboardSubtype",
+      ]
+      .map { ["reg.exe", "delete", key, "/v", $0, "/f"] }
+    }
+    return [
+      ["LayerDriver JPN", "REG_SZ", "kbd106.dll"],
+      ["OverrideKeyboardIdentifier", "REG_SZ", "PCAT_106KEY"],
+      ["OverrideKeyboardType", "REG_DWORD", "7"],
+      ["OverrideKeyboardSubtype", "REG_DWORD", "2"],
+    ].map { ["reg.exe", "add", key, "/v", $0[0], "/t", $0[1], "/d", $0[2], "/f"] }
+  }
+}
+
+/// One half of the Windows guest agent, over its virtio-serial port. A serial port is a single
+/// stream, so requests carry an id and answers are matched back to them.
+final class QEMUGuestChannel {
+  private let path: String
+  private let half: String
+  private let lock = NSLock()
+  private var descriptor: Int32 = -1
+  private var nextID = 1
+  private var waiting: [Int: (Result<[String: Any], Error>) -> Void] = [:]
+  private var stopped = false
+  private let writes = DispatchQueue(label: "hukan.guest-channel.write")
+
+  /// Whether the half has said hello on this connection. Main thread.
+  private(set) var isHeard = false
+  /// Told on the main thread each time the agent says hello.
+  var onHello: (() -> Void)?
+
+  init(socket path: String, half: String) {
+    self.path = path
+    self.half = half
+  }
+
+  // Internal so socketpair fixtures exercise framing without connecting to a guest.
+  func receive(descriptor: Int32) {
+    self.descriptor = descriptor
+  }
+
+  // Internal so tests can run one connection without the reconnect loop.
+  func readConnection(replyLimit: Int = GuestAgent.replyLimit) {
+    readLines(replyLimit: replyLimit)
+    finishWaiting()
+  }
+
+  func start() {
+    Thread.detachNewThread { [self] in
+      while !isStopped {
+        if connectToPort() { readLines() }
+        finishWaiting()
+        DispatchQueue.main.async { [self] in isHeard = false }
+        Thread.sleep(forTimeInterval: 0.5)
+      }
+    }
+  }
+
+  func stop() {
+    lock.lock()
+    stopped = true
+    let fd = descriptor
+    lock.unlock()
+    if fd >= 0 { shutdown(fd, SHUT_RDWR) }
+  }
+
+  private var isStopped: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return stopped
+  }
+
+  func send(
+    _ body: [String: Any], completion: @escaping (Result<[String: Any], Error>) -> Void
+  ) {
+    lock.lock()
+    let id = nextID
+    nextID += 1
+    waiting[id] = completion
+    let fd = descriptor
+    lock.unlock()
+    var message = body
+    message["id"] = id
+    guard fd >= 0, var data = try? JSONSerialization.data(withJSONObject: message) else {
+      answer(id, .failure(MachineError("The guest agent is not connected.")))
+      return
+    }
+    data.append(0x0A)
+    writes.async { [self] in
+      var offset = 0
+      while offset < data.count {
+        let sent = data.withUnsafeBytes { write(fd, $0.baseAddress! + offset, data.count - offset) }
+        if sent <= 0 {
+          answer(id, .failure(MachineError("The guest agent hung up.")))
+          return
+        }
+        offset += sent
+      }
+    }
+  }
+
+  private func answer(_ id: Int, _ result: Result<[String: Any], Error>) {
+    lock.lock()
+    let completion = waiting.removeValue(forKey: id)
+    lock.unlock()
+    if let completion { DispatchQueue.main.async { completion(result) } }
+  }
+
+  private func finishWaiting() {
+    lock.lock()
+    let pending = waiting
+    waiting = [:]
+    descriptor = -1
+    lock.unlock()
+    for completion in pending.values {
+      DispatchQueue.main.async {
+        completion(.failure(MachineError("The guest agent went away.")))
+      }
+    }
+  }
+
+  private func connectToPort() -> Bool {
+    let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return false }
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: Array(path.utf8)) }
+    let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+    let result = withUnsafePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
+    }
+    guard result == 0 else {
+      close(fd)
+      return false
+    }
+    lock.lock()
+    descriptor = fd
+    lock.unlock()
+    return true
+  }
+
+  private func readLines(replyLimit: Int = GuestAgent.replyLimit) {
+    var buffer = Data()
+    var chunk = [UInt8](repeating: 0, count: 65536)
+    while !isStopped {
+      let count = read(descriptor, &chunk, chunk.count)
+      guard count > 0 else { break }
+      buffer.append(contentsOf: chunk[0..<count])
+      while let newline = buffer.firstIndex(of: 0x0A) {
+        let line = Data(buffer[buffer.startIndex..<newline])
+        buffer.removeSubrange(buffer.startIndex...newline)
+        handle(line)
+      }
+      // A guest sending without end must not be able to spend this process's memory.
+      if buffer.count > replyLimit { break }
+    }
+    close(descriptor)
+  }
+
+  private func handle(_ line: Data) {
+    guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else {
+      return
+    }
+    if object["hello"] != nil {
+      DispatchQueue.main.async { [self] in
+        isHeard = true
+        onHello?()
+      }
+      return
+    }
+    guard let id = object["id"] as? Int else { return }
+    if object["ok"] as? Bool == true {
+      answer(id, .success(object))
+    } else {
+      answer(id, .failure(MachineError(object["error"] as? String ?? "The guest agent refused.")))
+    }
+  }
+}
+
 /// A Windows machine running on a tab: QEMU as a process of its own, with its display on one unix
 /// socket and its control on another. Saved and resumed the way QEMU migrates, into a file beside
 /// the disk, so it comes back where it was as a macOS machine does.
-final class QEMUMachine {
+final class QEMUMachine: GuestLink {
   private(set) var machine: Machine
   let displaySocket: String
   private let controlSocket: String
@@ -634,6 +811,63 @@ final class QEMUMachine {
   let agentSockets: [String: String]
   private var process: Process?
   private var stopping: (() -> Void)?
+
+  private var channels: [String: QEMUGuestChannel] = [:]
+  /// Told, on the main thread, each time a half of the agent says hello.
+  var onAgentHello: ((String) -> Void)?
+
+  /// Which halves of the guest agent are there to be spoken to.
+  var agentsHeard: Set<String> { Set(channels.filter { $0.value.isHeard }.keys) }
+
+  func guestRequest(
+    _ body: [String: Any], admin: Bool,
+    completion: @escaping (Result<[String: Any], Error>) -> Void
+  ) {
+    guard let channel = channels[admin ? "root" : "user"] else {
+      completion(.failure(MachineError("The machine is not running.")))
+      return
+    }
+    channel.send(body, completion: completion)
+  }
+
+  /// A picture of the screen as the guest is drawing it, from QEMU rather than the guest: it needs
+  /// no agent, no permission, and works before anyone has logged on.
+  func screenshot(completion: @escaping (Result<Data, Error>) -> Void) {
+    let control = controlSocket
+    let file = machine.url.appendingPathComponent("screen.png")
+    DispatchQueue.global(qos: .userInitiated).async {
+      let result = Result { () throws -> Data in
+        guard
+          let qemu = QMPConnection(socket: control),
+          qemu.execute("screendump", ["filename": file.path, "format": "png"]) != nil
+        else { throw MachineError("QEMU could not take a screenshot.") }
+        defer { try? FileManager.default.removeItem(at: file) }
+        return try Data(contentsOf: file)
+      }
+      DispatchQueue.main.async { completion(result) }
+    }
+  }
+
+  private func startChannels() {
+    for (half, socket) in agentSockets {
+      let channel = QEMUGuestChannel(socket: socket, half: half)
+      channel.onHello = { [weak self] in self?.onAgentHello?(half) }
+      channels[half] = channel
+      channel.start()
+    }
+  }
+
+  private func stopChannels() {
+    for channel in channels.values { channel.stop() }
+    channels = [:]
+  }
+
+  /// Whether this run carried on from a save, leaving the guest's clock where it was then.
+  private(set) var resumedFromSave = false
+
+  /// The machine stopped because its saved state could not be loaded. A state only loads into the
+  /// same virtual hardware it was saved from, so one saved before hukan changed that never will.
+  private(set) var resumeFailed = false
 
   /// Told, on the main thread, when the machine has stopped of its own accord.
   var onStop: ((Error?) -> Void)?
@@ -693,6 +927,7 @@ final class QEMUMachine {
       ]
     }
     let resuming = FileManager.default.fileExists(atPath: machine.stateURL.path)
+    resumedFromSave = resuming
     if resuming { arguments += ["-incoming", "file:\(machine.stateURL.path)"] }
     process.arguments = arguments
     let log = machine.url.appendingPathComponent("qemu.log")
@@ -705,6 +940,7 @@ final class QEMUMachine {
       DispatchQueue.main.async {
         guard let self else { return }
         self.process = nil
+        self.stopChannels()
         for path in [self.displaySocket, self.controlSocket] {
           try? FileManager.default.removeItem(atPath: path)
         }
@@ -714,12 +950,17 @@ final class QEMUMachine {
           return
         }
         let failed = process.terminationStatus != 0
+        // Still there means it never got as far as running: QEMU could not load it. Then it never
+        // will, so it goes now rather than waiting on a disk for someone to throw it away.
+        self.resumeFailed =
+          failed && FileManager.default.fileExists(atPath: self.machine.stateURL.path)
         self.onStop?(
           failed ? MachineError("QEMU stopped (status \(process.terminationStatus)).") : nil)
       }
     }
     try process.run()
     self.process = process
+    startChannels()
     guard resuming else { return }
     // A saved state belongs to the disk as it was: once running again it describes nothing.
     let control = controlSocket
@@ -728,8 +969,11 @@ final class QEMUMachine {
       // A connection for each look: the socket takes one client, and held for the whole of a
       // resume it kept out the save that quitting asks for.
       for _ in 0..<600 {
-        let status = QMPConnection(socket: control)?.execute("query-status") as? [String: Any]
-        if status?["status"] as? String == "running" {
+        let qemu = QMPConnection(socket: control)
+        let status = (qemu?.execute("query-status") as? [String: Any])?["status"] as? String
+        // Saved while stopped, it comes back stopped, and has to be told to carry on.
+        if status == "paused" { _ = qemu?.execute("cont") }
+        if status == "running" {
           try? FileManager.default.removeItem(at: state)
           return
         }
@@ -777,7 +1021,9 @@ final class QEMUMachine {
       defer { process?.terminate() }
       let manager = FileManager.default
       try? manager.removeItem(at: partial)
-      guard let qemu = QMPConnection(socket: control),
+      // Stopped first. Saved while it ran, the guest went on dirtying memory, the file came to
+      // twice its RAM, and what it held did not resume: Windows came back by restarting.
+      guard let qemu = QMPConnection(socket: control), qemu.execute("stop") != nil,
         qemu.execute("migrate", ["uri": "file:\(partial.path)"]) != nil
       else { return }
       for _ in 0..<1200 {

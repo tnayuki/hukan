@@ -253,6 +253,7 @@ enum HukanMCP {
       name: "guest_exec",
       description:
         "Run a shell command in a virtual machine and get its exit status, stdout and stderr. "
+        + "On a macOS guest it is /bin/zsh -c, on a Windows guest PowerShell. "
         + "It runs as the guest's logged-in user, in their desktop session, so `open -a` and GUI "
         + "apps work; set admin to run it as root instead (there is no sudo password to give). "
         + "The user is asked the first time you touch a machine.",

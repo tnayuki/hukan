@@ -407,12 +407,16 @@ Workspace (one window)
   made on** — `virt-11.1`, recorded with it, never the bare `virt`, which means whichever QEMU is
   installed now — because a saved state only loads into the hardware it was saved from, and a
   versioned type is QEMU's promise to keep building that hardware; a Homebrew upgrade must not
-  strand a saved machine. There is **no TPM**: Setup's checks are turned
+  strand a saved machine. A state that will not load all the same is thrown away on the spot and
+  the machine boots from its disk, as a macOS one does, rather than left for someone to find.
+  There is **no TPM**: Setup's checks are turned
   off by the answer file, and nothing a template is for needs one, which is one program fewer beside
   every machine. **Its screen is spoken to over a unix socket by a small client of hukan's own**,
   since RoyalVNCKit connects only to a host and a port and a listener on localhost is open to every
   process here; having one server to talk to is what keeps that client small. **Keys go by physical
-  position, so the guest's layout is set from the Mac's keyboard when the template is made.**
+  position, so a guest's layout has to match the Mac's keyboard**, and it is compared when a machine
+  starts rather than settled in the template, so a Mac whose keyboard has changed needs no new one:
+  the price is one automatic restart the first time they differ.
 - **A client outside hukan reaches the sessions over stdio, from the executable the bundle
   already ships.** It was built for the Claude desktop app, which is where a person keeps track of
   their work as a whole, and what this window knows — which session is working, which is waiting on
@@ -1845,8 +1849,8 @@ Workspace (one window)
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
-- **Windows guests** — templates and tabs work. Still to do: the `guest_` tools against the Windows
-  agent, its interface operations, and the worktree share.
+- **Windows guests** — templates, tabs and running commands work. Still to do: changing the
+  resolution, the interface tools against the Windows agent, and the worktree share.
 - **Browser** — what is left open is the login state: sharing Safari's is officially impossible
   (plan B: inject `Cookies.binarycookies`, needs Full Disk Access). Measured with a WKWebView
   harness (2026-08): SSO redirect chains and Kolide device trust **work**; passkeys and iCloud

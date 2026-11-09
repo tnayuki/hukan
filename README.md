@@ -447,7 +447,9 @@ running.
 
 A Windows on Arm ISO makes a Windows template the same way, unattended in about twenty minutes,
 on QEMU from Homebrew, which the cask installs. It runs on a tab like a macOS machine, with its screen
-and keyboard there, and is saved and resumed the same way. The agent's tools do not reach it yet.
+and keyboard there, and is saved and resumed the same way. The agent's tools can open one, run
+commands in it, read and write its files and take screenshots; driving its interface is macOS-only
+for now.
 
 ### Session lifetime
 

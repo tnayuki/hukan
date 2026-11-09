@@ -404,7 +404,8 @@ final class QEMUScreenView: NSView {
 
   /// A Mac key's position, as QEMU numbers the same position: scan code set 1, with 0x80 added for
   /// the keys that set prefixes with E0. ⌘ is the Windows key, where a Mac keyboard has it.
-  private static let qemuKeys: [UInt16: UInt32] = [
+  // Internal so physical key positions can be checked without the host keyboard.
+  static let qemuKeys: [UInt16: UInt32] = [
     0: 0x1E, 1: 0x1F, 2: 0x20, 3: 0x21, 4: 0x23, 5: 0x22, 6: 0x2C, 7: 0x2D, 8: 0x2E, 9: 0x2F,
     11: 0x30, 12: 0x10, 13: 0x11, 14: 0x12, 15: 0x13, 16: 0x15, 17: 0x14, 18: 0x02, 19: 0x03,
     20: 0x04, 21: 0x05, 22: 0x07, 23: 0x06, 24: 0x0D, 25: 0x0A, 26: 0x08, 27: 0x0C, 28: 0x09,

@@ -8,6 +8,23 @@ import Virtualization
 ///
 /// Two agents, two ports: the logged-in user's (commands run as the person would, with the
 /// desktop there) and the administrator's, for what would otherwise need sudo.
+/// A way of reaching a machine's guest agent: vsock for a machine in this process, a serial port
+/// for one in QEMU. What is said over them is the same.
+protocol GuestLink: AnyObject {
+  func guestRequest(
+    _ body: [String: Any], admin: Bool,
+    completion: @escaping (Result<[String: Any], Error>) -> Void)
+}
+
+extension VZVirtualMachine: GuestLink {
+  func guestRequest(
+    _ body: [String: Any], admin: Bool,
+    completion: @escaping (Result<[String: Any], Error>) -> Void
+  ) {
+    GuestAgent.socketRequest(body, to: self, admin: admin, completion: completion)
+  }
+}
+
 enum GuestAgent {
   static let userPort: UInt32 = 7737
   static let rootPort: UInt32 = 7738
@@ -33,7 +50,14 @@ enum GuestAgent {
   /// Send one request and read its one reply. The device belongs to the machine's queue, which is
   /// the main one, so the connection is opened there and the bytes moved off it.
   static func request(
-    _ body: [String: Any], to vm: VZVirtualMachine, admin: Bool = false,
+    _ body: [String: Any], to link: any GuestLink, admin: Bool = false,
+    completion: @escaping (Result<[String: Any], Error>) -> Void
+  ) {
+    link.guestRequest(body, admin: admin, completion: completion)
+  }
+
+  fileprivate static func socketRequest(
+    _ body: [String: Any], to vm: VZVirtualMachine, admin: Bool,
     completion: @escaping (Result<[String: Any], Error>) -> Void
   ) {
     guard vm.state == .running else {
@@ -111,7 +135,7 @@ enum GuestAgent {
   // MARK: Verbs
 
   static func exec(
-    _ argv: [String], on vm: VZVirtualMachine, admin: Bool = false, cwd: String? = nil,
+    _ argv: [String], on vm: any GuestLink, admin: Bool = false, cwd: String? = nil,
     stdin: Data? = nil, timeout: Double = 600,
     completion: @escaping (Result<ExecResult, Error>) -> Void
   ) {
@@ -131,7 +155,7 @@ enum GuestAgent {
   }
 
   static func read(
-    _ path: String, on vm: VZVirtualMachine, admin: Bool = false,
+    _ path: String, on vm: any GuestLink, admin: Bool = false,
     completion: @escaping (Result<Data, Error>) -> Void
   ) {
     request(["op": "read", "path": path], to: vm, admin: admin) { result in
@@ -146,7 +170,7 @@ enum GuestAgent {
   }
 
   static func write(
-    _ data: Data, to path: String, on vm: VZVirtualMachine, admin: Bool = false,
+    _ data: Data, to path: String, on vm: any GuestLink, admin: Bool = false,
     completion: @escaping (Result<Void, Error>) -> Void
   ) {
     request(
@@ -159,7 +183,7 @@ enum GuestAgent {
   /// Put the guest's main display in the mode that draws exactly these pixels — the user half,
   /// since a display mode belongs to the session showing it. Answers the mode, as "960x600@2".
   static func setDisplay(
-    width: Int, height: Int, on vm: VZVirtualMachine,
+    width: Int, height: Int, on vm: any GuestLink,
     completion: @escaping (Result<String, Error>) -> Void
   ) {
     request(["op": "display", "width": width, "height": height], to: vm) { result in
@@ -168,7 +192,7 @@ enum GuestAgent {
   }
 
   static func ping(
-    _ vm: VZVirtualMachine, admin: Bool = false, completion: @escaping (Bool) -> Void
+    _ vm: any GuestLink, admin: Bool = false, completion: @escaping (Bool) -> Void
   ) {
     request(["op": "ping"], to: vm, admin: admin) { result in
       if case .success = result { completion(true) } else { completion(false) }

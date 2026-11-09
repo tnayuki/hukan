@@ -94,7 +94,14 @@ final class MachinePaneViewController: NSViewController {
   /// Which halves of the guest agent have said they are up; only those are dialled.
   /// Empty until the guest's agent is known to be the one hukan ships, since an agent about to be
   /// replaced is a port about to go away, and dialling one has crashed Virtualization.framework.
-  var agentsHeard: Set<String> { agentUpdate == .ready ? runner?.agentsHeard ?? [] : [] }
+  var agentsHeard: Set<String> {
+    if let qemu { return keyboardSettled ? qemu.agentsHeard : [] }
+    return agentUpdate == .ready ? runner?.agentsHeard ?? [] : []
+  }
+  /// How the guest's agent is reached, whichever kind of machine this is.
+  var guestLink: (any GuestLink)? { qemu ?? runner?.vm }
+  /// A picture of the screen when QEMU can take it, which it can with no agent at all.
+  var qemuMachine: QEMUMachine? { qemu }
 
   // MARK: Resolution
 
@@ -308,6 +315,14 @@ final class MachinePaneViewController: NSViewController {
         ? "Resuming \(machineTitle)…" : "Starting \(machineTitle)…")
     let qemu = QEMUMachine(machine: machine)
     self.qemu = qemu
+    keyboardSettled = false
+    keyboardBusy = false
+    clockSet = false
+    qemu.onAgentHello = { [weak self, weak qemu] half in
+      guard let self, let qemu, self.qemu === qemu, half == "root" else { return }
+      self.setClock(on: qemu)
+      self.settleKeyboard(on: qemu)
+    }
     qemu.onStop = { [weak self] error in
       guard let self else { return }
       self.qemuScreen.disconnect()
@@ -317,7 +332,12 @@ final class MachinePaneViewController: NSViewController {
         whenStopped(error)
         return
       }
-      if let error {
+      if qemu.resumeFailed {
+        // The saved state is gone with the failure, so this boots from the disk — what a macOS
+        // machine does too, its state spent on the one attempt. What is lost is what was in
+        // memory, as if the power had gone.
+        self.start()
+      } else if let error {
         self.show(failure: error.localizedDescription, retry: true)
       } else {
         self.show(stopped: "\(self.machineTitle) shut down.")
@@ -332,6 +352,65 @@ final class MachinePaneViewController: NSViewController {
     }
     qemuScreen.connect(socket: qemu.displaySocket)
     showScreen()
+  }
+
+  private var clockSet = false
+
+  /// A resumed guest's clock says when it was saved, however long ago that was.
+  private func setClock(on qemu: QEMUMachine) {
+    guard qemu.resumedFromSave, !clockSet else { return }
+    clockSet = true
+    let now = ISO8601DateFormatter().string(from: Date())
+    GuestAgent.exec(
+      ["powershell.exe", "-NoProfile", "-Command", "Set-Date -Date ([DateTime]::Parse('\(now)'))"],
+      on: qemu, admin: true
+    ) { _ in }
+  }
+
+  private var keyboardSettled = false
+  private var keyboardBusy = false
+
+  /// Make the guest believe in the keyboard on this Mac, restarting it once if it has to change.
+  /// The tools wait for this: an agent about to be restarted is not one to hand out.
+  private func settleKeyboard(on qemu: QEMUMachine) {
+    guard !keyboardSettled, !keyboardBusy else { return }
+    keyboardBusy = true
+    let jis = WindowsKeyboard.hostIsJIS
+    GuestAgent.exec(
+      ["reg.exe", "query", WindowsKeyboard.key, "/v", "OverrideKeyboardIdentifier"], on: qemu,
+      admin: true
+    ) { [weak self] result in
+      guard let self, self.qemu === qemu else { return }
+      let isJIS: Bool
+      if case .success(let run) = result {
+        isJIS = String(decoding: run.stdout, as: UTF8.self).contains("PCAT_106KEY")
+      } else {
+        // Not there to ask: leave the guest as it is rather than restart it on a guess.
+        self.keyboardBusy = false
+        self.keyboardSettled = true
+        return
+      }
+      guard isJIS != jis else {
+        self.keyboardBusy = false
+        self.keyboardSettled = true
+        return
+      }
+      self.applyKeyboard(WindowsKeyboard.commands(jis: jis)[...], on: qemu)
+    }
+  }
+
+  private func applyKeyboard(_ commands: ArraySlice<[String]>, on qemu: QEMUMachine) {
+    guard let command = commands.first else {
+      GuestAgent.exec(["shutdown.exe", "/r", "/t", "0"], on: qemu, admin: true) { _ in }
+      // Once it is gone: a hello from the old agent must not start this over.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+        self?.keyboardBusy = false
+      }
+      return
+    }
+    GuestAgent.exec(command, on: qemu, admin: true) { [weak self] _ in
+      self?.applyKeyboard(commands.dropFirst(), on: qemu)
+    }
   }
 
   private func boot(_ machine: Machine) {
