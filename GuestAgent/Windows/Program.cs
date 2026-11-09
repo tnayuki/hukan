@@ -11,6 +11,7 @@
 //                                            -> {"id":2,"ok":true,"exit":0,"stdout":"<b64>","stderr":"<b64>","timedOut":false}
 //   {"id":3,"op":"read","path":...}          -> {"id":3,"ok":true,"data":"<b64>"}
 //   {"id":4,"op":"write","path":...,"data":"<b64>"}  -> {"id":4,"ok":true}
+//   {"id":5,"op":"display","width":1920,"height":1080}  -> {"id":5,"ok":true,"mode":"1920x1080"}
 // A failure is {"id":n,"ok":false,"error":"..."}. Unasked, every fifteen seconds: {"hello":"user"}.
 
 using System;
@@ -52,6 +53,64 @@ namespace HukanGuestAgent
         {
             var thread = new Thread(() => new Agent("root").Run()) { IsBackground = true };
             thread.Start();
+        }
+    }
+
+    /// The screen's mode, which belongs to the session showing it, so only the user half can set it.
+    static class Display
+    {
+        const int EnumCurrent = -1, UpdateRegistry = 1, FieldsSize = 0x180000;
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct DevMode
+        {
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+            public ushort SpecVersion, DriverVersion, Size, DriverExtra;
+            public uint Fields;
+            public int X, Y;
+            public uint Orientation, FixedOutput;
+            public short Color, Duplex, YResolution, TTOption, Collate;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string FormName;
+            public ushort LogPixels;
+            public uint BitsPerPel, Width, Height, Flags, Frequency;
+            public uint IcmMethod, IcmIntent, MediaType, DitherType, Reserved1, Reserved2, PanningWidth, PanningHeight;
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern bool EnumDisplaySettings(string device, int mode, ref DevMode devMode);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern int ChangeDisplaySettings(ref DevMode devMode, int flags);
+
+        static DevMode Blank()
+        {
+            var mode = new DevMode();
+            mode.Size = (ushort)Marshal.SizeOf(typeof(DevMode));
+            return mode;
+        }
+
+        public static Dictionary<string, object> Set(int width, int height)
+        {
+            var mode = Blank();
+            if (!EnumDisplaySettings(null, EnumCurrent, ref mode))
+                return new Dictionary<string, object> { ["ok"] = false, ["error"] = "this session has no display" };
+            mode.Width = (uint)width;
+            mode.Height = (uint)height;
+            mode.Fields = FieldsSize;
+            if (ChangeDisplaySettings(ref mode, UpdateRegistry) == 0)
+                return new Dictionary<string, object> { ["ok"] = true, ["mode"] = width + "x" + height };
+            var offered = new SortedSet<string>();
+            var candidate = Blank();
+            for (var index = 0; EnumDisplaySettings(null, index, ref candidate); index++)
+            {
+                offered.Add(candidate.Width + "x" + candidate.Height);
+                candidate = Blank();
+            }
+            return new Dictionary<string, object>
+            {
+                ["ok"] = false,
+                ["error"] = "the display has no " + width + "x" + height + "; it offers " + string.Join(" ", offered),
+            };
         }
     }
 
@@ -187,6 +246,8 @@ namespace HukanGuestAgent
                     Directory.CreateDirectory(Path.GetDirectoryName(path));
                     File.WriteAllBytes(path, Convert.FromBase64String(Text(request, "data")));
                     return new Dictionary<string, object> { ["ok"] = true };
+                case "display":
+                    return Display.Set(Convert.ToInt32(request["width"]), Convert.ToInt32(request["height"]));
                 default:
                     return Failure("unknown op");
             }

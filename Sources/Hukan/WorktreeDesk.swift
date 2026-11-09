@@ -1549,8 +1549,9 @@ final class WorktreeDeskViewController: NSViewController {
       return
     }
     if pane.runsOnQEMU {
-      if call.name == "vm_set_resolution" {
-        completion(.error("A Windows machine's resolution cannot be changed yet."))
+      if call.name == "vm_set_resolution", (call.arguments["width"] as? Int ?? 0) <= 0 {
+        completion(
+          .error("A Windows machine's screen cannot follow its tab; give a width and height."))
         return
       }
       if call.name == "guest_screenshot", let qemu = pane.qemuMachine {
@@ -2634,6 +2635,7 @@ final class WorktreeDeskViewController: NSViewController {
       fit.target = self
       fit.representedObject = id
       fit.state = pane.fixedResolution == nil ? .on : .off
+      fit.isHidden = pane.runsOnQEMU
       resolution.addItem(.separator())
       for (width, height) in MachinePaneViewController.fixedResolutions {
         let item = resolution.addItem(
@@ -2644,9 +2646,7 @@ final class WorktreeDeskViewController: NSViewController {
         item.tag = width << 16 | height
         item.state = pane.fixedResolution.map { $0 == (width, height) } == true ? .on : .off
       }
-      if !pane.runsOnQEMU {
-        menu.addItem(withTitle: "Resolution", action: nil, keyEquivalent: "").submenu = resolution
-      }
+      menu.addItem(withTitle: "Resolution", action: nil, keyEquivalent: "").submenu = resolution
       let save = menu.addItem(
         withTitle: "Save as Template…", action: #selector(saveMachineAsTemplate(_:)),
         keyEquivalent: "")

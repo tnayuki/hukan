@@ -907,7 +907,7 @@ final class QEMUMachine: GuestLink {
       "-smp", String(manifest.cpuCount), "-m", String(manifest.memorySize >> 20),
       "-drive", "if=pflash,format=raw,readonly=on,file=\(WindowsTemplateBuilder.firmwareCode)",
       "-drive", "if=pflash,format=raw,file=\(machine.auxiliaryURL.path)",
-      "-device", "ramfb",
+      "-device", "virtio-gpu-pci,xres=1280,yres=800",
       "-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0",
       "-device", "usb-tablet,bus=xhci.0",
       "-drive",

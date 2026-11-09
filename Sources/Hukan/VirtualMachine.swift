@@ -122,6 +122,7 @@ final class MachinePaneViewController: NSViewController {
   ) throws {
     resolutionSettled?("superseded by a newer resolution")
     resolutionSettled = settled
+    resolutionBeforeChange = fixedResolution
     fixedResolution = size
     onResolutionChange?()
     if let id = machineID.flatMap(UUID.init(uuidString:)),
@@ -135,7 +136,42 @@ final class MachinePaneViewController: NSViewController {
     try applyResolution()
   }
 
+  private var resolutionBeforeChange: (width: Int, height: Int)?
+
+  private func keepResolution(_ size: (width: Int, height: Int)?) {
+    fixedResolution = size
+    onResolutionChange?()
+    guard let size, let id = machineID.flatMap(UUID.init(uuidString:)),
+      var machine = MachineStore.session(id: id)
+    else { return }
+    machine.manifest.display = .init(width: size.width, height: size.height)
+    try? machine.save()
+  }
+
   private func applyResolution() throws {
+    if let qemu {
+      guard let size = fixedResolution else { return }
+      // A mode is the session's, so the user half sets it, and Windows keeps it across a restart.
+      GuestAgent.request(
+        ["op": "display", "width": size.width, "height": size.height], to: qemu
+      ) { [weak self] result in
+        guard let self else { return }
+        switch result {
+        case .success(let reply):
+          // The screen is black for a few seconds after a mode changes, and the answer is what a
+          // screenshot follows.
+          let mode = reply["mode"] as? String ?? ""
+          DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.settle("guest mode \(mode)")
+          }
+        case .failure(let error):
+          // Refused means it is still at the old size, so that is what stays on record.
+          self.keepResolution(self.resolutionBeforeChange)
+          self.settle(error.localizedDescription)
+        }
+      }
+      return
+    }
     guard let size = fixedResolution else {
       screen.automaticallyReconfiguresDisplay = true
       return
@@ -318,8 +354,19 @@ final class MachinePaneViewController: NSViewController {
     keyboardSettled = false
     keyboardBusy = false
     clockSet = false
+    agentChecked = false
+    resolutionRestored = false
+    if machine.manifest.fitsWindow == false {
+      fixedResolution = (machine.manifest.display.width, machine.manifest.display.height)
+    }
     qemu.onAgentHello = { [weak self, weak qemu] half in
-      guard let self, let qemu, self.qemu === qemu, half == "root" else { return }
+      guard let self, let qemu, self.qemu === qemu else { return }
+      // A resumed guest comes back at a mode of its own choosing, whatever it was saved at.
+      if half == "user", qemu.resumedFromSave, !self.resolutionRestored {
+        self.resolutionRestored = true
+        try? self.applyResolution()
+      }
+      guard half == "root" else { return }
       self.setClock(on: qemu)
       self.settleKeyboard(on: qemu)
     }
@@ -375,6 +422,63 @@ final class MachinePaneViewController: NSViewController {
   private func settleKeyboard(on qemu: QEMUMachine) {
     guard !keyboardSettled, !keyboardBusy else { return }
     keyboardBusy = true
+    guard !agentChecked else {
+      compareKeyboard(on: qemu)
+      return
+    }
+    agentChecked = true
+    updateWindowsAgent(on: qemu)
+  }
+
+  private var agentChecked = false
+  private var resolutionRestored = false
+
+  /// The agent is compared byte for byte with the one this build ships, as on macOS. It cannot be
+  /// replaced from inside itself, since Windows will not overwrite a program that is running, so a
+  /// script left behind stops both halves, moves the new file in and starts them again.
+  private func updateWindowsAgent(on qemu: QEMUMachine) {
+    let directory = "C:\\Program Files\\Hukan"
+    let path = directory + "\\hukan-guest-agent.exe"
+    GuestAgent.read(path, on: qemu, admin: true) { [weak self] result in
+      guard let self, self.qemu === qemu else { return }
+      guard case .success(let installed) = result,
+        let bundled = Bundle.main.url(forResource: "hukan-guest-agent", withExtension: "exe")
+          .flatMap({ try? Data(contentsOf: $0) }),
+        installed != bundled
+      else {
+        self.compareKeyboard(on: qemu)
+        return
+      }
+      let script = Self.windowsAgentUpdateScript(path: path)
+      GuestAgent.write(bundled, to: path + ".new", on: qemu, admin: true) { _ in
+        GuestAgent.write(Data(script.utf8), to: directory + "\\update.cmd", on: qemu, admin: true) {
+          _ in
+          let launch =
+            "Start-Process cmd.exe -WindowStyle Hidden -ArgumentList '/c', "
+            + "'\"\(directory)\\update.cmd\"'"
+          GuestAgent.exec(
+            ["powershell.exe", "-NoProfile", "-Command", launch], on: qemu, admin: true
+          ) { _ in }
+          // Both halves go away and come back; their next hello starts the check over.
+          DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            self?.keyboardBusy = false
+          }
+        }
+      }
+    }
+  }
+
+  // Internal so update ordering can be checked without a running Windows agent.
+  static func windowsAgentUpdateScript(path: String) -> String {
+    return [
+      "@echo off", "ping -n 3 127.0.0.1 >nul", "sc stop HukanGuestAgent",
+      "taskkill /f /im hukan-guest-agent.exe", "ping -n 3 127.0.0.1 >nul",
+      "move /y \"\(path).new\" \"\(path)\"", "sc start HukanGuestAgent",
+      "schtasks /run /tn HukanGuestAgent", "del \"%~f0\"", "",
+    ].joined(separator: "\r\n")
+  }
+
+  private func compareKeyboard(on qemu: QEMUMachine) {
     let jis = WindowsKeyboard.hostIsJIS
     GuestAgent.exec(
       ["reg.exe", "query", WindowsKeyboard.key, "/v", "OverrideKeyboardIdentifier"], on: qemu,
