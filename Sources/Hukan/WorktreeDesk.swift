@@ -2602,7 +2602,9 @@ final class WorktreeDeskViewController: NSViewController {
         item.tag = width << 16 | height
         item.state = pane.fixedResolution.map { $0 == (width, height) } == true ? .on : .off
       }
-      menu.addItem(withTitle: "Resolution", action: nil, keyEquivalent: "").submenu = resolution
+      if !pane.runsOnQEMU {
+        menu.addItem(withTitle: "Resolution", action: nil, keyEquivalent: "").submenu = resolution
+      }
       let save = menu.addItem(
         withTitle: "Save as Template…", action: #selector(saveMachineAsTemplate(_:)),
         keyEquivalent: "")

@@ -623,6 +623,187 @@ final class WindowsTemplateBuilder {
   }
 }
 
+/// A Windows machine running on a tab: QEMU as a process of its own, with its display on one unix
+/// socket and its control on another. Saved and resumed the way QEMU migrates, into a file beside
+/// the disk, so it comes back where it was as a macOS machine does.
+final class QEMUMachine {
+  private(set) var machine: Machine
+  let displaySocket: String
+  private let controlSocket: String
+  /// Where the guest agent's two halves are, each a virtio-serial port on a unix socket.
+  let agentSockets: [String: String]
+  private var process: Process?
+  private var stopping: (() -> Void)?
+
+  /// Told, on the main thread, when the machine has stopped of its own accord.
+  var onStop: ((Error?) -> Void)?
+
+  var isRunning: Bool { process?.isRunning ?? false }
+
+  init(machine: Machine) {
+    self.machine = machine
+    let tag = machine.id.uuidString.prefix(8)
+    displaySocket = QEMUSocket.path("vnc-\(tag)")
+    controlSocket = QEMUSocket.path("qmp-\(tag)")
+    agentSockets = [
+      "user": QEMUSocket.path("ga-\(tag)-user"), "root": QEMUSocket.path("ga-\(tag)-root"),
+    ]
+  }
+
+  func start() throws {
+    guard FileManager.default.isExecutableFile(atPath: WindowsTemplateBuilder.qemu) else {
+      throw MachineError("Windows needs QEMU from Homebrew. Run `brew install qemu`.")
+    }
+    // A machine made before the type was recorded was made on the bare `virt` of a QEMU no older
+    // than the one here, so it is held at today's from now on.
+    if machine.manifest.qemuMachine == nil, let type = WindowsTemplateBuilder.machineType() {
+      machine.manifest.qemuMachine = type
+      try? machine.save()
+    }
+    stopLeftover()
+    for path in [displaySocket, controlSocket] + agentSockets.values {
+      try? FileManager.default.removeItem(atPath: path)
+    }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: WindowsTemplateBuilder.qemu)
+    let manifest = machine.manifest
+    var arguments = [
+      "-machine", "\(manifest.qemuMachine ?? "virt"),highmem=on,gic-version=3",
+      "-accel", "hvf", "-cpu", "host",
+      "-smp", String(manifest.cpuCount), "-m", String(manifest.memorySize >> 20),
+      "-drive", "if=pflash,format=raw,readonly=on,file=\(WindowsTemplateBuilder.firmwareCode)",
+      "-drive", "if=pflash,format=raw,file=\(machine.auxiliaryURL.path)",
+      "-device", "ramfb",
+      "-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0",
+      "-device", "usb-tablet,bus=xhci.0",
+      "-drive",
+      "if=none,id=disk0,format=raw,cache=writeback,discard=unmap,file=\(machine.diskURL.path)",
+      "-device", "nvme,serial=hukan0,drive=disk0",
+      // Windows reads the hardware clock as local time, and QEMU keeps it in UTC unless told.
+      "-rtc", "base=localtime", "-nic", "user,model=virtio-net-pci", "-display", "none",
+      "-vnc", "unix:\(displaySocket)",
+      "-device", "virtio-serial-pci,id=serial0",
+      "-qmp", "unix:\(controlSocket),server=on,wait=off",
+      "-pidfile", pidFile,
+    ]
+    for (half, socket) in agentSockets {
+      arguments += [
+        "-chardev", "socket,id=agent\(half),path=\(socket),server=on,wait=off",
+        "-device", "virtserialport,bus=serial0.0,chardev=agent\(half),name=dev.hukan.agent.\(half)",
+      ]
+    }
+    let resuming = FileManager.default.fileExists(atPath: machine.stateURL.path)
+    if resuming { arguments += ["-incoming", "file:\(machine.stateURL.path)"] }
+    process.arguments = arguments
+    let log = machine.url.appendingPathComponent("qemu.log")
+    FileManager.default.createFile(atPath: log.path, contents: nil)
+    if let handle = try? FileHandle(forWritingTo: log) {
+      process.standardOutput = handle
+      process.standardError = handle
+    }
+    process.terminationHandler = { [weak self] process in
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.process = nil
+        for path in [self.displaySocket, self.controlSocket] {
+          try? FileManager.default.removeItem(atPath: path)
+        }
+        if let stopping = self.stopping {
+          self.stopping = nil
+          stopping()
+          return
+        }
+        let failed = process.terminationStatus != 0
+        self.onStop?(
+          failed ? MachineError("QEMU stopped (status \(process.terminationStatus)).") : nil)
+      }
+    }
+    try process.run()
+    self.process = process
+    guard resuming else { return }
+    // A saved state belongs to the disk as it was: once running again it describes nothing.
+    let control = controlSocket
+    let state = machine.stateURL
+    DispatchQueue.global(qos: .utility).async {
+      // A connection for each look: the socket takes one client, and held for the whole of a
+      // resume it kept out the save that quitting asks for.
+      for _ in 0..<600 {
+        let status = QMPConnection(socket: control)?.execute("query-status") as? [String: Any]
+        if status?["status"] as? String == "running" {
+          try? FileManager.default.removeItem(at: state)
+          return
+        }
+        Thread.sleep(forTimeInterval: 0.5)
+      }
+    }
+  }
+
+  private var pidFile: String { machine.url.appendingPathComponent("qemu.pid").path }
+
+  /// A QEMU left behind by a hukan that died has this machine's disk open. Two of them on one disk
+  /// is the disk's end, so the old one goes before a new one starts.
+  private func stopLeftover() {
+    guard let text = try? String(contentsOfFile: pidFile, encoding: .utf8),
+      let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0
+    else { return }
+    var path = [CChar](repeating: 0, count: 4096)
+    guard proc_pidpath(pid, &path, UInt32(path.count)) > 0,
+      String(cString: path).contains("qemu-system")
+    else { return }
+    kill(pid, SIGTERM)
+    for _ in 0..<50 where kill(pid, 0) == 0 { Thread.sleep(forTimeInterval: 0.1) }
+    if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+  }
+
+  /// Press the machine's power button, which Windows answers by shutting down.
+  func requestShutdown() {
+    let control = controlSocket
+    DispatchQueue.global(qos: .userInitiated).async {
+      _ = QMPConnection(socket: control)?.execute("system_powerdown")
+    }
+  }
+
+  /// Save the machine beside its disk and stop QEMU. Written under another name and moved into
+  /// place once whole: a save cut short had replaced the state it was saving, and the machine
+  /// could not be resumed at all.
+  func save(completion: @escaping () -> Void) {
+    guard isRunning else { return completion() }
+    stopping = completion
+    let control = controlSocket
+    let state = machine.stateURL
+    let partial = state.appendingPathExtension("saving")
+    let process = self.process
+    DispatchQueue.global(qos: .userInitiated).async {
+      defer { process?.terminate() }
+      let manager = FileManager.default
+      try? manager.removeItem(at: partial)
+      guard let qemu = QMPConnection(socket: control),
+        qemu.execute("migrate", ["uri": "file:\(partial.path)"]) != nil
+      else { return }
+      for _ in 0..<1200 {
+        let info = qemu.execute("query-migrate") as? [String: Any]
+        let status = info?["status"] as? String
+        if status == "completed" {
+          _ = try? manager.replaceItemAt(state, withItemAt: partial)
+          return
+        }
+        if status == "failed" {
+          try? manager.removeItem(at: partial)
+          return
+        }
+        Thread.sleep(forTimeInterval: 0.25)
+      }
+      try? manager.removeItem(at: partial)
+    }
+  }
+
+  func forceStop(completion: @escaping () -> Void) {
+    guard isRunning else { return completion() }
+    stopping = completion
+    process?.terminate()
+  }
+}
+
 /// A blocking client for QEMU's machine protocol, on a unix socket. Called off the main thread.
 final class QMPConnection {
   private let descriptor: Int32

@@ -446,7 +446,8 @@ have to be made again for that. The toolbar's CPU and memory include the machine
 running.
 
 A Windows on Arm ISO makes a Windows template the same way, unattended in about twenty minutes,
-on QEMU from Homebrew, which the cask installs. It does not run on a tab yet.
+on QEMU from Homebrew, which the cask installs. It runs on a tab like a macOS machine, with its screen
+and keyboard there, and is saved and resumed the same way. The agent's tools do not reach it yet.
 
 ### Session lifetime
 

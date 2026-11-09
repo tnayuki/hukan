@@ -49,6 +49,11 @@ final class MachinePaneViewController: NSViewController {
   private(set) var isStopped = false
 
   private var runner: MacMachine?
+  /// A Windows machine runs in QEMU rather than in this process, with a screen of its own.
+  private var qemu: QEMUMachine?
+  private let qemuScreen = QEMUScreenView()
+  /// Whether this tab's machine is a Windows one, which has no resolution to change yet.
+  private(set) var runsOnQEMU = false
   private let screen = MachineScreenView()
   private let statusLabel = NSTextField(wrappingLabelWithString: "")
   private let actionButton = NSButton(title: "", target: nil, action: nil)
@@ -56,6 +61,7 @@ final class MachinePaneViewController: NSViewController {
 
   init(template: Machine) {
     self.templateID = template.id
+    self.runsOnQEMU = template.manifest.kind == .windows
     self.name = template.manifest.title
     self.machineTitle = template.manifest.title
     super.init(nibName: nil, bundle: nil)
@@ -63,6 +69,9 @@ final class MachinePaneViewController: NSViewController {
 
   init(restoring state: MachineTabState) {
     self.templateID = nil
+    self.runsOnQEMU =
+      UUID(uuidString: state.machineID).flatMap(MachineStore.session(id:))?.manifest.kind
+      == .windows
     self.machineID = state.machineID
     self.isStopped = state.stopped
     // Stopped is what it is, whether or not the tab has been looked at since.
@@ -76,8 +85,10 @@ final class MachinePaneViewController: NSViewController {
 
   var tabTitle: String { machineTitle }
   /// What the keyboard goes to when the tab comes up.
-  var keyView: NSView? { screen.isHidden ? nil : screen }
-  var isRunning: Bool { runner?.isRunning ?? false }
+  var keyView: NSView? {
+    qemu != nil ? (qemuScreen.isHidden ? nil : qemuScreen) : (screen.isHidden ? nil : screen)
+  }
+  var isRunning: Bool { qemu?.isRunning ?? runner?.isRunning ?? false }
   /// The running machine, for the guest agent to be reached through.
   var virtualMachine: VZVirtualMachine? { runner?.vm }
   /// Which halves of the guest agent have said they are up; only those are dialled.
@@ -218,6 +229,9 @@ final class MachinePaneViewController: NSViewController {
     screen.onInputSourceKey = { [weak self] japanese in self?.selectInputSource(japanese) }
     root.addSubview(screen)
     screen.pin(to: root)
+    qemuScreen.isHidden = true
+    root.addSubview(qemuScreen)
+    qemuScreen.pin(to: root)
 
     statusLabel.alignment = .center
     statusLabel.textColor = .secondaryLabelColor
@@ -252,7 +266,7 @@ final class MachinePaneViewController: NSViewController {
     loadViewIfNeeded()
     isPending = false
     isStopped = false
-    guard runner == nil else { return }
+    guard runner == nil, qemu == nil else { return }
     if let machineID, let id = UUID(uuidString: machineID) {
       guard let machine = MachineStore.session(id: id) else {
         show(failure: "\(name) is no longer on this Mac.", retry: false)
@@ -288,7 +302,43 @@ final class MachinePaneViewController: NSViewController {
     }
   }
 
+  private func bootWindows(_ machine: Machine) {
+    show(
+      status: FileManager.default.fileExists(atPath: machine.stateURL.path)
+        ? "Resuming \(machineTitle)…" : "Starting \(machineTitle)…")
+    let qemu = QEMUMachine(machine: machine)
+    self.qemu = qemu
+    qemu.onStop = { [weak self] error in
+      guard let self else { return }
+      self.qemuScreen.disconnect()
+      self.qemu = nil
+      if let whenStopped = self.whenStopped {
+        self.whenStopped = nil
+        whenStopped(error)
+        return
+      }
+      if let error {
+        self.show(failure: error.localizedDescription, retry: true)
+      } else {
+        self.show(stopped: "\(self.machineTitle) shut down.")
+      }
+    }
+    do {
+      try qemu.start()
+    } catch {
+      self.qemu = nil
+      show(failure: error.localizedDescription, retry: true)
+      return
+    }
+    qemuScreen.connect(socket: qemu.displaySocket)
+    showScreen()
+  }
+
   private func boot(_ machine: Machine) {
+    if machine.manifest.kind == .windows {
+      bootWindows(machine)
+      return
+    }
     if machine.manifest.fitsWindow == false {
       fixedResolution = (machine.manifest.display.width, machine.manifest.display.height)
     }
@@ -321,6 +371,14 @@ final class MachinePaneViewController: NSViewController {
   /// The tab is going without being closed — the window closing, the session going away: the
   /// machine is saved, so the next start resumes it where it was.
   func suspendMachine(completion: @escaping () -> Void = {}) {
+    if let qemu {
+      qemuScreen.disconnect()
+      qemu.save { [weak self] in
+        self?.qemu = nil
+        completion()
+      }
+      return
+    }
     guard let runner else {
       completion()
       return
@@ -485,8 +543,12 @@ final class MachinePaneViewController: NSViewController {
       completion(.failure(MachineError("The machine has not been made yet.")))
       return
     }
-    if runner == nil, !FileManager.default.fileExists(atPath: machine.stateURL.path) {
+    if runner == nil, qemu == nil, !FileManager.default.fileExists(atPath: machine.stateURL.path) {
       copyToTemplate(machine, title: title, completion: completion)
+      return
+    }
+    if machine.manifest.kind == .windows {
+      shutDownWindows(machine, title: title, completion: completion)
       return
     }
     if runner == nil { start() }
@@ -513,6 +575,40 @@ final class MachinePaneViewController: NSViewController {
       GuestAgent.exec(["shutdown", "-h", "now"], on: vm, admin: true) { _ in }
     }
     shutDownOnceAnswering()
+  }
+
+  /// Windows has no agent to ask yet, so it is asked the way a person would: the power button. A
+  /// machine that is only saved is resumed first, since a template is shut down and never suspended.
+  private func shutDownWindows(
+    _ machine: Machine, title: String, completion: @escaping (Result<Machine, Error>) -> Void
+  ) {
+    if qemu == nil { start() }
+    guard let qemu else {
+      completion(.failure(MachineError("The machine could not be started.")))
+      return
+    }
+    show(status: "Shutting \(machineTitle) down to save it…")
+    whenStopped = { [weak self] error in
+      if let error {
+        completion(.failure(error))
+        self?.show(failure: error.localizedDescription, retry: true)
+      } else {
+        self?.copyToTemplate(machine, title: title, completion: completion)
+      }
+    }
+    // Asked more than once: a machine still resuming does not hear the first.
+    func press(_ tries: Int) {
+      guard self.qemu === qemu, whenStopped != nil else { return }
+      guard tries > 0 else {
+        whenStopped = nil
+        completion(.failure(MachineError("Windows did not shut down.")))
+        showScreen()
+        return
+      }
+      qemu.requestShutdown()
+      DispatchQueue.main.asyncAfter(deadline: .now() + 15) { press(tries - 1) }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 5) { press(20) }
   }
 
   private func copyToTemplate(
@@ -547,7 +643,17 @@ final class MachinePaneViewController: NSViewController {
       self?.runner = nil
       if let machine { try? MachineStore.delete(machine) }
     }
-    if let runner { runner.forceStop(completion: finish) } else { finish() }
+    qemuScreen.disconnect()
+    if let qemu {
+      qemu.forceStop { [weak self] in
+        self?.qemu = nil
+        finish()
+      }
+    } else if let runner {
+      runner.forceStop(completion: finish)
+    } else {
+      finish()
+    }
   }
 
   @objc private func actionPressed() {
@@ -558,7 +664,7 @@ final class MachinePaneViewController: NSViewController {
 
   private func showScreen() {
     stateDescription = "running"
-    screen.isHidden = false
+    if qemu != nil { qemuScreen.isHidden = false } else { screen.isHidden = false }
     statusStack.isHidden = true
     onStateChange?()
   }
@@ -566,6 +672,7 @@ final class MachinePaneViewController: NSViewController {
   private func show(status: String) {
     stateDescription = status
     screen.isHidden = true
+    qemuScreen.isHidden = true
     statusStack.isHidden = false
     statusLabel.stringValue = status
     statusLabel.textColor = .secondaryLabelColor
@@ -593,6 +700,7 @@ final class MachinePaneViewController: NSViewController {
   private func show(failure: String, retry: Bool) {
     stateDescription = "failed: \(failure)"
     screen.isHidden = true
+    qemuScreen.isHidden = true
     statusStack.isHidden = false
     statusLabel.stringValue = failure
     statusLabel.textColor = .labelColor
