@@ -1554,7 +1554,9 @@ final class WorktreeDeskViewController: NSViewController {
           .error("A Windows machine's screen cannot follow its tab; give a width and height."))
         return
       }
-      if call.name == "guest_screenshot", let qemu = pane.qemuMachine {
+      if call.name == "guest_screenshot", call.arguments["window"] == nil,
+        let qemu = pane.qemuMachine
+      {
         qemu.screenshot { result in
           switch result {
           case .failure(let error): completion(.error(error.localizedDescription))
@@ -1601,6 +1603,22 @@ final class WorktreeDeskViewController: NSViewController {
         .error(
           "The guest agent has not started yet — it comes up with the guest's login, and says so"
             + " within fifteen seconds. Try again shortly."))
+      return
+    }
+    if pane.runsOnQEMU, call.name == "guest_screenshot",
+      let window = call.arguments["window"] as? Int
+    {
+      GuestAgent.request(["op": "screenshot", "window": window], to: vm) { result in
+        switch result {
+        case .failure(let error): completion(.error(error.localizedDescription))
+        case .success(let reply):
+          guard let png = (reply["data"] as? String).flatMap({ Data(base64Encoded: $0) }) else {
+            completion(.error("The guest sent no picture."))
+            return
+          }
+          completion(.image(png, mimeType: "image/png"))
+        }
+      }
       return
     }
     if let request = Self.interfaceRequest(for: call) {
@@ -1713,6 +1731,9 @@ final class WorktreeDeskViewController: NSViewController {
     guard let op = ops[call.name] else { return nil }
     var request = call.arguments.filter { $0.key != "machine" }
     request["op"] = op
+    // The Windows channel spends `id` on telling replies apart, so the element travels again
+    // under a name of its own.
+    if let element = call.arguments["id"] { request["element"] = element }
     return request
   }
 

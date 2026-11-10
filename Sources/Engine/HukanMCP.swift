@@ -414,9 +414,9 @@ enum HukanMCP {
     Tool(
       name: "guest_type",
       description:
-        "Type text in a virtual machine, into whatever has the keyboard focus. macOS's own "
-        + "corrections apply, as they would to anyone typing, so read it back when the exact text "
-        + "matters — or use guest_ui_set_value.",
+        "Type text in a virtual machine, into whatever has the keyboard focus. On a macOS guest "
+        + "the system's own corrections apply, as they would to anyone typing, so read it back "
+        + "when the exact text matters — or use guest_ui_set_value.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -440,7 +440,8 @@ enum HukanMCP {
           ],
           "modifiers": [
             "type": "array", "items": ["type": "string"],
-            "description": "Any of command, shift, option, control",
+            "description": "Any of command, shift, option, control. On Windows, command is the "
+              + "Windows key and option is Alt.",
           ],
         ],
         "required": ["machine", "key"],

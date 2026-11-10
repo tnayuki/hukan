@@ -19,9 +19,10 @@ final class GuestInterfaceRequestTests: XCTestCase {
       var expected = arguments
       expected.removeValue(forKey: "machine")
       expected["op"] = op
+      // The Windows channel spends `id` on matching replies, so the element travels again.
+      expected["element"] = "0.1"
       XCTAssertEqual(request as NSDictionary, expected as NSDictionary)
       XCTAssertEqual(request["id"] as? String, "0.1")
-      XCTAssertNil(request["element"])
     }
   }
 

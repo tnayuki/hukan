@@ -435,7 +435,8 @@ keyboard. The guest is kept in this Mac's time zone.
 The session's agent can do all of this through tools hukan hosts: open a machine, stop it, run
 commands as the guest's user or as root, read and write files, take screenshots of the screen or
 of one window, set the resolution, save a template, and close it. It can drive the guest's
-interface too: read an application's interface through Accessibility and press what it finds, or
+interface too: read an application's interface through Accessibility (UI Automation on Windows)
+and press what it finds, or
 click, type and press keys, with positions in the pixels of the screenshot being looked at. Opening
 one, using one for the first time, stopping one, saving a template and deleting a machine each put
 a card in front of you.
@@ -447,9 +448,9 @@ running.
 
 A Windows on Arm ISO makes a Windows template the same way, unattended in about twenty minutes,
 on QEMU from Homebrew, which the cask installs. It runs on a tab like a macOS machine, with its screen
-and keyboard there, and is saved and resumed the same way. The agent's tools can open one, run
-commands in it, read and write its files and take screenshots; driving its interface is macOS-only
-for now.
+and keyboard there, and is saved and resumed the same way. The agent's tools work on it as they do
+on a macOS machine, with ⌘ as the Windows key and ⌥ as Alt; a menu takes a moment to draw after it
+is pressed open.
 
 ### Session lifetime
 

@@ -19,6 +19,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.ServiceProcess;
 using System.Text;
@@ -224,6 +225,9 @@ namespace HukanGuestAgent
         static Dictionary<string, object> Failure(string message) =>
             new Dictionary<string, object> { ["ok"] = false, ["error"] = message };
 
+        static long? Number(Dictionary<string, object> request, string key) =>
+            request.TryGetValue(key, out var value) && value != null ? Convert.ToInt64(value) : (long?)null;
+
         static string Text(Dictionary<string, object> request, string key) =>
             request.TryGetValue(key, out var value) ? value as string : null;
 
@@ -248,6 +252,28 @@ namespace HukanGuestAgent
                     return new Dictionary<string, object> { ["ok"] = true };
                 case "display":
                     return Display.Set(Convert.ToInt32(request["width"]), Convert.ToInt32(request["height"]));
+                case "windows":
+                    return Interface.Windows();
+                case "screenshot":
+                    return Interface.Screenshot(Convert.ToInt64(request["window"]));
+                case "ui_tree":
+                    return Interface.Tree(Text(request, "app"), Number(request, "window"));
+                case "ui_press":
+                    return Interface.Press(Text(request, "element"), Text(request, "action"));
+                case "ui_set":
+                    return Interface.SetValue(Text(request, "element"), Text(request, "value"));
+                case "click":
+                    return Interface.Click(
+                        Convert.ToDouble(request["x"]), Convert.ToDouble(request["y"]),
+                        request.TryGetValue("count", out var count) ? Convert.ToInt32(count) : 1,
+                        request.TryGetValue("right", out var right) && (right as bool? ?? false),
+                        Number(request, "window"));
+                case "type":
+                    return Interface.Type(Text(request, "text"));
+                case "key":
+                    var modifiers = request.TryGetValue("modifiers", out var held) && held is System.Collections.ArrayList list
+                        ? list.Cast<string>() : new string[0];
+                    return Interface.Press(Text(request, "key"), modifiers);
                 default:
                     return Failure("unknown op");
             }
