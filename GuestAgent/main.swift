@@ -22,6 +22,8 @@
 //   {"op":"click","x":..,"y":..,"count":?,"right":?,"window":?}  -> {"ok":true}
 //   {"op":"type","text":...}                       -> {"ok":true}
 //   {"op":"key","key":"return","modifiers":["command"]?}  -> {"ok":true}
+//   {"op":"input_source","id":"com.apple.keylayout.ABC","enable":?}  -> {"ok":true}
+//     (user half: select that input source, or with "enable" only turn it on)
 //     (user half; every position is in the pixels of a screenshot — with "window", of that
 //     window's own)
 // A failure is {"ok":false,"error":"..."}.
@@ -31,6 +33,7 @@
 
 import AppKit
 import ApplicationServices
+import Carbon
 import CoreGraphics
 import Darwin
 import Foundation
@@ -166,7 +169,8 @@ func handle(_ request: [String: Any]) -> [String: Any] {
     } catch {
       return failure(error.localizedDescription)
     }
-  case "display", "windows", "ui_tree", "ui_press", "ui_set", "click", "type", "key":
+  case "display", "windows", "ui_tree", "ui_press", "ui_set", "click", "type", "key",
+    "input_source":
     return runInChild(request)
   default:
     return failure("unknown op")
@@ -228,6 +232,9 @@ func perform(_ request: [String: Any]) -> [String: Any] {
   case "key":
     guard let key = request["key"] as? String else { return failure("key needs a key") }
     return press(key, modifiers: request["modifiers"] as? [String] ?? [])
+  case "input_source":
+    guard let id = request["id"] as? String else { return failure("input_source needs an id") }
+    return inputSource(id, enable: request["enable"] as? Bool ?? false)
   default:
     return failure("unknown op")
   }
@@ -665,4 +672,20 @@ func respond(_ fd: Int32, _ object: [String: Any]) {
       offset += written
     }
   }
+}
+
+// MARK: Input sources
+
+/// The host's かな and 英数 keys, and the Japanese input a JIS keyboard expects. The guest's
+/// keyboard is ANSI whatever the Mac's is — Virtualization.framework offers no other — and macOS
+/// ignores those two keys from an ANSI keyboard, so the host asks for the input source instead.
+func inputSource(_ id: String, enable: Bool) -> [String: Any] {
+  let filter = [kTISPropertyInputSourceID as String: id] as CFDictionary
+  guard
+    let sources = TISCreateInputSourceList(filter, true)?.takeRetainedValue()
+      as? [TISInputSource],
+    let source = sources.first
+  else { return failure("no input source \(id)") }
+  let status = enable ? TISEnableInputSource(source) : TISSelectInputSource(source)
+  return status == noErr ? ["ok": true] : failure("input source \(id): \(status)")
 }

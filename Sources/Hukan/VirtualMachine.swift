@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Virtualization
 
 /// What a machine tab keeps across a relaunch: the desk it stands on and the session machine it
@@ -48,7 +49,7 @@ final class MachinePaneViewController: NSViewController {
   private(set) var isStopped = false
 
   private var runner: MacMachine?
-  private let screen = VZVirtualMachineView()
+  private let screen = MachineScreenView()
   private let statusLabel = NSTextField(wrappingLabelWithString: "")
   private let actionButton = NSButton(title: "", target: nil, action: nil)
   private let statusStack = NSStackView()
@@ -214,6 +215,7 @@ final class MachinePaneViewController: NSViewController {
     // than the same desktop scaled up.
     screen.automaticallyReconfiguresDisplay = fixedResolution == nil
     screen.isHidden = true
+    screen.onInputSourceKey = { [weak self] japanese in self?.selectInputSource(japanese) }
     root.addSubview(screen)
     screen.pin(to: root)
 
@@ -297,6 +299,7 @@ final class MachinePaneViewController: NSViewController {
     self.runner = runner
     agentUpdate = .unchecked
     modeAsked = false
+    guestPrepared = false
     runner.onAgentHello = { [weak self, weak runner] half in
       guard let self, let runner, self.runner === runner else { return }
       self.agentSaidHello(half, on: runner)
@@ -368,7 +371,44 @@ final class MachinePaneViewController: NSViewController {
   }
 
   /// The guest's mode is set through its agent, which comes up after the display does.
+  private var guestPrepared = false
+
+  /// What a guest is told each boot rather than once in its template, since what it describes —
+  /// the Mac's keyboard and its time zone — can change under a template made long before: the
+  /// Japanese input a JIS keyboard expects, and the zone this Mac is in.
+  private func prepareGuest() {
+    guard !guestPrepared, let vm = runner?.vm, agentsHeard.isSuperset(of: ["user", "root"]) else {
+      return
+    }
+    guestPrepared = true
+    let zone = TimeZone.current.identifier
+    GuestAgent.exec(
+      [
+        "/bin/sh", "-c",
+        "systemsetup -settimezone \"$1\" >/dev/null 2>&1"
+          + " || ln -sf \"/usr/share/zoneinfo/$1\" /etc/localtime",
+        "sh", zone,
+      ], on: vm, admin: true
+    ) { _ in }
+    guard MachineScreenView.hostIsJIS else { return }
+    for id in [
+      "com.apple.inputmethod.Kotoeri.RomajiTyping",
+      "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese",
+    ] {
+      GuestAgent.request(["op": "input_source", "id": id, "enable": true], to: vm) { _ in }
+    }
+  }
+
+  /// かな or 英数, pressed on the guest's screen.
+  private func selectInputSource(_ japanese: Bool) {
+    guard let vm = runner?.vm, agentsHeard.contains("user") else { return }
+    let id =
+      japanese ? "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese" : "com.apple.keylayout.ABC"
+    GuestAgent.request(["op": "input_source", "id": id], to: vm) { _ in }
+  }
+
   private func askForGuestMode() {
+    prepareGuest()
     guard !modeAsked, agentsHeard.contains("user"), let size = fixedResolution else { return }
     modeAsked = true
     matchGuestMode(
@@ -589,5 +629,123 @@ final class VirtualMachinesMenu: NSMenu, NSMenuDelegate {
     addItem(
       withTitle: "Virtual Machines…",
       action: #selector(AppDelegate.showVirtualMachines(_:)), keyEquivalent: "")
+  }
+}
+
+/// The guest's screen, with what a JIS keyboard means put into the ANSI keyboard the guest is
+/// given. Virtualization.framework offers no other kind, so a key sent by its position comes out
+/// as the ANSI key in that place: ⇧2 is @, and 英数 and かな are ignored outright.
+///
+/// So on a JIS Mac the symbols are sent as the ANSI keys that type them — modifiers changed for
+/// the one stroke and put back — and 英数 and かな are not sent at all but handed to the window,
+/// which asks the guest's agent for the input source. Letters and digits keep their places, which
+/// is all romaji input reads, and a shortcut held with ⌘ or ⌃ goes by position as it always has.
+final class MachineScreenView: VZVirtualMachineView {
+  /// 英数 (false) or かな (true) was pressed.
+  var onInputSourceKey: ((Bool) -> Void)?
+
+  static var hostIsJIS: Bool {
+    KBGetLayoutType(Int16(CGEventSource(stateID: .hidSystemState)?.keyboardType ?? 0))
+      == kKeyboardJIS
+  }
+
+  /// A JIS key, with ⇧ or without, and the ANSI key and modifiers that type the same character.
+  private struct Stroke: Hashable {
+    let code: UInt16
+    let shift: Bool
+  }
+  private static let jisToANSI: [Stroke: (code: UInt16, shift: Bool, option: Bool)] = [
+    Stroke(code: 19, shift: true): (39, true, false),  // "
+    Stroke(code: 22, shift: true): (26, true, false),  // &
+    Stroke(code: 26, shift: true): (39, false, false),  // '
+    Stroke(code: 28, shift: true): (25, true, false),  // (
+    Stroke(code: 25, shift: true): (29, true, false),  // )
+    Stroke(code: 27, shift: true): (24, false, false),  // =
+    Stroke(code: 24, shift: false): (22, true, false),  // ^
+    Stroke(code: 24, shift: true): (50, true, false),  // ~
+    Stroke(code: 93, shift: false): (16, false, true),  // ¥, which ABC types as ⌥Y
+    Stroke(code: 93, shift: true): (42, true, false),  // |
+    Stroke(code: 33, shift: false): (19, true, false),  // @
+    Stroke(code: 33, shift: true): (50, false, false),  // `
+    Stroke(code: 30, shift: false): (33, false, false),  // [
+    Stroke(code: 30, shift: true): (33, true, false),  // {
+    Stroke(code: 41, shift: true): (24, true, false),  // +
+    Stroke(code: 39, shift: false): (41, true, false),  // :
+    Stroke(code: 39, shift: true): (28, true, false),  // *
+    Stroke(code: 42, shift: false): (30, false, false),  // ]
+    Stroke(code: 42, shift: true): (30, true, false),  // }
+    Stroke(code: 94, shift: false): (27, true, false),  // _
+    Stroke(code: 94, shift: true): (27, true, false),  // _
+  ]
+
+  /// Keys whose press was sent as something else, so their release is not sent at all.
+  private var translated: Set<UInt16> = []
+
+  override func keyDown(with event: NSEvent) {
+    if event.keyCode == 102 || event.keyCode == 104 {
+      if !event.isARepeat { onInputSourceKey?(event.keyCode == 104) }
+      return
+    }
+    if let target = Self.translation(of: event) {
+      translated.insert(event.keyCode)
+      type(target.code, shift: target.shift, option: target.option, over: event)
+      return
+    }
+    super.keyDown(with: event)
+  }
+
+  override func keyUp(with event: NSEvent) {
+    if event.keyCode == 102 || event.keyCode == 104 { return }
+    if translated.remove(event.keyCode) != nil { return }
+    super.keyUp(with: event)
+  }
+
+  // Internal with an explicit keyboard type so tests do not depend on the host keyboard.
+  static func translation(of event: NSEvent, isJIS: Bool = hostIsJIS) -> (
+    code: UInt16, shift: Bool, option: Bool
+  )? {
+    guard isJIS else { return nil }
+    let held = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    if held.contains(.command) || held.contains(.control) { return nil }
+    if held.contains(.option) {
+      // ⌥¥ is the backslash on a JIS Mac.
+      return event.keyCode == 93 && !held.contains(.shift) ? (42, false, false) : nil
+    }
+    return jisToANSI[Stroke(code: event.keyCode, shift: held.contains(.shift))]
+  }
+
+  /// One stroke of `code` with exactly ⇧ and ⌥ as asked, the modifiers really held put back after.
+  /// The guest learns modifiers from their own events, so they are changed as events, with the
+  /// device-dependent bits a real keyboard sets — without those a modifier reaches it as none.
+  private func type(_ code: UInt16, shift: Bool, option: Bool, over event: NSEvent) {
+    let held = event.modifierFlags
+    var flags = held.intersection(.deviceIndependentFlagsMask).subtracting([.shift, .option])
+    if shift { flags.insert(.shift) }
+    if option { flags.insert(.option) }
+    var raw = flags.rawValue | 0x100
+    if shift { raw |= 0x02 }
+    if option { raw |= 0x20 }
+    let wanted = NSEvent.ModifierFlags(rawValue: raw)
+    func send(_ type: NSEvent.EventType, _ code: UInt16, _ modifiers: NSEvent.ModifierFlags) {
+      guard
+        let synthetic = NSEvent.keyEvent(
+          with: type, location: event.locationInWindow, modifierFlags: modifiers,
+          timestamp: event.timestamp, windowNumber: event.windowNumber, context: nil,
+          characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)
+      else { return }
+      switch type {
+      case .keyDown: super.keyDown(with: synthetic)
+      case .keyUp: super.keyUp(with: synthetic)
+      default: super.flagsChanged(with: synthetic)
+      }
+    }
+    let shiftChanges = shift != held.contains(.shift)
+    let optionChanges = option != held.contains(.option)
+    if shiftChanges { send(.flagsChanged, 56, wanted) }
+    if optionChanges { send(.flagsChanged, 58, wanted) }
+    send(.keyDown, code, wanted)
+    send(.keyUp, code, wanted)
+    if optionChanges { send(.flagsChanged, 58, held) }
+    if shiftChanges { send(.flagsChanged, 56, held) }
   }
 }

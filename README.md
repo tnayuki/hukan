@@ -426,6 +426,10 @@ saved when hukan quits and resumes after a relaunch; closing its tab deletes it,
 right-click menu sets the resolution — following the tab, or held at a size the tab scales — and
 saves it as a new template, which can itself be the source of another.
 
+On a Mac with a JIS keyboard the guest types what the keys say — its symbols, and 英数 and かな
+switching between ABC and Japanese input — though the guest itself only ever sees an ANSI
+keyboard. The guest is kept in this Mac's time zone.
+
 The session's agent can do all of this through tools hukan hosts: open a machine, stop it, run
 commands as the guest's user or as root, read and write files, take screenshots of the screen or
 of one window, set the resolution, save a template, and close it. It can drive the guest's

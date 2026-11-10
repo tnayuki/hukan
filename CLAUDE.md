@@ -386,6 +386,14 @@ Workspace (one window)
   where they run: `vm_` acts on the machine from here, `guest_` runs inside it. Opening, first use,
   stopping, saving a template and deleting are each a card. The guest agent is replaced at boot when it
   differs from the one this build ships, so a change to it costs no template.
+  **A guest's keyboard is ANSI whatever the Mac's is**, because Virtualization.framework offers
+  no other: the type a guest records for a keyboard is not read for its virtual one, a USB one
+  instead was tried and fared no better, and every tool built on the framework has the same wall.
+  So on a JIS Mac the screen sends what a key prints rather than where it is — a symbol as the
+  ANSI keys that type it — and 英数 and かな, which macOS ignores from an ANSI keyboard, are not
+  sent at all but turned into the guest's agent selecting the input source. What a boot tells the
+  guest — that Japanese input, and this Mac's time zone — is told every boot rather than once in
+  the template, so a template outlives a change of keyboard or of place.
 - **A client outside hukan reaches the sessions over stdio, from the executable the bundle
   already ships.** It was built for the Claude desktop app, which is where a person keeps track of
   their work as a whole, and what this window knows — which session is working, which is waiting on
