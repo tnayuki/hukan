@@ -163,7 +163,8 @@ directory, including the ones git ignores, which are drawn dimmed — listed a d
 as it is opened and kept in step with what moves, so a file a build or an agent just wrote is
 there as it lands. Nothing is walked because a worktree was opened, which is what lets a
 directory of any size — a home directory, say — be opened for nothing. git's diffstats are laid
-over it. One field over the tree runs two jobs, told apart by
+over it. A file changing on disk lights the row on screen that stands for it — its own, or the
+folded directory it is in — and the light fades; a file git ignores lights nothing. One field over the tree runs two jobs, told apart by
 gesture: typing filters by path, Return searches contents and the panel becomes a result list
 until Escape. Both are ripgrep, bundled: the filter matches a path component that contains what
 you typed and everything under a directory whose name does, so `Tests` narrows to that

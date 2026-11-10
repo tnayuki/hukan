@@ -566,8 +566,9 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   }
 
   /// The worktree's files changed on disk: the tree if its inputs moved, the results always (a
-  /// line just fixed must leave the list).
-  func filesChangedOnDisk() {
+  /// line just fixed must leave the list). `changed` is what git saw move, when it can say —
+  /// what lights the rows standing for it.
+  func filesChangedOnDisk(changed: Set<String>? = nil) {
     guard isViewLoaded else { return }
     // The same tick carries both halves: the commit that empties the tree's changed scope is the
     // one that adds a row down here.
@@ -575,6 +576,71 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
     updateHistoryVisibility()
     if isShowingResults { runSearch() } else { refresh() }
     onScopeChanged?()
+    if let changed { light(changed) }
+  }
+
+  // MARK: Light
+
+  /// When each lit path's light started, so a row view made again while it fades — every batch
+  /// reloads rows — carries on rather than going dark or restarting. Only rows that were on screen
+  /// are ever recorded, so this holds a screenful at most.
+  private var lightStarts: [String: CFTimeInterval] = [:]
+
+  /// Light the rows on screen that stand for `changed`. Only what git knows is lit: a path it
+  /// ignores is the build's or the package manager's, drawn dimmed so as not to read as the work,
+  /// and lighting the folder it is hidden in would undo that. The reading of "changed" is the one
+  /// that re-reads a tab, so a row lights exactly when a tab showing its file would refresh.
+  private func light(_ changed: Set<String>) {
+    guard isDiskMode, let worktree else { return }
+    let now = CACurrentMediaTime()
+    lightStarts = lightStarts.filter { now - $0.value < TreeFlash.duration }
+    let known = changed.filter(worktree.isKnownToGit)
+    guard !known.isEmpty else { return }
+    let range = outline.rows(in: outline.visibleRect)
+    guard range.length > 0 else { return }
+    var rowsByPath: [String: Int] = [:]
+    var visible: [TreeFlash.VisibleRow] = []
+    for row in range.location..<(range.location + range.length) {
+      guard let node = outline.item(atRow: row) as? FileNode else { continue }
+      rowsByPath[node.relativePath] = row
+      visible.append(
+        .init(
+          path: node.relativePath,
+          isOpenDirectory: node.isDirectory && outline.isItemExpanded(node)))
+    }
+    let lit = TreeFlash.rowsToLight(changed: known, visible: visible) { [diskTree, outline] path in
+      guard let node = diskTree?.listedNode(at: path) else { return false }
+      return outline.row(forItem: node) >= 0
+    }
+    for path in lit {
+      lightStarts[path] = now
+      guard let row = rowsByPath[path],
+        let rowView = outline.rowView(atRow: row, makeIfNecessary: false)
+      else { continue }
+      RowFlashView.on(rowView).run(elapsed: 0)
+    }
+  }
+
+  func outlineView(_ outlineView: NSOutlineView, didAdd rowView: NSTableRowView, forRow row: Int) {
+    // Row views are reused, so one arriving here may carry another row's light.
+    guard let node = outlineView.item(atRow: row) as? FileNode, isDiskMode,
+      let start = lightStarts[node.relativePath]
+    else {
+      RowFlashView.existing(on: rowView)?.stop()
+      return
+    }
+    let elapsed = CACurrentMediaTime() - start
+    guard elapsed < TreeFlash.duration else {
+      RowFlashView.existing(on: rowView)?.stop()
+      return
+    }
+    RowFlashView.on(rowView).run(elapsed: elapsed)
+  }
+
+  /// The paths lit right now, for the `files` report.
+  private var litPaths: [String] {
+    let now = CACurrentMediaTime()
+    return lightStarts.filter { now - $0.value < TreeFlash.duration }.keys.sorted()
   }
 
   // MARK: Tree
@@ -1056,7 +1122,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       ?? (fileFilter == nil ? "—" : "starting")
     return "tree rows:\(outline.numberOfRows) query:\(filterField.stringValue) "
       + "scope:\(scope) waiting:\(waiting) naming:\(editingPath ?? "—") field:\(hasFieldEditor) "
-      + "walk:\(walk) preview:\(preview)"
+      + "walk:\(walk) preview:\(preview) lit:\(litPaths.isEmpty ? "—" : litPaths.joined(separator: ","))"
   }
 
   /// Whether the row being named really has the field editor — which is the half `editingPath`

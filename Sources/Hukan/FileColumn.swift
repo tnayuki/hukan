@@ -1051,7 +1051,7 @@ final class FileColumns {
   func filesChangedOnDisk(worktreeID: UUID, changed: Set<String>? = nil) {
     desk.refreshOpenFiles(worktreeID: worktreeID, changed: changed)
     guard worktreeID == workspace?.selectedWorktreeID else { return }
-    panel.filesChangedOnDisk()
+    panel.filesChangedOnDisk(changed: changed)
     onNeedsReload?()
   }
 

@@ -1301,6 +1301,16 @@ Workspace (one window)
   but no walk — the two gestures produce their own answers and drop them (see the bullet above),
   and the ± scope is git's changed set, as before. Everything under `.git` stays out of all of it,
   being the repository and not the worktree.
+- **A change lights the row on screen that stands for it, and what lights it is git's answer, not
+  FSEvents'.** The deepest visible row — the file's own, or the folded directory it is hidden in
+  — washes in the accent colour and fades. An ignored path lights nothing: it is dimmed so as not
+  to read as the work, and a folder pulsing for every object a build or `npm install` writes into
+  it would undo that — including a folder whose ignored depths are not listed yet, which only git
+  can answer for. So the signal is the report that re-reads a tab, filtered to what git knows:
+  one reading of "this file changed" for the tab and the tree, an edit that leaves the same
+  `+1 −1` still lights, and a commit or a checkout — the wholesale report — lights nothing,
+  since no file was written. An open directory lights only for a row that has gone, never for
+  one merely scrolled away. The tree as browsed only; a filter or the ± scope is left still.
 - **The panel's own costs were measured, and what was left after rg is the drawing.** git was
   never the slow half — the working-tree diff and the index read are tens of milliseconds — and
   the reading half is not hukan's any more: a content search it used to do itself took 10.5s over
