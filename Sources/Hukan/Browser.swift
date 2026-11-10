@@ -133,6 +133,9 @@ struct BrowserTabState: Equatable {
   var url: String
   var title: String
   var interactionState: Data?
+  /// The tab's own id, which is what the agent's browser tools name it by, so the id it was given
+  /// names the same tab after a relaunch.
+  var tabID: UUID? = nil
 }
 
 /// A web tab: a WKWebView under a slim chrome (back / forward / reload / address). Reading comes

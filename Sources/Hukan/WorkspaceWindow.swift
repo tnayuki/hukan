@@ -2523,8 +2523,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
         && FileManager.default.fileExists(atPath: pending.directory, isDirectory: &isDirectory)
         && isDirectory.boolValue
       let directory = exists ? URL(fileURLWithPath: pending.directory) : nil
+      // The history id saved with it is the tab's own id for a terminal made in this window, so
+      // the tab comes back under the id it had; an older one's carries on as its history id.
       registerTerminal(
         TerminalSession(
+          id: UUID(uuidString: pending.sessionID) ?? UUID(),
           deskID: session.id, cwd: worktree.url, restoredDirectory: directory,
           sessionID: pending.sessionID.isEmpty ? nil : pending.sessionID,
           restoredScrollback: pending.scrollback))

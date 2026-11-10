@@ -1116,6 +1116,8 @@ final class Workspace {
     static let browserURLs = "browsers.urls"
     static let browserTitles = "browsers.titles"
     static let browserStates = "browsers.states"
+    /// Each tab's own id, so one the agent was given still names it after a relaunch.
+    static let browserTabIDs = "browsers.tabIDs"
     // File tabs: the desk they stand on, then the worktree and the path relative to it, which is
     // the whole of a buffer's identity. Nothing of the text rides along — an unsaved edit is
     // answered for before the window goes, so what comes back is the file as it stands on disk.
@@ -1301,6 +1303,8 @@ final class Workspace {
     coder.encode(
       browserTabs.map { $0.interactionState?.base64EncodedString() ?? "" } as NSArray,
       forKey: Key.browserStates)
+    coder.encode(
+      browserTabs.map { $0.tabID?.uuidString ?? "" } as NSArray, forKey: Key.browserTabIDs)
 
     coder.encode(fileTabs.map(\.deskID.uuidString) as NSArray, forKey: Key.fileDeskIDs)
     coder.encode(fileTabs.map(\.worktreeID.uuidString) as NSArray, forKey: Key.fileWorktreeIDs)
@@ -1513,6 +1517,7 @@ final class Workspace {
     let browserURLs = strings(coder, Key.browserURLs)
     let browserTitles = strings(coder, Key.browserTitles)
     let browserStates = strings(coder, Key.browserStates)
+    let browserTabIDs = strings(coder, Key.browserTabIDs)
     pendingRestoredBrowserTabs = []
     for (index, idString) in browserDesks.enumerated() {
       guard let deskID = UUID(uuidString: idString), index < browserURLs.count else { continue }
@@ -1521,7 +1526,8 @@ final class Workspace {
         BrowserTabState(
           deskID: deskID, url: browserURLs[index],
           title: index < browserTitles.count ? browserTitles[index] : "",
-          interactionState: state.isEmpty ? nil : Data(base64Encoded: state)))
+          interactionState: state.isEmpty ? nil : Data(base64Encoded: state),
+          tabID: index < browserTabIDs.count ? UUID(uuidString: browserTabIDs[index]) : nil))
     }
 
     // A file tab's worktree is its buffer's, so it is in both shapes; only the desk is new.

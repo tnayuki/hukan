@@ -120,7 +120,7 @@ final class RestorableStateTests: XCTestCase {
     let tabs = [
       BrowserTabState(
         deskID: worktree, url: "https://github.com/tnayuki/hukan/pull/12",
-        title: "Pull Request #12", interactionState: Data([0, 255, 7])),
+        title: "Pull Request #12", interactionState: Data([0, 255, 7]), tabID: UUID()),
       BrowserTabState(
         deskID: worktree, url: "https://example.com", title: "", interactionState: nil),
     ]

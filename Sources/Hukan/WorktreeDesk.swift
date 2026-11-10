@@ -302,9 +302,12 @@ final class WorktreeDeskViewController: NSViewController {
   /// One web tab: its own pane (web view + chrome). Like files, browsers are the desk's state,
   /// kept per session — the task's browser travels with its session.
   private final class BrowserTab {
-    let id = UUID()
+    let id: UUID
     let pane: BrowserPaneViewController
-    init(pane: BrowserPaneViewController) { self.pane = pane }
+    init(pane: BrowserPaneViewController, id: UUID = UUID()) {
+      self.pane = pane
+      self.id = id
+    }
   }
 
   /// A machine on the desk: the session's own copy of a template, run in this process. It is saved
@@ -1319,6 +1322,7 @@ final class WorktreeDeskViewController: NSViewController {
         .compactMap { tab -> BrowserTabState? in
           guard var state = tab.pane.restorableState else { return nil }
           state.deskID = deskID
+          state.tabID = tab.id
           return state
         }
     }
@@ -1331,7 +1335,8 @@ final class WorktreeDeskViewController: NSViewController {
     loadViewIfNeeded()
     for state in states {
       guard workspace?.session(id: state.deskID) != nil else { continue }
-      let tab = BrowserTab(pane: BrowserPaneViewController(restoring: state))
+      let tab = BrowserTab(
+        pane: BrowserPaneViewController(restoring: state), id: state.tabID ?? UUID())
       wire(tab, in: state.deskID)
       browserTabsByDesk[state.deskID, default: []].append(tab)
     }
