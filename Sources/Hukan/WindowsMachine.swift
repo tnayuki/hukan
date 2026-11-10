@@ -874,7 +874,13 @@ final class QEMUMachine: GuestLink {
 
   var isRunning: Bool { process?.isRunning ?? false }
 
-  init(machine: Machine) {
+  // Injectable share paths let tests stay isolated from Homebrew and production share files.
+  init(
+    machine: Machine, temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+    sambaExecutable: String = QEMUMachine.smbd
+  ) {
+    self.temporaryDirectory = temporaryDirectory
+    self.sambaExecutable = sambaExecutable
     self.machine = machine
     let tag = machine.id.uuidString.prefix(8)
     displaySocket = QEMUSocket.path("vnc-\(tag)")
@@ -882,6 +888,82 @@ final class QEMUMachine: GuestLink {
     agentSockets = [
       "user": QEMUSocket.path("ga-\(tag)-user"), "root": QEMUSocket.path("ga-\(tag)-root"),
     ]
+  }
+
+  /// The worktree the guest sees as `W:\worktree`, set before `start` and moved with `share`.
+  var sharedDirectory: URL?
+  /// Whether the guest has a share to map: samba was there when the machine started.
+  private(set) var sharesWorktree = false
+
+  /// Samba's server, as Homebrew names it beside the one macOS ships. Looked for rather than
+  /// required: without it the machine runs, only without the worktree.
+  static let smbd = "/opt/homebrew/sbin/samba-dot-org-smbd"
+
+  /// The share, spoken to the way QEMU's own `smb=` does it — a server started for each
+  /// connection the guest makes to 10.0.2.4, on stdin and stdout, so nothing listens on this Mac
+  /// — but with a configuration of hukan's. What it shares is a directory holding one link to
+  /// the worktree, which is what lets the worktree change under a running guest: the link is
+  /// repointed and the next file opened through it is in the new one.
+  private let temporaryDirectory: URL
+  private let sambaExecutable: String
+
+  // Internal so tests can inspect share files without starting Samba.
+  var shareRoot: URL {
+    temporaryDirectory.appendingPathComponent(
+      "hukan-smb-\(machine.id.uuidString.prefix(8))")
+  }
+
+  // Internal so tests can inspect configuration without running QEMU.
+  func prepareShare() -> String? {
+    guard let sharedDirectory, FileManager.default.isExecutableFile(atPath: sambaExecutable) else {
+      return nil
+    }
+    let root = shareRoot
+    let state = root.appendingPathComponent("state")
+    let shared = root.appendingPathComponent("share")
+    let manager = FileManager.default
+    try? manager.createDirectory(at: state, withIntermediateDirectories: true)
+    try? manager.createDirectory(at: shared, withIntermediateDirectories: true)
+    let conf = root.appendingPathComponent("smb.conf")
+    let lines = [
+      "[global]",
+      "private dir=\(state.path)", "pid directory=\(state.path)", "lock directory=\(state.path)",
+      "state directory=\(state.path)", "cache directory=\(state.path)",
+      "ncalrpc dir=\(state.path)/ncalrpc", "log file=\(state.path)/log.smbd",
+      "smb passwd file=\(state.path)/smbpasswd",
+      "interfaces=127.0.0.1", "bind interfaces only=yes",
+      "security = user", "map to guest = Bad User",
+      "load printers = no", "printing = bsd", "disable spoolss = yes",
+      "usershare max shares = 0",
+      // The link leads out of the share, which samba refuses unless told it may.
+      "unix extensions = no", "allow insecure wide links = yes",
+      "[hukan]",
+      "path=\(shared.path)", "read only=no", "guest ok=yes", "force user=\(NSUserName())",
+      "follow symlinks = yes", "wide links = yes",
+      "",
+    ]
+    guard
+      (try? lines.joined(separator: "\n").write(to: conf, atomically: true, encoding: .utf8))
+        != nil
+    else { return nil }
+    self.share(sharedDirectory)
+    return "guestfwd=tcp:10.0.2.4:445-cmd:\(sambaExecutable) -l \(state.path) -s \(conf.path)"
+  }
+
+  /// Point the share at another worktree, the running guest included.
+  func share(_ directory: URL?) {
+    sharedDirectory = directory
+    guard let directory else { return }
+    let link = shareRoot.appendingPathComponent("share/worktree")
+    // Made outside the share, so the guest never sees it half-way.
+    let staged = shareRoot.appendingPathComponent("worktree-next")
+    try? FileManager.default.removeItem(at: staged)
+    // Made beside it and renamed over it, so the guest never finds no link at all.
+    guard
+      (try? FileManager.default.createSymbolicLink(at: staged, withDestinationURL: directory))
+        != nil
+    else { return }
+    _ = rename(staged.path, link.path)
   }
 
   func start() throws {
@@ -900,36 +982,11 @@ final class QEMUMachine: GuestLink {
     }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: WindowsTemplateBuilder.qemu)
-    let manifest = machine.manifest
-    var arguments = [
-      "-machine", "\(manifest.qemuMachine ?? "virt"),highmem=on,gic-version=3",
-      "-accel", "hvf", "-cpu", "host",
-      "-smp", String(manifest.cpuCount), "-m", String(manifest.memorySize >> 20),
-      "-drive", "if=pflash,format=raw,readonly=on,file=\(WindowsTemplateBuilder.firmwareCode)",
-      "-drive", "if=pflash,format=raw,file=\(machine.auxiliaryURL.path)",
-      "-device", "virtio-gpu-pci,xres=1280,yres=800",
-      "-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0",
-      "-device", "usb-tablet,bus=xhci.0",
-      "-drive",
-      "if=none,id=disk0,format=raw,cache=writeback,discard=unmap,file=\(machine.diskURL.path)",
-      "-device", "nvme,serial=hukan0,drive=disk0",
-      // Windows reads the hardware clock as local time, and QEMU keeps it in UTC unless told.
-      "-rtc", "base=localtime", "-nic", "user,model=virtio-net-pci", "-display", "none",
-      "-vnc", "unix:\(displaySocket)",
-      "-device", "virtio-serial-pci,id=serial0",
-      "-qmp", "unix:\(controlSocket),server=on,wait=off",
-      "-pidfile", pidFile,
-    ]
-    for (half, socket) in agentSockets {
-      arguments += [
-        "-chardev", "socket,id=agent\(half),path=\(socket),server=on,wait=off",
-        "-device", "virtserialport,bus=serial0.0,chardev=agent\(half),name=dev.hukan.agent.\(half)",
-      ]
-    }
+    let smb = prepareShare()
+    sharesWorktree = smb != nil
     let resuming = FileManager.default.fileExists(atPath: machine.stateURL.path)
     resumedFromSave = resuming
-    if resuming { arguments += ["-incoming", "file:\(machine.stateURL.path)"] }
-    process.arguments = arguments
+    process.arguments = arguments(resuming: resuming, smb: smb)
     let log = machine.url.appendingPathComponent("qemu.log")
     FileManager.default.createFile(atPath: log.path, contents: nil)
     if let handle = try? FileHandle(forWritingTo: log) {
@@ -954,6 +1011,7 @@ final class QEMUMachine: GuestLink {
         // will, so it goes now rather than waiting on a disk for someone to throw it away.
         self.resumeFailed =
           failed && FileManager.default.fileExists(atPath: self.machine.stateURL.path)
+        if self.resumeFailed { try? FileManager.default.removeItem(at: self.machine.stateURL) }
         self.onStop?(
           failed ? MachineError("QEMU stopped (status \(process.terminationStatus)).") : nil)
       }
@@ -980,6 +1038,40 @@ final class QEMUMachine: GuestLink {
         Thread.sleep(forTimeInterval: 0.5)
       }
     }
+  }
+
+  // Internal pure argument construction lets tests avoid starting QEMU.
+  func arguments(resuming: Bool, smb: String? = nil) -> [String] {
+    let manifest = machine.manifest
+    var arguments = [
+      "-machine", "\(manifest.qemuMachine ?? "virt"),highmem=on,gic-version=3",
+      "-accel", "hvf", "-cpu", "host",
+      "-smp", String(manifest.cpuCount), "-m", String(manifest.memorySize >> 20),
+      "-drive", "if=pflash,format=raw,readonly=on,file=\(WindowsTemplateBuilder.firmwareCode)",
+      "-drive", "if=pflash,format=raw,file=\(machine.auxiliaryURL.path)",
+      "-device", "virtio-gpu-pci,xres=1280,yres=800",
+      "-device", "qemu-xhci,id=xhci", "-device", "usb-kbd,bus=xhci.0",
+      "-device", "usb-tablet,bus=xhci.0",
+      "-drive",
+      "if=none,id=disk0,format=raw,cache=writeback,discard=unmap,file=\(machine.diskURL.path)",
+      "-device", "nvme,serial=hukan0,drive=disk0",
+      // Windows reads the hardware clock as local time, and QEMU keeps it in UTC unless told.
+      "-rtc", "base=localtime", "-nic",
+      ["user", "model=virtio-net-pci", smb].compactMap { $0 }.joined(separator: ","),
+      "-display", "none",
+      "-vnc", "unix:\(displaySocket)",
+      "-device", "virtio-serial-pci,id=serial0",
+      "-qmp", "unix:\(controlSocket),server=on,wait=off",
+      "-pidfile", pidFile,
+    ]
+    for (half, socket) in agentSockets {
+      arguments += [
+        "-chardev", "socket,id=agent\(half),path=\(socket),server=on,wait=off",
+        "-device", "virtserialport,bus=serial0.0,chardev=agent\(half),name=dev.hukan.agent.\(half)",
+      ]
+    }
+    if resuming { arguments += ["-incoming", "file:\(machine.stateURL.path)"] }
+    return arguments
   }
 
   private var pidFile: String { machine.url.appendingPathComponent("qemu.pid").path }

@@ -416,7 +416,12 @@ Workspace (one window)
   process here; having one server to talk to is what keeps that client small. **Keys go by physical
   position, so a guest's layout has to match the Mac's keyboard**, and it is compared when a machine
   starts rather than settled in the template, so a Mac whose keyboard has changed needs no new one:
-  the price is one automatic restart the first time they differ.
+  the price is one automatic restart the first time they differ. **The worktree is shared over
+  SMB, by a Samba the cask depends on and started for each connection the guest makes**, the way
+  QEMU's own `smb=` does it, so nothing listens on this Mac; the configuration is hukan's, and what it shares is one link to the
+  worktree, which is what lets a session's move reach a running guest — the link is repointed.
+  SPICE's WebDAV, UTM's road, needs a SPICE client and a QEMU built with it, which Homebrew's is
+  not; virtiofs needs a daemon that runs only on Linux, and Windows has no 9p client.
 - **A client outside hukan reaches the sessions over stdio, from the executable the bundle
   already ships.** It was built for the Claude desktop app, which is where a person keeps track of
   their work as a whole, and what this window knows — which session is working, which is waiting on
@@ -1849,8 +1854,8 @@ Workspace (one window)
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
-- **Windows guests** — templates, tabs, running commands, the resolution and the interface tools
-  work. Still to do: the worktree share.
+- **Windows guests** — templates, tabs, the agent's tools and the worktree share work. Still to
+  do: the clipboard.
 - **Browser** — what is left open is the login state: sharing Safari's is officially impossible
   (plan B: inject `Cookies.binarycookies`, needs Full Disk Access). Measured with a WKWebView
   harness (2026-08): SSO redirect chains and Kolide device trust **work**; passkeys and iCloud

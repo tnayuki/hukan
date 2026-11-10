@@ -95,7 +95,9 @@ final class MachinePaneViewController: NSViewController {
   /// Empty until the guest's agent is known to be the one hukan ships, since an agent about to be
   /// replaced is a port about to go away, and dialling one has crashed Virtualization.framework.
   var agentsHeard: Set<String> {
-    if let qemu { return keyboardSettled ? qemu.agentsHeard : [] }
+    if let qemu {
+      return keyboardSettled && (shareMapped || !qemu.sharesWorktree) ? qemu.agentsHeard : []
+    }
     return agentUpdate == .ready ? runner?.agentsHeard ?? [] : []
   }
   /// How the guest's agent is reached, whichever kind of machine this is.
@@ -298,7 +300,9 @@ final class MachinePaneViewController: NSViewController {
 
   /// The session moved to another worktree: the guest is shown the new one where it stands.
   func shareChanged() {
-    if let directory = sharedDirectory() { runner?.share(directory) }
+    let directory = sharedDirectory()
+    qemu?.share(directory)
+    if let directory { runner?.share(directory) }
   }
 
   // MARK: Lifecycle
@@ -350,6 +354,7 @@ final class MachinePaneViewController: NSViewController {
       status: FileManager.default.fileExists(atPath: machine.stateURL.path)
         ? "Resuming \(machineTitle)…" : "Starting \(machineTitle)…")
     let qemu = QEMUMachine(machine: machine)
+    qemu.sharedDirectory = sharedDirectory()
     self.qemu = qemu
     keyboardSettled = false
     keyboardBusy = false
@@ -366,6 +371,8 @@ final class MachinePaneViewController: NSViewController {
         self.resolutionRestored = true
         try? self.applyResolution()
       }
+      // Every boot, since a restart for the keyboard loses the mapping; a resumed one still has it.
+      if qemu.agentsHeard.isSuperset(of: ["user", "root"]) { self.mapShare(on: qemu) }
       guard half == "root" else { return }
       self.setClock(on: qemu)
       self.settleKeyboard(on: qemu)
@@ -402,6 +409,35 @@ final class MachinePaneViewController: NSViewController {
   }
 
   private var clockSet = false
+
+  /// The share as `W:`, the worktree at `W:\worktree` as it is under `/Volumes/My Shared Files` on
+  /// macOS, for the user the agent's commands run as. Windows 11 turns away a share
+  /// that takes guests and does not sign, which is what one only the guest can reach is, so the
+  /// client is told to accept it first.
+  private var shareMapped = false
+
+  private func mapShare(on qemu: QEMUMachine) {
+    guard qemu.sharesWorktree else { return }
+    shareMapped = false
+    GuestAgent.exec(
+      [
+        "powershell.exe", "-NoProfile", "-Command",
+        "Set-SmbClientConfiguration -EnableInsecureGuestLogons $true"
+          + " -RequireSecuritySignature $false -Confirm:$false",
+      ], on: qemu, admin: true
+    ) { _ in
+      GuestAgent.exec(
+        [
+          "cmd.exe", "/c",
+          "if not exist W:\\ net use W: \\\\10.0.2.4\\hukan /persistent:no",
+        ], on: qemu
+      ) { [weak self] _ in
+        // Mapped or not, the machine is handed over: a share that would not map is no reason to
+        // keep the rest of it from the agent.
+        DispatchQueue.main.async { self?.shareMapped = true }
+      }
+    }
+  }
 
   /// A resumed guest's clock says when it was saved, however long ago that was.
   private func setClock(on qemu: QEMUMachine) {
