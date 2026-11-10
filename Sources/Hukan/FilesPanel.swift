@@ -438,7 +438,10 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
   }
 
   func dividerMoved() {
-    guard isViewLoaded, !isAdjustingHistory else { return }
+    // Not while there is nothing to show: the section folded itself, and any divider in the
+    // window moving would otherwise read that as a person having folded it, and keep it shut on
+    // the next worktree that has commits.
+    guard isViewLoaded, !isAdjustingHistory, history.hasAnythingToShow else { return }
     isHistoryFoldedByHand = historyItem.isCollapsed
   }
 
