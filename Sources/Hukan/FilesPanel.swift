@@ -392,6 +392,23 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
 
   var isHistoryVisible: Bool { isViewLoaded && !historyItem.isCollapsed }
 
+  /// Whether the section was folded by hand — what the window saves, rather than whether it is
+  /// showing, for the reason `isHistoryFoldedByHand` gives.
+  var isHistoryFolded: Bool { isHistoryFoldedByHand }
+
+  /// Put back a fold saved with the window, with no slide: the window is only now being laid out.
+  func restoreHistoryFold(_ folded: Bool) {
+    loadViewIfNeeded()
+    isHistoryFoldedByHand = folded
+    if folded {
+      isAdjustingHistory = true
+      historyItem.isCollapsed = true
+      isAdjustingHistory = false
+    } else {
+      updateHistoryVisibility()
+    }
+  }
+
   /// The section's height, recorded with the column widths so it survives a relaunch. Collapsed
   /// reads as zero, which the recorder skips, so a folded section does not overwrite the height
   /// it will reopen at.

@@ -121,7 +121,13 @@ Workspace (one window)
   not a state the workspace has: it is never saved with the window (a restored window with no
   rail and no transcript reads as a broken one), toggling any column by hand ends it, and being
   sent to a session — by key, by a tapped notification — ends it too, because what is waiting on
-  you is on the rail and in the transcript and the mode must not outlive its own reason. **Ending
+  you is on the rail and in the transcript and the mode must not outlive its own reason. **A fold
+  made by hand is the opposite case, and is saved**: the rail, the files panel and its History
+  section come back folded, each having been a decision about how this window is arranged, the
+  way its widths are, and each having a toggle in the bar to undo it. What is saved under the
+  mode is the arrangement it was entered from, and for History the hand fold alone — a section
+  folded because it has nothing to show is not one, or a worktree with commits would open on it
+  shut. **Ending
   it that way puts back what nothing else can unfold**: the rail and the files panel have toggles
   of their own and keep whatever the act that ended the mode makes of them, but the transcript
   and the desk have none, so a mode dropped where it stood would leave whichever of them it had

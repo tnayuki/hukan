@@ -422,6 +422,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
         ) { [weak self] _ in
           self?.files.panel.dividerMoved()
           self?.recordColumnWidths()
+          // A fold dragged shut is heard only here. The toggles note theirs as they are made,
+          // since a slide's last resize lands after the act that asked for it.
+          self?.recordColumnFolds()
           // The panel also collapses without the toggle — dragged shut, or squeezed out when the
           // column runs short — so the button's state follows the divider, not just the click.
           self?.updateFilesToolbarItem()
@@ -522,6 +525,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // Record whatever this leaves behind, so the very first arrangement is saved too —
     // otherwise nothing is written until something happens to resize a column.
     defer {
+      // After the widths, so a column folded here reopens at the width it was left at.
+      applyColumnFolds()
       isArrangingColumns = false
       recordColumnWidths()
       // After the record, so what is saved is the arrangement with the desk in it — and without
@@ -683,6 +688,32 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     guard widths.allSatisfy({ $0 > 0 }) else { return }
     guard widths != workspace.columnWidths || historyChanged else { return }
     workspace.columnWidths = widths
+    window?.invalidateRestorableState()
+  }
+
+  /// The folds saved with the window, put back without a slide: the window is only now being
+  /// laid out. Nothing to undo for a column left open — every column starts that way.
+  private func applyColumnFolds() {
+    let folds = workspace.columnFolds
+    if folds.rail { railItem.isCollapsed = true }
+    if folds.filesPanel { filesPanelItem.isCollapsed = true }
+    files.panel.restoreHistoryFold(folds.history)
+    updateRailToolbarItem()
+    updateFilesToolbarItem()
+  }
+
+  /// Note which columns are folded by hand, so the window comes back that way. While a column has
+  /// the window, what is noted is the arrangement the mode was entered from — the one leaving it
+  /// leads back to — since the mode itself is never saved. Unlike the widths this is recorded
+  /// under the toolbar's captions too: they push a column wider, but fold nothing.
+  private func recordColumnFolds() {
+    guard hasArrangedColumns, !isArrangingColumns else { return }
+    let folds = Workspace.ColumnFolds(
+      rail: maximized?.rail ?? railItem.isCollapsed,
+      filesPanel: maximized?.panel ?? filesPanelItem.isCollapsed,
+      history: files.panel.isHistoryFolded)
+    guard folds != workspace.columnFolds else { return }
+    workspace.columnFolds = folds
     window?.invalidateRestorableState()
   }
 
@@ -2166,6 +2197,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     // showing then.
     forgetMaximizedLayout()
     foldColumns { railItem.animator().isCollapsed = !railItem.isCollapsed }
+    recordColumnFolds()
     // The collapse animates, so the item's fate is read once it has landed rather than from the
     // state the click started in.
     DispatchQueue.main.async { [weak self] in self?.updateRailToolbarItem() }
@@ -2647,6 +2679,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     } else {
       files.toggleHistorySection()
     }
+    recordColumnFolds()
     updateFilesToolbarItem()
   }
 
@@ -2663,6 +2696,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       self.isRevealingFilesPanel = false
       self.updateFilesToolbarItem()
     }
+    recordColumnFolds()
     updateFilesToolbarItem()
   }
 
@@ -2846,6 +2880,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     forgetMaximizedLayout()
     guard railItem.isCollapsed else { return }
     foldColumns { railItem.animator().isCollapsed = false }
+    recordColumnFolds()
     DispatchQueue.main.async { [weak self] in self?.updateRailToolbarItem() }
   }
 

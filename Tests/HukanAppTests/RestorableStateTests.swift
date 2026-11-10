@@ -62,6 +62,15 @@ final class RestorableStateTests: XCTestCase {
 
   /// Archiving is a decision of yours with no owner on disk, so it is the one piece of the rail's
   /// state that has to survive a restart intact — and the one that must not quietly grow forever.
+  /// The hand folds are the window's like the widths, and an absent key — a window saved before
+  /// they were — reads as nothing folded, which is how every column starts.
+  func testColumnFoldsRoundTripAndDefaultToOpen() throws {
+    let workspace = Workspace()
+    XCTAssertEqual(try roundTrip(workspace).columnFolds, Workspace.ColumnFolds())
+    workspace.columnFolds = .init(rail: true, filesPanel: false, history: true)
+    XCTAssertEqual(try roundTrip(workspace).columnFolds, workspace.columnFolds)
+  }
+
   func testArchivedSessionsRoundTripAndPruneOnlyWhatWasResolved() throws {
     // A real main worktree behind them: only main's sessions can be archived at all.
     let repo = Repository(id: "/repo/main")

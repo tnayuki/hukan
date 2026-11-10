@@ -326,6 +326,44 @@ final class MaximizeTests: XCTestCase {
     XCTAssertEqual(workspace.columnWidths, saved)
   }
 
+  /// A column folded by hand is noted for the window's saved state; one the mode folded is not —
+  /// what is noted under the mode is the arrangement it was entered from.
+  func testHandFoldsAreRecordedAndTheModesAreNot() {
+    let (controller, workspace, window) = openArrangedWindow()
+    defer { window.close() }
+
+    controller.toggleRail(nil)
+    controller.toggleFilesPanel(nil)
+    window.layoutIfNeeded()
+    XCTAssertEqual(workspace.columnFolds, .init(rail: true, filesPanel: true, history: false))
+
+    controller.toggleRail(nil)
+    controller.toggleFilesPanel(nil)
+    window.layoutIfNeeded()
+    XCTAssertEqual(workspace.columnFolds, .init())
+
+    controller.focusComposer()
+    controller.toggleMaximize(nil)
+    window.layoutIfNeeded()
+    XCTAssertEqual(workspace.columnFolds, .init())
+  }
+
+  /// A window comes back with the columns that were folded by hand still folded.
+  func testSavedFoldsAreAppliedWhenTheColumnsAreArranged() {
+    let workspace = RailPreviewTests.sampleWorkspace()
+    workspace.columnFolds = .init(rail: true, filesPanel: true, history: false)
+    let controller = WorkspaceWindowController(workspace: workspace)
+    let window = controller.window!
+    defer { window.close() }
+    window.setFrame(NSRect(x: 0, y: -4000, width: 1600, height: 800), display: true)
+    controller.arrangeColumnsIfNeeded()
+
+    XCTAssertFalse(controller.showingColumns.rail)
+    XCTAssertFalse(controller.showingColumns.panel)
+    XCTAssertTrue(controller.showingColumns.session)
+    XCTAssertEqual(workspace.columnFolds, .init(rail: true, filesPanel: true, history: false))
+  }
+
   /// Being sent to a session is being sent to the rail as much as to the transcript, and the
   /// rail is folded whichever column has the window.
   func testBeingSentToASessionEndsTheMode() {

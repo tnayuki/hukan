@@ -34,7 +34,8 @@ only package dependencies.
 ## What works
 
 **Layout.** Four columns in one window — the session rail, the running agent, the desk, the files
-panel — restored on relaunch with their Space and geometry. The edge columns run the window's
+panel — restored on relaunch with their Space and geometry, and with the rail, the files panel
+and its History section still folded if you folded them. The edge columns run the window's
 full height, Mail-fashion, and the toolbar is cut into sections that follow them. Either middle
 column can have the window to itself: double-click a lasting tab, or the conversation's own
 header, and everything else folds away until the same gesture puts it back.

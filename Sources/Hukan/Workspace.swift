@@ -354,6 +354,19 @@ final class Workspace {
   /// same reason: it is the arrangement of one window, not a global setting.
   var historyHeight: Double = 0
 
+  /// Which of the window's foldable columns were left folded by hand: the rail, the files panel,
+  /// and the panel's History section. Stored beside the widths, and for the same reason — it is
+  /// how this one window was arranged. Never what the maximized mode or an empty desk folded:
+  /// those are a mode and a derived state, and the window reads them off the arrangement it was
+  /// entered from rather than off the screen. History is the hand fold alone, since a worktree
+  /// with nothing committed folds the section by itself and must not keep it shut elsewhere.
+  struct ColumnFolds: Equatable {
+    var rail = false
+    var filesPanel = false
+    var history = false
+  }
+  var columnFolds = ColumnFolds()
+
   /// Per-session composer choices: the permission mode and reasoning effort the engine does not
   /// remember across --resume, plus the model — which the engine does remember, so it is kept
   /// for display continuity only, never forced (see `applyRestoredPrefs`).
@@ -1049,6 +1062,9 @@ final class Workspace {
     static let selectedSessionID = "selectedSessionID"
     static let columnWidths = "columnWidths"
     static let historyHeight = "historyHeight"
+    static let railFolded = "folds.rail"
+    static let filesPanelFolded = "folds.filesPanel"
+    static let historyFolded = "folds.history"
     static let groupIDs = "rail.groupIDs"
     static let groupNames = "rail.groupNames"
     static let membershipPaths = "rail.membershipPaths"
@@ -1190,6 +1206,9 @@ final class Workspace {
     coder.encode(selectedSessionID?.uuidString ?? "", forKey: Key.selectedSessionID)
     coder.encode(columnWidths.map(NSNumber.init(value:)) as NSArray, forKey: Key.columnWidths)
     coder.encode(historyHeight, forKey: Key.historyHeight)
+    coder.encode(columnFolds.rail, forKey: Key.railFolded)
+    coder.encode(columnFolds.filesPanel, forKey: Key.filesPanelFolded)
+    coder.encode(columnFolds.history, forKey: Key.historyFolded)
     coder.encode(Array(collapsedRepositories) as NSArray, forKey: Key.collapsedRepositories)
     coder.encode(Array(expandedArchives) as NSArray, forKey: Key.expandedArchives)
     switch railSort {
@@ -1383,6 +1402,10 @@ final class Workspace {
       selectedSessionID = id
     }
     historyHeight = coder.decodeDouble(forKey: Key.historyHeight)
+    columnFolds = ColumnFolds(
+      rail: coder.decodeBool(forKey: Key.railFolded),
+      filesPanel: coder.decodeBool(forKey: Key.filesPanelFolded),
+      history: coder.decodeBool(forKey: Key.historyFolded))
     columnWidths =
       (coder.decodeArrayOfObjects(ofClass: NSNumber.self, forKey: Key.columnWidths) ?? [])
       .map(\.doubleValue)
