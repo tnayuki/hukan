@@ -1087,6 +1087,12 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
       emptyLabel.isHidden = false
       emptyLabel.stringValue = shownWait.note
       filterField.toolTip = nil
+    } else if Ripgrep.binary == nil, isShowingResults || !filterField.stringValue.isEmpty {
+      // Both gestures are ripgrep's; without it, saying "no matches" would be a claim about the
+      // worktree that nothing checked.
+      emptyLabel.isHidden = false
+      emptyLabel.stringValue = Ripgrep.missingNote
+      filterField.toolTip = nil
     } else if isShowingResults {
       let hits = results.reduce(0) { $0 + $1.lines.count }
       emptyLabel.isHidden = !results.isEmpty

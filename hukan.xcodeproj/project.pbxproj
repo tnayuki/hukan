@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		AC000000000000000000000E /* hukan.sdef in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000000D /* hukan.sdef */; };
 		AC0000000000000000000021 /* hukan in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000020 /* hukan */; };
-		AC0000000000000000000023 /* rg in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000022 /* rg */; };
 		AC0000000000000000000025 /* hukan-guest-agent in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000024 /* hukan-guest-agent */; };
 		AC000000000000000000001B /* hukan.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001A /* hukan.icns */; };
 		AC000000000000000000001F /* hukan-dev.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001E /* hukan-dev.icns */; };
@@ -36,7 +35,6 @@
 		AC0000000000000000000003 /* Hukan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hukan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AC000000000000000000000D /* hukan.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = hukan.sdef; sourceTree = "<group>"; };
 		AC0000000000000000000020 /* hukan */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = hukan; sourceTree = "<group>"; };
-		AC0000000000000000000022 /* rg */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = rg; sourceTree = "<group>"; };
 		AC0000000000000000000024 /* hukan-guest-agent */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = "hukan-guest-agent"; sourceTree = "<group>"; };
 		AC000000000000000000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AC000000000000000000001A /* hukan.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = hukan.icns; sourceTree = "<group>"; };
@@ -115,7 +113,6 @@
 				AC000000000000000000000F /* Info.plist */,
 				AC000000000000000000000D /* hukan.sdef */,
 				AC0000000000000000000020 /* hukan */,
-				AC0000000000000000000022 /* rg */,
 				AC0000000000000000000024 /* hukan-guest-agent */,
 				AC000000000000000000001A /* hukan.icns */,
 				AC000000000000000000001E /* hukan-dev.icns */,
@@ -227,7 +224,6 @@
 			files = (
 				AC000000000000000000000E /* hukan.sdef in Resources */,
 				AC0000000000000000000021 /* hukan in Resources */,
-				AC0000000000000000000023 /* rg in Resources */,
 				AC0000000000000000000025 /* hukan-guest-agent in Resources */,
 				AC000000000000000000001B /* hukan.icns in Resources */,
 				AC000000000000000000001F /* hukan-dev.icns in Resources */,

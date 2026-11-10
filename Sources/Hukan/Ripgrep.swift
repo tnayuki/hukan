@@ -13,14 +13,20 @@ import Foundation
 /// directory with no git above it survivable at all — the home directory here is 4.56M entries
 /// walked blind against 1.56M files pruned.
 ///
-/// The binary is bundled (`Vendor/build-ripgrep.sh` builds `Resources/rg` from a pinned source
-/// release), so it is named by absolute path: no PATH to consult, and nothing for the user to
-/// have uninstalled.
+/// It is Homebrew's, which the cask depends on, named by absolute path: no PATH to consult, and
+/// arm64 alone means one prefix.
 enum Ripgrep {
-  /// The bundled binary, or nil where there is none — a test host without the resource, a build
-  /// that dropped it. Every entry point answers "nothing found" rather than trapping, so the
-  /// panel degrades to what git can tell it instead of coming up empty with no explanation.
-  static let binary: URL? = Bundle.main.url(forResource: "rg", withExtension: nil)
+  static let path = "/opt/homebrew/bin/rg"
+
+  /// Homebrew's binary, or nil where there is none — a build that did not come through the cask,
+  /// or a ripgrep since uninstalled. Asked each time rather than once, so installing it needs no
+  /// relaunch. Every entry point answers "nothing found" rather than trapping, and the panel says
+  /// why with `missingNote`, so a filter that cannot run never reads as one that matched nothing.
+  static var binary: URL? {
+    FileManager.default.isExecutableFile(atPath: path) ? URL(fileURLWithPath: path) : nil
+  }
+
+  static let missingNote = "ripgrep is missing — brew install ripgrep"
 
   /// One line of a file that matched, which is the unit the search's result list is built from.
   struct Hit: Equatable {

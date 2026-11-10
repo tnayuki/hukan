@@ -70,8 +70,9 @@ final class RipgrepTests: XCTestCase {
     return found.sorted { $0.path == $1.path ? $0.line < $1.line : $0.path < $1.path }
   }
 
-  func testTheBinaryIsInTheBundle() throws {
-    let binary = try XCTUnwrap(Ripgrep.binary, "Resources/rg ships with the app")
+  func testTheBinaryIsHomebrews() throws {
+    let binary = try XCTUnwrap(Ripgrep.binary, "brew install ripgrep — the cask depends on it")
+    XCTAssertEqual(binary.path, "/opt/homebrew/bin/rg")
     XCTAssertTrue(FileManager.default.isExecutableFile(atPath: binary.path))
   }
 

@@ -26,8 +26,8 @@ here instead is an editable, syntax-highlighted source viewer: fixing the file a
 wrote should not mean leaving the window.
 
 Swift 5, AppKit; macOS 15 and up on Apple Silicon, built against the current SDK. git and tree-sitter are
-vendored static libraries and ripgrep is a bundled binary; SwiftTerm and SwiftTreeSitter are the
-only package dependencies.
+vendored static libraries and ripgrep comes from Homebrew, a dependency of the cask; SwiftTerm and
+SwiftTreeSitter are the only package dependencies.
 
 ---
 
@@ -166,7 +166,7 @@ directory of any size — a home directory, say — be opened for nothing. git's
 over it. A file changing on disk lights the row on screen that stands for it — its own, or the
 folded directory it is in — and the light fades; a file git ignores lights nothing. One field over the tree runs two jobs, told apart by
 gesture: typing filters by path, Return searches contents and the panel becomes a result list
-until Escape. Both are ripgrep, bundled: the filter matches a path component that contains what
+until Escape. Both are ripgrep, from Homebrew: the filter matches a path component that contains what
 you typed and everything under a directory whose name does, so `Tests` narrows to that
 directory's contents; the search matches a literal line, case-insensitively, and the rows stream
 in as they are found. A directory git ignores is on the tree, dimmed, and neither filtered into

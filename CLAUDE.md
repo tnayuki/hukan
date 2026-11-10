@@ -1886,25 +1886,24 @@ build was not.
 
 The project is hand-authored and tracked — edit `project.pbxproj` directly. Folder groups are
 file-system-synchronized, so a new file under `Sources/` just appears. `Resources/hukan.icns`,
-`Resources/rg`, `Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework` and the
+`Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework` and the
 query files under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
 step, not part of the build. `Resources/hukan-guest-agent` is the guest agent, built by
 `Vendor/build-guest-agent.sh`; `Resources/Hukan.entitlements` carries the one entitlement
 Virtualization.framework requires, which ad-hoc signing can hold.
 
-`Resources/rg` is ripgrep, and it is the one program hukan runs. The files panel's filter and its
+ripgrep is the one program hukan runs. The files panel's filter and its
 content search are a process each, per gesture, started by someone typing and killed by the next
 keystroke — which is a different shape from the thing libgit2 is here to prevent below, a spawn
 per FSEvents batch per worktree. What it buys is the walk: rg prunes by every `.gitignore` it
 passes, nested repositories included and — with `--no-require-git` — directories that are no
 repository at all, which is the only reason a directory with no git above it can be opened at
-all. It is bundled rather than depended on, because the cask is one of three ways hukan arrives
-and a formula the user could remove, at a prefix that moves with the architecture, is a
-dependency that fails silently. Built from a pinned source release by `Vendor/build-ripgrep.sh`
-rather than taken from ripgrep's own macOS download, which is the same call the two xcframeworks
-make: the bytes hukan ships are bytes built here. 31s, or 1m13s with the whole-program LTO the
-script asks for — which buys size and nothing else (4,239,088 bytes against 3,464,480; both jobs
-are bound by syscalls and the disk, so the walk and the search are unmoved).
+all. **It is Homebrew's, a dependency of the cask, rather than a binary built here and bundled.**
+It was bundled once, for two reasons that have since gone: Homebrew's prefix moved with the
+architecture, which arm64 alone settled, and a formula the user could remove failed silently —
+which the panel now answers by saying ripgrep is missing where a filter or a search would have
+said it found nothing. A build that did not come through the cask needs `brew install ripgrep`,
+and CI installs it before the tests.
 
 `Clibgit2.xcframework` is the git engine: libgit2, linked in-process so hukan spawns no `git`
 at all — the point being that a large repository under a storm of FSEvents used to fork two

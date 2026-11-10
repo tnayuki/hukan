@@ -61,6 +61,10 @@ jobs:
           xcrun swiftc -O .github/ci-display.swift -o "$RUNNER_TEMP/display"
           "$RUNNER_TEMP/display"
 
+      - name: Ripgrep
+        # The files panel runs Homebrew's ripgrep, which the cask depends on, and its tests run it.
+        run: brew list ripgrep >/dev/null 2>&1 || brew install ripgrep
+
       - name: Test
         # Most of the pixel-pinned tests run here now: they render through `SnapshotSurface`,
         # which pins the backing scale, the colour space and the completion panel's material, so
