@@ -608,6 +608,24 @@ final class MachinePaneViewController: NSViewController {
       guard let self, let runner, self.runner === runner else { return }
       self.agentSaidHello(half, on: runner)
     }
+    // The guest stopping on its own — shut down from inside, or by the save that asked it to —
+    // as a Windows machine's QEMU leaving is: a save carries on to its copy, and anything else
+    // says the machine shut down and offers to start it, rather than leaving a dark screen.
+    runner.onStop = { [weak self, weak runner] error in
+      DispatchQueue.main.async {
+        guard let self, let runner, self.runner === runner else { return }
+        self.runner = nil
+        self.screen.virtualMachine = nil
+        if let whenStopped = self.whenStopped {
+          self.whenStopped = nil
+          whenStopped(error)
+        } else if let error {
+          self.show(failure: MacMachine.explain(error), retry: true)
+        } else {
+          self.show(stopped: "\(self.machineTitle) shut down.")
+        }
+      }
+    }
     runner.start { [weak self] error in
       guard let self else { return }
       if let error {
@@ -827,6 +845,21 @@ final class MachinePaneViewController: NSViewController {
         }
       }
       GuestAgent.exec(["shutdown", "-h", "now"], on: vm, admin: true) { _ in }
+      // A shutdown can stall — an app asking whether to save, a process that will not quit — and
+      // nothing then ever stops the machine, so the save waited for good behind a dark tab. It is
+      // given up on instead, with the guest's screen put back so whatever stopped it can be seen;
+      // the machine is not pulled from under it, since a template copied from a machine cut off
+      // mid-shutdown would carry that half-finished state into every copy made from it.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 180) { [weak self] in
+        guard let self, self.whenStopped != nil, self.runner?.vm === vm else { return }
+        self.whenStopped = nil
+        completion(
+          .failure(
+            MachineError(
+              "\(self.machineTitle) did not shut down within three minutes. Something in it may"
+                + " be waiting for an answer; its screen is in the tab.")))
+        self.showScreen()
+      }
     }
     shutDownOnceAnswering()
   }
