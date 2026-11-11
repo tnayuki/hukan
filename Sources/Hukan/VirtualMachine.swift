@@ -404,11 +404,46 @@ final class MachinePaneViewController: NSViewController {
       show(failure: error.localizedDescription, retry: true)
       return
     }
+    qemuScreen.onFocus = { [weak self] focused in self?.carryClipboard(intoGuest: focused) }
     qemuScreen.connect(socket: qemu.displaySocket)
     showScreen()
   }
 
   private var clockSet = false
+
+  /// The text last carried either way, so a round trip does not carry it back.
+  private var carriedText: String?
+  private var carriedChangeCount = -1
+
+  /// A Windows guest's clipboard, as text, through its agent: this Mac's into the guest when its
+  /// screen takes the keyboard, and the guest's out when the screen lets it go. Carried at those
+  /// two moments rather than watched, so nothing moves while nobody is crossing between the two —
+  /// a macOS guest has the framework's own sharing instead.
+  private func carryClipboard(intoGuest: Bool) {
+    guard let qemu, agentsHeard.contains("user") else { return }
+    let pasteboard = NSPasteboard.general
+    if intoGuest {
+      guard pasteboard.changeCount != carriedChangeCount,
+        let text = pasteboard.string(forType: .string), text != carriedText
+      else { return }
+      carriedChangeCount = pasteboard.changeCount
+      carriedText = text
+      GuestAgent.request(["op": "clipboard_set", "text": text], to: qemu) { _ in }
+    } else {
+      GuestAgent.request(["op": "clipboard_get"], to: qemu) { [weak self] result in
+        guard case .success(let reply) = result, let text = reply["text"] as? String,
+          !text.isEmpty
+        else { return }
+        DispatchQueue.main.async {
+          guard let self, text != self.carriedText else { return }
+          self.carriedText = text
+          pasteboard.clearContents()
+          pasteboard.setString(text, forType: .string)
+          self.carriedChangeCount = pasteboard.changeCount
+        }
+      }
+    }
+  }
 
   /// The share as `W:`, the worktree at `W:\worktree` as it is under `/Volumes/My Shared Files` on
   /// macOS, for the user the agent's commands run as. Windows 11 turns away a share

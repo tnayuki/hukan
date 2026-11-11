@@ -270,6 +270,10 @@ namespace HukanGuestAgent
                         Number(request, "window"));
                 case "type":
                     return Interface.Type(Text(request, "text"));
+                case "clipboard_get":
+                    return Interface.ClipboardGet();
+                case "clipboard_set":
+                    return Interface.ClipboardSet(Text(request, "text"));
                 case "key":
                     var modifiers = request.TryGetValue("modifiers", out var held) && held is System.Collections.ArrayList list
                         ? list.Cast<string>() : new string[0];

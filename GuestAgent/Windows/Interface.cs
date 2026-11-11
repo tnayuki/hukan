@@ -344,5 +344,38 @@ namespace HukanGuestAgent
             for (var i = held.Count - 1; i >= 0; i--) Send(Key(held[i], 0, KeyUp));
             return Done();
         }
+    
+        // MARK: Clipboard
+
+        /// The clipboard is an STA object and the agent's threads are not, so each touch of it runs
+        /// on a thread made for it.
+        static void OnSta(Action action)
+        {
+            Exception failure = null;
+            var thread = new Thread(() => { try { action(); } catch (Exception error) { failure = error; } });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+            if (failure != null) throw failure;
+        }
+
+        public static Dictionary<string, object> ClipboardGet()
+        {
+            string text = null;
+            OnSta(() => { if (System.Windows.Forms.Clipboard.ContainsText()) text = System.Windows.Forms.Clipboard.GetText(); });
+            var reply = Done();
+            reply["text"] = text ?? "";
+            return reply;
+        }
+
+        public static Dictionary<string, object> ClipboardSet(string text)
+        {
+            OnSta(() =>
+            {
+                if (string.IsNullOrEmpty(text)) System.Windows.Forms.Clipboard.Clear();
+                else System.Windows.Forms.Clipboard.SetText(text);
+            });
+            return Done();
+        }
     }
 }

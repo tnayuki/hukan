@@ -1854,8 +1854,6 @@ Workspace (one window)
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
-- **Windows guests** — templates, tabs, the agent's tools and the worktree share work. Still to
-  do: the clipboard.
 - **Browser** — what is left open is the login state: sharing Safari's is officially impossible
   (plan B: inject `Cookies.binarycookies`, needs Full Disk Access). Measured with a WKWebView
   harness (2026-08): SSO redirect chains and Kolide device trust **work**; passkeys and iCloud

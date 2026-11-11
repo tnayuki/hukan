@@ -289,6 +289,36 @@ final class QEMUScreenView: NSView {
   override var acceptsFirstResponder: Bool { true }
   override var wantsUpdateLayer: Bool { true }
 
+  /// The screen gaining (true) or losing the keyboard — by a click elsewhere, or by this window, or
+  /// this app, giving it up while the screen still holds it, which is how a copy made in the
+  /// guest is most often carried to another app.
+  var onFocus: ((Bool) -> Void)?
+
+  override func becomeFirstResponder() -> Bool {
+    onFocus?(true)
+    return true
+  }
+
+  override func resignFirstResponder() -> Bool {
+    onFocus?(false)
+    return true
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    NotificationCenter.default.removeObserver(self)
+    guard let window else { return }
+    for (name, focused) in [
+      (NSWindow.didBecomeKeyNotification, true), (NSWindow.didResignKeyNotification, false),
+    ] {
+      NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
+        [weak self] _ in
+        guard let self, self.window?.firstResponder === self else { return }
+        self.onFocus?(focused)
+      }
+    }
+  }
+
   func connect(socket: String) {
     let client = QEMUDisplayClient(socket: socket)
     client.onFrame = { [weak self] image in
