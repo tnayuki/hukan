@@ -91,6 +91,9 @@ final class WindowsTemplateTests: XCTestCase {
     XCTAssertTrue(script.contains("--root\" start= auto"))
     XCTAssertTrue(script.contains("schtasks /create /tn HukanGuestAgent /sc onlogon"))
     XCTAssertTrue(script.contains("--user\""))
+    let winlogon = "\"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\""
+    XCTAssertTrue(script.contains("reg add \(winlogon) /v ForceAutoLogon /t REG_SZ /d 1 /f"))
+    XCTAssertTrue(script.contains("reg delete \(winlogon) /v AutoLogonCount /f"))
     XCTAssertFalse(script.replacingOccurrences(of: "\r\n", with: "").contains("\n"))
   }
 

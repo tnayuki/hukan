@@ -454,7 +454,7 @@ running.
 
 A Windows on Arm ISO makes a Windows template the same way, unattended in about twenty minutes,
 on QEMU from Homebrew, which the cask installs. It runs on a tab like a macOS machine, with its screen
-and keyboard there, and is saved and resumed the same way. The agent's tools work on it as they do
+and keyboard there, and is saved and resumed the same way; it signs itself in again after a sign-out. The agent's tools work on it as they do
 on a macOS machine, with ⌘ as the Windows key and ⌥ as Alt; a menu takes a moment to draw after it
 is pressed open. The session's worktree is `W:\`, shared over SMB by Samba from Homebrew,
 which the cask installs too, and moved there when the session moves, as on macOS — once the guest

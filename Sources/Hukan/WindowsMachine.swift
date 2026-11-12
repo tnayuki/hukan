@@ -136,7 +136,8 @@ final class WindowsTemplateBuilder {
     _ = try outcome.get()
   }
 
-  /// What the first logon runs, from the answers disc: the drivers, then the agent's two halves.
+  /// What the first logon runs, from the answers disc: the drivers, the agent's two halves, and a
+  /// sign-in that holds.
   /// Every step is left to fail on its own: a template without one of these still boots, and says
   /// so by not answering, where a script that stopped would leave the rest undone too.
   // Internal so tests can inspect setup without mounting or booting an ISO.
@@ -155,6 +156,13 @@ final class WindowsTemplateBuilder {
       + "/tr \"\\\"%H%\\hukan-guest-agent.exe\\\" --user\"",
     "reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System "
       + "/v EnableLUA /t REG_DWORD /d 0 /f",
+    // The answer file's AutoLogon signs in at boot only, and for a counted number of boots: a
+    // logoff would otherwise leave the machine at the sign-in screen, where the user half of the
+    // agent is not running and nothing can sign it back in.
+    "reg add \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\" "
+      + "/v ForceAutoLogon /t REG_SZ /d 1 /f",
+    "reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\" "
+      + "/v AutoLogonCount /f",
     "powercfg /change standby-timeout-ac 0",
     "powercfg /change monitor-timeout-ac 0",
     "",
