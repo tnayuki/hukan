@@ -1215,9 +1215,17 @@ final class WorktreeDeskViewController: NSViewController {
     }
     // The id, not the tab: the tab owns the pane that owns these closures.
     let id = tab.id
-    tab.pane.onStateChange = { [weak self] in
+    var power = (tab.pane.isRunning, tab.pane.isStopped)
+    tab.pane.onStateChange = { [weak self, weak pane = tab.pane] in
+      guard let self else { return }
+      // The strip's menu offers Suspend to a running machine and Start to a stopped one, and it is
+      // built with the strip — so the strip is rebuilt when either flips, not on every status line.
+      if let pane, (pane.isRunning, pane.isStopped) != power {
+        power = (pane.isRunning, pane.isStopped)
+        self.rebuildTabBar()
+      }
       // The screen takes the keyboard once it is up, if its tab is the one showing.
-      guard let self, self.surface == .machine(id) else { return }
+      guard self.surface == .machine(id) else { return }
       self.focusActiveSurface()
     }
     tab.pane.onIdentified = { [weak self] in self?.view.window?.invalidateRestorableState() }
@@ -1379,6 +1387,24 @@ final class WorktreeDeskViewController: NSViewController {
       } + elsewhere).joined(separator: "\n")
   }
 
+  /// The right-click menu a tab carries, read off the tab itself rather than built afresh: the
+  /// menu is made with the strip, so what the strip is holding is the thing to check — a menu
+  /// built for the question would have hidden a Suspend left greyed by a machine that started.
+  func tabMenuForScripting(place: Int) -> String? {
+    let tabs = tabBar.arrangedSubviews.filter { $0.menu != nil }
+    guard tabs.indices.contains(place - 1), let menu = tabs[place - 1].menu else { return nil }
+    return menu.items.map { item in
+      if item.isSeparatorItem { return "--" }
+      let title = item.isEnabled ? item.title : "\(item.title) (disabled)"
+      guard let submenu = item.submenu else { return title }
+      return
+        ([title]
+        + submenu.items.filter { !$0.isSeparatorItem && !$0.isHidden }.map {
+          "  \($0.state == .on ? "✓ " : "")\($0.title)"
+        }).joined(separator: "\n")
+    }.joined(separator: "\n")
+  }
+
   private func describe(_ item: Surface) -> String {
     switch item {
     case .file(let id):
@@ -1449,14 +1475,14 @@ final class WorktreeDeskViewController: NSViewController {
     let deskID = session.id
     let tabs = inStripOrder(
       machineTabsByDesk[deskID] ?? [], in: deskID, surface: { .machine($0.id) })
-    if call.name == "vm_open" {
-      openMachineForAgent(call, for: session, existing: tabs.first, completion: completion)
+    if call.name == "vm_create" {
+      createMachineForAgent(call, for: session, completion: completion)
       return
     }
     if call.name == "vm_list" {
       guard !tabs.isEmpty else {
         completion(
-          .text("No virtual machines are open on this session's desk — vm_open opens one."))
+          .text("No virtual machines are open on this session's desk — vm_create makes one."))
         return
       }
       let lines = tabs.map { tab in
@@ -1477,8 +1503,12 @@ final class WorktreeDeskViewController: NSViewController {
       return
     }
     let pane = tab.pane
-    // Stopping is asked every time too: someone may be working in the machine.
-    if call.name == "vm_stop" {
+    if call.name == "vm_start" {
+      startMachineForAgent(tab, for: session, completion: completion)
+      return
+    }
+    // Suspending is asked every time too: someone may be working in the machine.
+    if call.name == "vm_suspend" {
       guard pane.isRunning else {
         completion(.text("\(pane.machineTitle) is not running."))
         return
@@ -1487,15 +1517,15 @@ final class WorktreeDeskViewController: NSViewController {
         tabID: id, title: pane.machineTitle, url: "", level: .drive, machine: true, stopping: true
       ) { granted in
         guard granted != nil else {
-          completion(.error("The user declined to stop the machine."))
+          completion(.error("The user declined to suspend the machine."))
           return
         }
-        pane.stopMachine { completion(.text("stopped — vm_open starts it again")) }
+        pane.stopMachine { completion(.text("suspended — vm_start carries on from here")) }
       }
       return
     }
     // Deleting is asked every time, whatever else the agent was allowed.
-    if call.name == "vm_close" {
+    if call.name == "vm_delete" {
       session.requestGrant(
         tabID: id, title: pane.machineTitle, url: "", level: .drive, machine: true, closing: true
       ) { [weak self] granted in
@@ -1557,7 +1587,7 @@ final class WorktreeDeskViewController: NSViewController {
     completion: @escaping (HukanMCP.Outcome) -> Void
   ) {
     guard let vm = pane.guestLink else {
-      completion(.error("The machine is not running — vm_open starts it."))
+      completion(.error("The machine is not running — vm_start starts it."))
       return
     }
     if pane.runsOnQEMU {
@@ -1749,59 +1779,48 @@ final class WorktreeDeskViewController: NSViewController {
     return request
   }
 
-  /// `vm_open`: the session's machine, started and answering. One per session — an open one is
-  /// started if it is stopped and returned, and only a new one is asked about, since a copy made
-  /// is disk spent and a guest the agent then runs.
-  private func openMachineForAgent(
-    _ call: HukanMCP.Call, for session: AgentSession, existing: MachineTab?,
+  /// `vm_start`: a machine already on the desk, started and answering. Starting one runs whatever
+  /// it holds, so a machine the agent has not been given is asked about first, as using it would be.
+  private func startMachineForAgent(
+    _ tab: MachineTab, for session: AgentSession,
     completion: @escaping (HukanMCP.Outcome) -> Void
   ) {
-    if let existing, let wanted = call.string("template"),
-      let machineID = existing.pane.machineID.flatMap(UUID.init(uuidString:)),
-      let parent = MachineStore.session(id: machineID)?.manifest.parent,
-      let named = MachineStore.templates().first(where: {
-        $0.id.uuidString.caseInsensitiveCompare(wanted) == .orderedSame
-          || $0.manifest.title == wanted
-      }), named.id != parent
+    let pane = tab.pane
+    // A tab whose copy is gone has nothing to start: it goes, rather than standing there.
+    if let machineID = pane.machineID,
+      UUID(uuidString: machineID).flatMap(MachineStore.session(id:)) == nil
     {
-      // Asked for one template and holding a machine made from another: returning it would be
-      // answering a different question. A session has one machine, so that one has to go first.
+      removeMachineTab(tab.id, in: session.id)
       completion(
-        .error(
-          "This session already has a machine, made from a different template. vm_close deletes"
-            + " it, and then vm_open can make one from \(wanted)."))
+        .error("That machine's copy is gone, so its tab was closed — vm_create makes one."))
       return
     }
-    if let existing {
-      // A tab whose copy is gone has nothing to start: it goes, and a new machine is asked for.
-      if let machineID = existing.pane.machineID,
-        UUID(uuidString: machineID).flatMap(MachineStore.session(id:)) == nil
-      {
-        removeMachineTab(existing.id, in: session.id)
-        openMachineForAgent(call, for: session, existing: nil, completion: completion)
-        return
-      }
-      // Starting a machine runs whatever it holds, so a machine the agent has not been given is
-      // asked about first, as using it would be.
-      guard existing.pane.agentAllowed else {
-        session.requestGrant(
-          tabID: existing.id, title: existing.pane.machineTitle, url: "", level: .drive,
-          machine: true
-        ) { granted in
-          guard granted != nil else {
-            completion(.error("The user declined to let you use this machine."))
-            return
-          }
-          existing.pane.agentAllowed = true
-          existing.pane.start()
-          Self.waitForAgent(existing, completion: completion)
+    let start = {
+      if !pane.isRunning { pane.start() }
+      Self.waitForAgent(tab, completion: completion)
+    }
+    guard pane.agentAllowed else {
+      session.requestGrant(
+        tabID: tab.id, title: pane.machineTitle, url: "", level: .drive, machine: true
+      ) { granted in
+        guard granted != nil else {
+          completion(.error("The user declined to let you use this machine."))
+          return
         }
-        return
+        pane.agentAllowed = true
+        start()
       }
-      existing.pane.start()
-      Self.waitForAgent(existing, completion: completion)
       return
     }
+    start()
+  }
+
+  /// `vm_create`: a new copy of a template on the desk, started and answering. Asked about every
+  /// time, since a copy made is disk spent and a guest the agent then runs.
+  private func createMachineForAgent(
+    _ call: HukanMCP.Call, for session: AgentSession,
+    completion: @escaping (HukanMCP.Outcome) -> Void
+  ) {
     let templates = MachineStore.templates()
     let wanted = call.string("template")
     let template: Machine
@@ -2694,6 +2713,19 @@ final class WorktreeDeskViewController: NSViewController {
         item.state = pane.fixedResolution.map { $0 == (width, height) } == true ? .on : .off
       }
       menu.addItem(withTitle: "Resolution", action: nil, keyEquivalent: "").submenu = resolution
+      // Suspend saves it where it is and stops it, which gives its slot back: macOS runs two macOS
+      // guests at once, and closing the tab would delete the copy rather than set it aside. A
+      // stopped machine offers Start in the same place instead; one on its way up or down offers
+      // nothing it could take yet.
+      let stopped = pane.isStopped && !pane.isRunning
+      let power = menu.addItem(
+        withTitle: stopped ? "Start" : "Suspend",
+        action: stopped
+          ? #selector(startMachineFromMenu(_:)) : #selector(suspendMachineFromMenu(_:)),
+        keyEquivalent: "")
+      power.target = self
+      power.representedObject = id
+      power.isEnabled = stopped || pane.isRunning
       let save = menu.addItem(
         withTitle: "Save as Template…", action: #selector(saveMachineAsTemplate(_:)),
         keyEquivalent: "")
@@ -2870,6 +2902,20 @@ final class WorktreeDeskViewController: NSViewController {
     guard order.indices.contains(sender.tag) else { return }
     pinIfPreview(order[sender.tag])
     rebuildTabBar()
+  }
+
+  @objc private func suspendMachineFromMenu(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? UUID,
+      let pane = machineTabs.first(where: { $0.id == id })?.pane, pane.isRunning
+    else { return }
+    pane.stopMachine {}
+  }
+
+  @objc private func startMachineFromMenu(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? UUID,
+      let pane = machineTabs.first(where: { $0.id == id })?.pane, !pane.isRunning
+    else { return }
+    pane.start()
   }
 
   @objc private func saveMachineAsTemplate(_ sender: NSMenuItem) {

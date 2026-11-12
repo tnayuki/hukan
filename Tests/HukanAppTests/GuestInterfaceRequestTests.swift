@@ -27,7 +27,7 @@ final class GuestInterfaceRequestTests: XCTestCase {
   }
 
   func testOtherToolsDoNotBecomeInterfaceRequests() {
-    for name in ["guest_exec", "guest_screenshot", "vm_open", "browser_run", "unknown"] {
+    for name in ["guest_exec", "guest_screenshot", "vm_create", "browser_run", "unknown"] {
       XCTAssertNil(
         WorktreeDeskViewController.interfaceRequest(for: .init(name: name, arguments: [:])))
     }

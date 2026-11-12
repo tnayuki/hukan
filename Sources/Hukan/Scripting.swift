@@ -293,6 +293,10 @@ final class CompletionsCommand: NSScriptCommand {
 final class TabsCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {
     guard let controller = frontController() else { return fail("no window") }
+    if let index = argument("menu", as: Int.self) {
+      return controller.deskForScripting.tabMenuForScripting(place: index)
+        ?? fail("no tab \(index)")
+    }
     return controller.deskForScripting.tabStripReport
   }
 }

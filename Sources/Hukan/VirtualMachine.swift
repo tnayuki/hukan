@@ -702,8 +702,13 @@ final class MachinePaneViewController: NSViewController {
     }
   }
 
-  /// Stopped by the agent: saved like a suspend, and the tab says so and offers to start it.
+  /// Stopped by hand or by the agent: saved like a suspend, and the tab says so and offers to start
+  /// it. What it is for is the slot: macOS runs two macOS guests at once, and a machine saved here
+  /// gives its slot back without the copy being deleted.
   func stopMachine(completion: @escaping () -> Void) {
+    // Writing the memory out takes a while, and a tab still showing the guest reads as nothing
+    // having happened.
+    if isRunning { show(status: "Saving \(machineTitle)…") }
     suspendMachine { [weak self] in
       guard let self else { return completion() }
       self.show(stopped: "\(self.machineTitle) is stopped, saved where it was.")
@@ -828,7 +833,7 @@ final class MachinePaneViewController: NSViewController {
       GuestAgent.exec(["/bin/sh", "-c", grant], on: vm, admin: true) { _ in
         GuestAgent.exec(["/bin/sh", "-c", install], on: vm, admin: true) { _ in
           // A hello the old ones sent on their way out must not count as the new ones being up,
-          // which is what `.updating` ignoring them is for: it read as ready, `vm_open` answered
+          // which is what `.updating` ignoring them is for: it read as ready, `vm_start` answered
           // with nothing there to talk to, and a size put to a dying agent was never asked again.
           DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self, weak runner] in
             runner?.forgetAgents()

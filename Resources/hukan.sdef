@@ -371,6 +371,9 @@
 
         <command name="tabs" code="HuknTabs" hidden="yes" description="Report the selected worktree\'s tab strip, one line per tab, for automated checks">
             <cocoa class="TabsCommand"/>
+            <parameter name="menu" code="Tmnu" type="integer" optional="yes" description="report the right-click menu the tab at this place in the strip carries, a line each, a greyed item marked">
+                <cocoa key="menu"/>
+            </parameter>
             <result type="text"/>
         </command>
 

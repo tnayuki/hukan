@@ -428,8 +428,10 @@ session moves to another, the machine running or not. The machine is
 saved when hukan quits and resumes after a relaunch; closing its tab deletes it, after asking, and
 so does deleting its session — closing the repository keeps it for when it is opened again. Its
 right-click menu sets the resolution — following the tab, or held at a size the tab scales — and
-saves it as a new template, which can itself be the source of another. Saving shuts the guest
-down first with its screen left in the tab, so an app that stops to ask about unsaved work is
+suspends it: saved where it was and stopped, which frees one of the two macOS guests a Mac runs at
+once without deleting the copy. A stopped machine's menu offers Start in its place. The same menu
+saves it as a new template, which can itself be the source of another. Saving shuts the guest down
+first with its screen left in the tab, so an app that stops to ask about unsaved work is
 answered there.
 
 On a Mac with a JIS keyboard the guest types what the keys say — its symbols, and 英数 and かな

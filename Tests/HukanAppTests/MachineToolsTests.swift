@@ -6,7 +6,8 @@ import XCTest
 final class MachineToolsTests: XCTestCase {
   func testMachineToolSchemasRequireTheirInputs() throws {
     let required: [String: Set<String>] = [
-      "vm_open": [], "vm_list": [], "vm_stop": ["machine"], "vm_close": ["machine"],
+      "vm_create": [], "vm_start": ["machine"], "vm_list": [], "vm_suspend": ["machine"],
+      "vm_delete": ["machine"],
       "vm_save_template": ["machine", "name"], "vm_set_resolution": ["machine"],
       "guest_exec": ["machine", "command"], "guest_read_file": ["machine", "path"],
       "guest_write_file": ["machine", "path", "content"], "guest_screenshot": ["machine"],
@@ -22,7 +23,7 @@ final class MachineToolsTests: XCTestCase {
       let properties = try XCTUnwrap(tool.inputSchema["properties"] as? [String: Any])
       XCTAssertTrue(required[tool.name]!.isSubset(of: Set(properties.keys)))
       XCTAssertEqual(tool.inputSchema["additionalProperties"] as? Bool, false)
-      if ["vm_stop", "vm_close", "vm_save_template"].contains(tool.name) {
+      if ["vm_create", "vm_suspend", "vm_delete", "vm_save_template"].contains(tool.name) {
         XCTAssertTrue(tool.description.lowercased().contains("the user is asked"))
       }
     }
@@ -34,7 +35,7 @@ final class MachineToolsTests: XCTestCase {
     }
     let questions = [
       "Let the agent use “macOS”?", "Let the agent open a virtual machine from “macOS”?",
-      "Let the agent stop “macOS”?", "Let the agent delete “macOS”?",
+      "Let the agent suspend “macOS”?", "Let the agent delete “macOS”?",
       "Let the agent save “With tools” as a template?",
     ]
     for (index, question) in questions.enumerated() {

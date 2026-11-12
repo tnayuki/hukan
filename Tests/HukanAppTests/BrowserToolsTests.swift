@@ -126,7 +126,8 @@ final class BrowserToolsTests: XCTestCase {
       tools.map { $0["name"] as? String },
       [
         "set_tags", "browser_tabs", "browser_open", "browser_read", "browser_navigate",
-        "browser_screenshot", "browser_run", "vm_open", "vm_stop", "vm_close", "vm_list",
+        "browser_screenshot", "browser_run", "vm_create", "vm_start", "vm_suspend", "vm_delete",
+        "vm_list",
         "guest_exec",
         "guest_read_file", "guest_write_file", "vm_set_resolution", "guest_screenshot",
         "guest_list_windows",

@@ -181,7 +181,7 @@ final class GrantCard: LayerSurface {
     } else if grant.machine && grant.closing {
       question = "Let the agent delete \u{201C}\(grant.title)\u{201D}?"
     } else if grant.machine && grant.stopping {
-      question = "Let the agent stop \u{201C}\(grant.title)\u{201D}?"
+      question = "Let the agent suspend \u{201C}\(grant.title)\u{201D}?"
     } else if grant.machine && grant.opening {
       question = "Let the agent open a virtual machine from \u{201C}\(grant.title)\u{201D}?"
     } else if grant.machine {
@@ -212,7 +212,7 @@ final class GrantCard: LayerSurface {
     // A machine has one answer, not two: running a command in it is never only reading.
     if grant.machine {
       decline.title = "Don\u{2019}t Allow"
-      drive.title = grant.closing ? "Delete" : grant.stopping ? "Stop" : "Allow"
+      drive.title = grant.closing ? "Delete" : grant.stopping ? "Suspend" : "Allow"
       drive.hasDestructiveAction = grant.closing
       read.isHidden = true
     }

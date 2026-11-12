@@ -382,7 +382,10 @@ Workspace (one window)
   in on Virtualization.framework rather than driving UTM or tart: what the agent needs — a channel
   into the guest, a per-session copy, a saved state — is the part those tools do not hand over. A
   copy is an APFS clone of a template; closing its tab deletes it, after asking, and quitting saves
-  it. **Deleting its session deletes it too, and closing its repository does not**: a repository
+  it. **Suspend on the tab's right-click is the same save by hand**, Start in its place once the
+  machine is stopped, because macOS runs two macOS guests at once, across every app, and without it
+  the only way to free a slot was to delete a copy or quit. The agent's tools are the same verbs —
+  `vm_create`, `vm_start`, `vm_suspend`, `vm_delete` — and a session may hold several machines. **Deleting its session deletes it too, and closing its repository does not**: a repository
   reopened brings its sessions back to adopt their copies, while a deleted session never returns,
   so a copy it left would be found only in the Virtual Machines window. **Templates are made with
   nothing to answer**, SIP off through Recovery, because a permission prompt with nobody there is a
@@ -391,8 +394,8 @@ Workspace (one window)
   nothing in it is a preference. Images and session machines are excluded from Time Machine;
   templates are not.
   **The agent reaches the guest through an agent of hukan's, over vsock**, and tools named for
-  where they run: `vm_` acts on the machine from here, `guest_` runs inside it. Opening, first use,
-  stopping, saving a template and deleting are each a card. The guest agent is replaced at boot when it
+  where they run: `vm_` acts on the machine from here, `guest_` runs inside it. Creating, first use,
+  suspending, saving a template and deleting are each a card. The guest agent is replaced at boot when it
   differs from the one this build ships, so a change to it costs no template.
   **A guest's keyboard is ANSI whatever the Mac's is**, because Virtualization.framework offers
   no other: the type a guest records for a keyboard is not read for its virtual one, a USB one

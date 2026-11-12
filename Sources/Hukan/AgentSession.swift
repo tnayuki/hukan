@@ -1750,7 +1750,7 @@ final class AgentSession {
         : grant.closing
           ? "delete \(name)"
           : grant.stopping
-            ? "stop \(name)" : grant.opening ? "open a machine from \(name)" : "use \(name)"
+            ? "suspend \(name)" : grant.opening ? "open a machine from \(name)" : "use \(name)"
       append(
         Transcript.note(
           level == nil ? "→ declined to let the agent \(what)" : "→ let the agent \(what)"))

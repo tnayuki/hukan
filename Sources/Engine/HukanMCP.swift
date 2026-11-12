@@ -195,16 +195,17 @@ enum HukanMCP {
   /// is never only reading, so there is no read-only level to offer.
   static let machineTools: [Tool] = [
     Tool(
-      name: "vm_open",
+      name: "vm_create",
       description:
-        "Open a virtual machine on this session's desk in hukan and start it: a throwaway copy of "
-        + "a template, with the session's worktree mounted — as /Volumes/My Shared Files/worktree "
-        + "on macOS, as W:\\worktree on Windows — and the next one there when you change "
-        + "worktree. The user is asked first; once they allow it the machine is yours to "
-        + "use, and the call returns when its guest agent answers — a first boot takes a minute "
-        + "or two. A session has one machine: if it already has one, that one is started if it "
-        + "is stopped and returned. Without template, the only template there is is used; with "
-        + "several, the call lists them.",
+        "Make a new virtual machine on this session's desk in hukan and start it: a throwaway "
+        + "copy of a template, with the session's worktree mounted — as /Volumes/My Shared "
+        + "Files/worktree on macOS, as W:\\worktree on Windows — and the next one there when you "
+        + "change worktree. Each call makes another machine; to carry on with one you already "
+        + "have, vm_list it and vm_start it. The user is asked first; once they allow it the "
+        + "machine is yours to use, and the call returns when its guest agent answers — a first "
+        + "boot takes a minute or two. Without template, the only template there is is used; "
+        + "with several, the call lists them. A Mac runs two macOS machines at once, across "
+        + "every app; vm_suspend one to free its place.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -215,10 +216,11 @@ enum HukanMCP {
         "additionalProperties": false,
       ]),
     Tool(
-      name: "vm_stop",
+      name: "vm_start",
       description:
-        "Stop a virtual machine, saving it where it is: its tab and its disk stay, and vm_open "
-        + "starts it again from there. The user is asked first.",
+        "Start a machine on this session's desk that is not running — one that was suspended "
+        + "carries on where it was. The call returns when its guest agent answers. If the user "
+        + "has not let you use this machine yet, they are asked first.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -228,10 +230,24 @@ enum HukanMCP {
         "additionalProperties": false,
       ]),
     Tool(
-      name: "vm_close",
+      name: "vm_suspend",
       description:
-        "Close a virtual machine's tab and delete the machine, with everything done inside it. "
-        + "The user is asked first. The template is not touched.",
+        "Suspend a virtual machine: it is saved where it is and stopped, its tab and its disk "
+        + "stay, and vm_start carries on from there. A suspended macOS machine no longer counts "
+        + "against the two a Mac runs at once. The user is asked first.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "machine": ["type": "string", "description": "The machine id from vm_list"]
+        ],
+        "required": ["machine"],
+        "additionalProperties": false,
+      ]),
+    Tool(
+      name: "vm_delete",
+      description:
+        "Delete a virtual machine, with everything done inside it, and close its tab. The user "
+        + "is asked first. The template is not touched.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -450,7 +466,7 @@ enum HukanMCP {
     Tool(
       name: "vm_save_template",
       description:
-        "Save a virtual machine as a new template, for vm_open to copy later. The user is asked "
+        "Save a virtual machine as a new template, for vm_create to copy later. The user is asked "
         + "first. The machine shuts down, is copied and starts again, and the call returns once "
         + "its guest agent answers; anything running in it is lost, so finish first.",
       inputSchema: [
