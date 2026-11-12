@@ -16,7 +16,7 @@
 	<string>$(ICON_FILE)</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>hukan reaches the virtual machines it runs over this Mac's own network to finish setting them up.</string>	<key>CFBundleShortVersionString</key>
-	<string>3.2.0</string>
+	<string>3.2.1</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
