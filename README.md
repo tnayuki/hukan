@@ -426,7 +426,9 @@ with the session's worktree as `/Volumes/My Shared Files/worktree` — and the n
 session moves to another, the machine running or not. The machine is
 saved when hukan quits and resumes after a relaunch; closing its tab deletes it, after asking. Its
 right-click menu sets the resolution — following the tab, or held at a size the tab scales — and
-saves it as a new template, which can itself be the source of another.
+saves it as a new template, which can itself be the source of another. Saving shuts the guest
+down first with its screen left in the tab, so an app that stops to ask about unsaved work is
+answered there.
 
 On a Mac with a JIS keyboard the guest types what the keys say — its symbols, and 英数 and かな
 switching between ABC and Japanese input — though the guest itself only ever sees an ANSI

@@ -56,6 +56,16 @@ final class MachinePaneViewController: NSViewController {
   private(set) var runsOnQEMU = false
   private let screen = MachineScreenView()
   private let statusLabel = NSTextField(wrappingLabelWithString: "")
+  /// Turning while the status is something under way, so a wait reads as one and not as a tab that
+  /// has stopped answering. None of these has a fraction to give: an APFS clone is instant, and a
+  /// boot or a shutdown is over when the guest says so.
+  private let statusSpinner = NSProgressIndicator()
+  /// Laid over the guest's screen while it shuts down for a save, rather than in place of it: the
+  /// screen going dark is the progress, and an app stopping to ask whether to save is seen as it
+  /// asks — and answered there — instead of three minutes later behind a dark tab.
+  private let shutdownBanner = NSVisualEffectView()
+  private let shutdownLabel = NSTextField(labelWithString: "")
+  private let shutdownSpinner = NSProgressIndicator()
   private let actionButton = NSButton(title: "", target: nil, action: nil)
   private let statusStack = NSStackView()
 
@@ -284,8 +294,12 @@ final class MachinePaneViewController: NSViewController {
     actionButton.target = self
     actionButton.action = #selector(actionPressed)
     actionButton.isHidden = true
+    statusSpinner.style = .spinning
+    statusSpinner.controlSize = .small
+    statusSpinner.isDisplayedWhenStopped = false
     statusStack.orientation = .vertical
     statusStack.spacing = 12
+    statusStack.addArrangedSubview(statusSpinner)
     statusStack.addArrangedSubview(statusLabel)
     statusStack.addArrangedSubview(actionButton)
     statusStack.translatesAutoresizingMaskIntoConstraints = false
@@ -294,6 +308,32 @@ final class MachinePaneViewController: NSViewController {
       statusStack.centerXAnchor.constraint(equalTo: root.centerXAnchor),
       statusStack.centerYAnchor.constraint(equalTo: root.centerYAnchor),
       statusStack.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, constant: -40),
+    ])
+
+    shutdownSpinner.style = .spinning
+    shutdownSpinner.controlSize = .small
+    shutdownLabel.lineBreakMode = .byTruncatingTail
+    let shutdownStack = NSStackView(views: [shutdownSpinner, shutdownLabel])
+    shutdownStack.orientation = .horizontal
+    shutdownStack.spacing = 8
+    shutdownStack.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 14)
+    shutdownStack.translatesAutoresizingMaskIntoConstraints = false
+    shutdownBanner.material = .hudWindow
+    shutdownBanner.blendingMode = .withinWindow
+    shutdownBanner.state = .active
+    shutdownBanner.appearance = NSAppearance(named: .vibrantDark)
+    shutdownBanner.wantsLayer = true
+    shutdownBanner.layer?.cornerRadius = 8
+    shutdownBanner.layer?.masksToBounds = true
+    shutdownBanner.isHidden = true
+    shutdownBanner.translatesAutoresizingMaskIntoConstraints = false
+    shutdownBanner.addSubview(shutdownStack)
+    shutdownStack.pin(to: shutdownBanner)
+    root.addSubview(shutdownBanner)
+    NSLayoutConstraint.activate([
+      shutdownBanner.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+      shutdownBanner.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
+      shutdownBanner.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, constant: -40),
     ])
     view = root
   }
@@ -835,7 +875,7 @@ final class MachinePaneViewController: NSViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: shutDownOnceAnswering)
         return
       }
-      show(status: "Shutting \(machineTitle) down to save it…")
+      showShuttingDown()
       whenStopped = { [weak self] error in
         if let error {
           completion(.failure(error))
@@ -846,8 +886,8 @@ final class MachinePaneViewController: NSViewController {
       }
       GuestAgent.exec(["shutdown", "-h", "now"], on: vm, admin: true) { _ in }
       // A shutdown can stall — an app asking whether to save, a process that will not quit — and
-      // nothing then ever stops the machine, so the save waited for good behind a dark tab. It is
-      // given up on instead, with the guest's screen put back so whatever stopped it can be seen;
+      // nothing then ever stops the machine, so the save waited for good. It is given up on
+      // instead, leaving the guest's screen — which stayed up all along — showing what stopped it;
       // the machine is not pulled from under it, since a template copied from a machine cut off
       // mid-shutdown would carry that half-finished state into every copy made from it.
       DispatchQueue.main.asyncAfter(deadline: .now() + 180) { [weak self] in
@@ -858,7 +898,7 @@ final class MachinePaneViewController: NSViewController {
             MachineError(
               "\(self.machineTitle) did not shut down within three minutes. Something in it may"
                 + " be waiting for an answer; its screen is in the tab.")))
-        self.showScreen()
+        self.hideShuttingDown()
       }
     }
     shutDownOnceAnswering()
@@ -874,7 +914,7 @@ final class MachinePaneViewController: NSViewController {
       completion(.failure(MachineError("The machine could not be started.")))
       return
     }
-    show(status: "Shutting \(machineTitle) down to save it…")
+    showShuttingDown()
     whenStopped = { [weak self] error in
       if let error {
         completion(.failure(error))
@@ -889,7 +929,7 @@ final class MachinePaneViewController: NSViewController {
       guard tries > 0 else {
         whenStopped = nil
         completion(.failure(MachineError("Windows did not shut down.")))
-        showScreen()
+        hideShuttingDown()
         return
       }
       qemu.requestShutdown()
@@ -950,7 +990,9 @@ final class MachinePaneViewController: NSViewController {
   // MARK: What the tab shows
 
   private func showScreen() {
-    stateDescription = "running"
+    // A Windows machine resumed in order to be shut down reaches its screen with the banner
+    // already up, and it is still on its way to the save.
+    stateDescription = shutdownBanner.isHidden ? "running" : shutdownLabel.stringValue
     if qemu != nil { qemuScreen.isHidden = false } else { screen.isHidden = false }
     statusStack.isHidden = true
     onStateChange?()
@@ -960,11 +1002,30 @@ final class MachinePaneViewController: NSViewController {
     stateDescription = status
     screen.isHidden = true
     qemuScreen.isHidden = true
+    shutdownBanner.isHidden = true
+    shutdownSpinner.stopAnimation(nil)
     statusStack.isHidden = false
     statusLabel.stringValue = status
     statusLabel.textColor = .secondaryLabelColor
+    statusSpinner.startAnimation(nil)
     actionButton.isHidden = true
     onStateChange?()
+  }
+
+  /// The save's shutdown, said over the guest's screen rather than instead of it.
+  private func showShuttingDown() {
+    shutdownLabel.stringValue = "Shutting \(machineTitle) down to save it…"
+    shutdownBanner.isHidden = false
+    shutdownSpinner.startAnimation(nil)
+    stateDescription = shutdownLabel.stringValue
+    onStateChange?()
+  }
+
+  /// The shutdown given up on: the screen stays, the guest still running.
+  private func hideShuttingDown() {
+    shutdownBanner.isHidden = true
+    shutdownSpinner.stopAnimation(nil)
+    showScreen()
   }
 
   /// A restored tab, the first time it is looked at: resumed if the quit saved it running, and
@@ -979,6 +1040,7 @@ final class MachinePaneViewController: NSViewController {
   private func show(stopped: String) {
     isStopped = true
     show(status: stopped)
+    statusSpinner.stopAnimation(nil)
     stateDescription = "stopped"
     actionButton.title = "Start"
     actionButton.isHidden = false
@@ -988,6 +1050,9 @@ final class MachinePaneViewController: NSViewController {
     stateDescription = "failed: \(failure)"
     screen.isHidden = true
     qemuScreen.isHidden = true
+    shutdownBanner.isHidden = true
+    shutdownSpinner.stopAnimation(nil)
+    statusSpinner.stopAnimation(nil)
     statusStack.isHidden = false
     statusLabel.stringValue = failure
     statusLabel.textColor = .labelColor
