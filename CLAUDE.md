@@ -2211,7 +2211,12 @@ libgit2 does. The verbs
 that stand in
 for a human decision — `approve`/`deny` a pending tool call (`approve session X`) — are honoured
 only under `HUKAN_SCRIPTING_GUARDED=1`, since a session's own agent can reach `osascript` and would
-otherwise approve its own calls. The files panel has a hidden verb for the same reason the tabs
+otherwise approve its own calls. The verbs that steer a session — `send`, `stop`, `interrupt`,
+`restart`, `roll back`, and the outside client's `mcp call` — are refused to any process this hukan
+started, which is every agent and every terminal shell in it: a neighbour steered from there is the
+agent driving the app, and a send landing on a session waiting on a card throws the decision away.
+A script from anywhere else is the person's, and `send` takes the outside client's road — refused
+to a session waiting on you, and noted in the transcript as a script's. The files panel has a hidden verb for the same reason the tabs
 do — it is rows and not text, so `files` reports what the panel is showing and which of the two
 gestures put it there, and `filtering`/`searching` run them. `files menu "<path>"` reads back the
 right-click menu that row would carry, a line each, and `files previewing "<path>"` is Space on

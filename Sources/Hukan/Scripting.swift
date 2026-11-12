@@ -56,6 +56,44 @@ extension NSScriptCommand {
     scriptErrorString = message
     return nil
   }
+
+  /// The process that sent the event this command is running for. Read while the event is still
+  /// the current one — it is not once execution is suspended.
+  var senderPID: pid_t? {
+    NSAppleEventManager.shared().currentAppleEvent?
+      .attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value
+  }
+
+  /// Refuse a verb that steers a session when the event came from inside this app — a session's
+  /// agent, or a shell in one of its terminals, both being processes hukan started. Steering a
+  /// neighbour is the agent driving the app: a message it sends is a prompt nobody typed, and a
+  /// send, stop or interrupt landing on a session that is waiting on the person throws their
+  /// decision away. A script run from anywhere else is the person's, and is let through; so is
+  /// everything under `HUKAN_SCRIPTING_GUARDED`, the harness that drives a window on purpose.
+  func refusedFromInside() -> Bool {
+    guard !guardedScriptingEnabled(), let sender = senderPID,
+      isDescendant(sender, of: ProcessInfo.processInfo.processIdentifier)
+    else { return false }
+    fail("sessions cannot be steered from a process this hukan started")
+    return true
+  }
+}
+
+/// Whether `pid` is `ancestor` or one of its descendants, walking parents through the kernel.
+func isDescendant(_ pid: pid_t, of ancestor: pid_t) -> Bool {
+  var current = pid
+  for _ in 0..<64 {
+    if current == ancestor { return true }
+    guard current > 1 else { return false }
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, current]
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.stride
+    guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0, size > 0 else {
+      return false
+    }
+    current = info.kp_eproc.e_ppid
+  }
+  return false
 }
 
 /// A handful of verbs stand in for a decision the human is meant to make: an approval keeps a human
@@ -81,12 +119,17 @@ final class SendCommand: NSScriptCommand {
     guard let text = directParameter as? String else { return fail("a message is required") }
     guard let proxy = argument("toSession", as: SDSession.self), let session = proxy.agentSession
     else { return fail("no such session") }
-    // Reattach a detached session before sending — the one addressed, not the selected one.
-    proxy.controller?.reattachIfNeeded(session)
-    if session.heldByPID != nil { return fail("session is held by another process") }
-    guard session.isRunning else { return fail("session is not running") }
-    session.send(text)
-    return "ok"
+    if refusedFromInside() { return nil }
+    // The outside client's road, so the two cannot disagree: a session waiting on the person is
+    // refused, and the transcript says where the message came from.
+    let client = senderPID.flatMap(ExternalMCP.client(sending:))
+    switch ExternalMCP.send(
+      text, to: session, from: client.map { "a script in \($0)" } ?? "a script",
+      reattaching: proxy.controller?.reattachIfNeeded)
+    {
+    case .error(let message): return fail(message)
+    default: return "ok"
+    }
   }
 }
 
@@ -97,6 +140,7 @@ final class RestartCommand: NSScriptCommand {
     // conversation); a bare `restart` — no session — relaunches the whole app, the dev-loop verb.
     if let proxy = argument("onSession", as: SDSession.self) {
       guard let session = proxy.agentSession else { return fail("no such session") }
+      if refusedFromInside() { return nil }
       if session.heldByPID != nil { return fail("session is held by another process") }
       proxy.controller?.reattachIfNeeded(session)
       session.restart()
