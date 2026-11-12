@@ -890,7 +890,7 @@ final class QEMUMachine: GuestLink {
     ]
   }
 
-  /// The worktree the guest sees as `W:\worktree`, set before `start` and moved with `share`.
+  /// The worktree the guest sees as `W:\`, set before `start` and moved with `share`.
   var sharedDirectory: URL?
   /// Whether the guest has a share to map: samba was there when the machine started.
   private(set) var sharesWorktree = false
@@ -901,9 +901,12 @@ final class QEMUMachine: GuestLink {
 
   /// The share, spoken to the way QEMU's own `smb=` does it — a server started for each
   /// connection the guest makes to 10.0.2.4, on stdin and stdout, so nothing listens on this Mac
-  /// — but with a configuration of hukan's. What it shares is a directory holding one link to
-  /// the worktree, which is what lets the worktree change under a running guest: the link is
-  /// repointed and the next file opened through it is in the new one.
+  /// — but with a configuration of hukan's. What it shares is a link to the worktree, so a move
+  /// is the link repointed; samba resolves it at each connection, so the move also ends the ones
+  /// open, once nothing is open through them (`dropShareConnections`). The link is the share's root rather than an entry inside one,
+  /// because samba's wide links are all or nothing: let out for one link at the top, they let out
+  /// every link in the worktree too, and a repository carrying `host -> /` handed the guest the
+  /// whole of this Mac as the user hukan runs as.
   private let temporaryDirectory: URL
   private let sambaExecutable: String
 
@@ -920,11 +923,12 @@ final class QEMUMachine: GuestLink {
     }
     let root = shareRoot
     let state = root.appendingPathComponent("state")
-    let shared = root.appendingPathComponent("share")
     let manager = FileManager.default
     try? manager.createDirectory(at: state, withIntermediateDirectories: true)
-    try? manager.createDirectory(at: shared, withIntermediateDirectories: true)
+    // Where the link stood before it was the root; removing it removes the link, not the worktree.
+    try? manager.removeItem(at: root.appendingPathComponent("share"))
     let conf = root.appendingPathComponent("smb.conf")
+    let link = root.appendingPathComponent("worktree")
     let lines = [
       "[global]",
       "private dir=\(state.path)", "pid directory=\(state.path)", "lock directory=\(state.path)",
@@ -935,11 +939,11 @@ final class QEMUMachine: GuestLink {
       "security = user", "map to guest = Bad User",
       "load printers = no", "printing = bsd", "disable spoolss = yes",
       "usershare max shares = 0",
-      // The link leads out of the share, which samba refuses unless told it may.
-      "unix extensions = no", "allow insecure wide links = yes",
+      "unix extensions = no",
       "[hukan]",
-      "path=\(shared.path)", "read only=no", "guest ok=yes", "force user=\(NSUserName())",
-      "follow symlinks = yes", "wide links = yes",
+      "path=\(link.path)", "read only=no", "guest ok=yes", "force user=\(NSUserName())",
+      // A link inside the worktree is followed while it stays inside it, and refused past it.
+      "follow symlinks = yes", "wide links = no",
       "",
     ]
     guard
@@ -952,10 +956,10 @@ final class QEMUMachine: GuestLink {
 
   /// Point the share at another worktree, the running guest included.
   func share(_ directory: URL?) {
+    let moved = directory != sharedDirectory
     sharedDirectory = directory
     guard let directory else { return }
-    let link = shareRoot.appendingPathComponent("share/worktree")
-    // Made outside the share, so the guest never sees it half-way.
+    let link = shareRoot.appendingPathComponent("worktree")
     let staged = shareRoot.appendingPathComponent("worktree-next")
     try? FileManager.default.removeItem(at: staged)
     // Made beside it and renamed over it, so the guest never finds no link at all.
@@ -964,6 +968,81 @@ final class QEMUMachine: GuestLink {
         != nil
     else { return }
     _ = rename(staged.path, link.path)
+    if moved { dropShareConnections() }
+  }
+
+  /// The worktree the guest's open connections were made on, which a move leaves behind until
+  /// they are ended.
+  private var connectedDirectory: URL?
+  private var dropGeneration = 0
+
+  /// A connection holds the worktree it was opened on — samba resolves the share's path once, at
+  /// the tree connect, and opens everything after relative to it — so a guest already connected
+  /// is cut off and reconnects onto the new one, which Windows does by itself on the next access.
+  /// Not while it has a file open there, though: ending a connection under a write leaves the
+  /// file half-written and loses what the client was still holding, so the cut waits for the
+  /// first moment nothing is open, and until then the guest goes on seeing the worktree it had.
+  /// Each connection is a samba of its own that QEMU started, so these are this machine's sambas
+  /// and nobody else's.
+  private func dropShareConnections() {
+    dropGeneration += 1
+    let generation = dropGeneration
+    guard let qemu = process?.processIdentifier, let connected = connectedDirectory else { return }
+    guard connected != sharedDirectory else { return }
+    let sambas = Self.processes(running: sambaExecutable, under: qemu)
+    if sambas.contains(where: { Self.hasFileOpen($0, under: connected) }) {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+        guard let self, self.dropGeneration == generation else { return }
+        self.dropShareConnections()
+      }
+      return
+    }
+    for pid in sambas { kill(pid, SIGTERM) }
+    connectedDirectory = sharedDirectory
+  }
+
+  /// Whether `pid` holds a file open inside `directory` — a regular file, since samba holds the
+  /// share's root open as a directory for as long as the connection lasts.
+  static func hasFileOpen(_ pid: pid_t, under directory: URL) -> Bool {
+    // realpath, not `resolvingSymlinksInPath`, which hands back `/var` for the kernel's
+    // `/private/var` and so never matched a file under the temporary directory.
+    guard let resolved = realpath(directory.path, nil) else { return false }
+    let root = String(cString: resolved) + "/"
+    free(resolved)
+    let stride = MemoryLayout<proc_fdinfo>.stride
+    let size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+    guard size > 0 else { return false }
+    var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(size) / stride + 8)
+    let listed = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, Int32(fds.count * stride))
+    return fds.prefix(Int(max(listed, 0)) / stride).contains { fd in
+      guard fd.proc_fdtype == UInt32(PROX_FDTYPE_VNODE) else { return false }
+      var info = vnode_fdinfowithpath()
+      let infoSize = Int32(MemoryLayout<vnode_fdinfowithpath>.stride)
+      guard
+        proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDVNODEPATHINFO, &info, infoSize) == infoSize,
+        (info.pvip.vip_vi.vi_stat.vst_mode & S_IFMT) == S_IFREG
+      else { return false }
+      let path = withUnsafeBytes(of: info.pvip.vip_path) {
+        String(cString: $0.bindMemory(to: CChar.self).baseAddress!)
+      }
+      return path.hasPrefix(root)
+    }
+  }
+
+  /// The processes descended from `parent` that are running `executable`.
+  static func processes(running executable: String, under parent: pid_t) -> [pid_t] {
+    guard let resolved = realpath(executable, nil) else { return [] }
+    let target = String(cString: resolved)
+    free(resolved)
+    let count = proc_listallpids(nil, 0)
+    guard count > 0 else { return [] }
+    var pids = [pid_t](repeating: 0, count: Int(count) + 16)
+    let listed = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.stride))
+    var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))  // PROC_PIDPATHINFO_MAXSIZE
+    return pids.prefix(Int(max(listed, 0))).filter { pid in
+      pid > 1 && pid != parent && proc_pidpath(pid, &path, UInt32(path.count)) > 0
+        && String(cString: path) == target && isDescendant(pid, of: parent)
+    }
   }
 
   func start() throws {
@@ -984,6 +1063,7 @@ final class QEMUMachine: GuestLink {
     process.executableURL = URL(fileURLWithPath: WindowsTemplateBuilder.qemu)
     let smb = prepareShare()
     sharesWorktree = smb != nil
+    connectedDirectory = sharedDirectory
     let resuming = FileManager.default.fileExists(atPath: machine.stateURL.path)
     resumedFromSave = resuming
     process.arguments = arguments(resuming: resuming, smb: smb)

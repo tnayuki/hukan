@@ -485,8 +485,7 @@ final class MachinePaneViewController: NSViewController {
     }
   }
 
-  /// The share as `W:`, the worktree at `W:\worktree` as it is under `/Volumes/My Shared Files` on
-  /// macOS, for the user the agent's commands run as. Windows 11 turns away a share
+  /// The share as `W:`, which is the worktree itself, for the user the agent's commands run as. Windows 11 turns away a share
   /// that takes guests and does not sign, which is what one only the guest can reach is, so the
   /// client is told to accept it first.
   private var shareMapped = false

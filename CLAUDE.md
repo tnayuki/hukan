@@ -424,7 +424,14 @@ Workspace (one window)
   the price is one automatic restart the first time they differ. **The worktree is shared over
   SMB, by a Samba the cask depends on and started for each connection the guest makes**, the way
   QEMU's own `smb=` does it, so nothing listens on this Mac; the configuration is hukan's, and what it shares is one link to the
-  worktree, which is what lets a session's move reach a running guest — the link is repointed.
+  worktree, which is what lets a session's move reach a running guest — the link is repointed, and
+  the guest's connections are ended so it reconnects onto the new one, samba having resolved the
+  link once per connection — but only once nothing is open through them, since a connection cut
+  under a write leaves the file half-written, so until then the guest goes on seeing the old one. **The link is the share's root, so the worktree is `W:\` and not a
+  folder in it**: samba's wide links are all or nothing, and let out for a link at the top they
+  let out every link in the worktree too — a repository carrying `host -> /` was this whole Mac to
+  the guest. With the link as the root none are needed, and a link inside the worktree is followed
+  only while it stays inside it.
   SPICE's WebDAV, UTM's road, needs a SPICE client and a QEMU built with it, which Homebrew's is
   not; virtiofs needs a daemon that runs only on Linux, and Windows has no 9p client.
 - **A client outside hukan reaches the sessions over stdio, from the executable the bundle

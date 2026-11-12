@@ -38,14 +38,16 @@ final class WindowsShareTests: XCTestCase {
     let config = try String(contentsOf: root.appendingPathComponent("smb.conf"), encoding: .utf8)
     let lines = config.components(separatedBy: "\n")
     for line in [
-      "path=\(root.path)/share", "interfaces=127.0.0.1", "bind interfaces only=yes",
-      "unix extensions = no", "allow insecure wide links = yes", "follow symlinks = yes",
-      "wide links = yes", "read only=no", "guest ok=yes", "force user=\(NSUserName())",
+      "path=\(root.path)/worktree", "interfaces=127.0.0.1", "bind interfaces only=yes",
+      "unix extensions = no", "follow symlinks = yes", "wide links = no", "read only=no",
+      "guest ok=yes", "force user=\(NSUserName())",
     ] {
       XCTAssertTrue(lines.contains(line), line)
     }
-    let share = root.appendingPathComponent("share")
-    let link = share.appendingPathComponent("worktree")
+    // A wide link anywhere lets every link in the worktree out of it.
+    XCTAssertFalse(config.contains("allow insecure wide links"))
+    XCTAssertFalse(lines.contains("wide links = yes"))
+    let link = root.appendingPathComponent("worktree")
     for target in [first, second, first] {
       qemu.share(target)
       XCTAssertEqual(
@@ -53,10 +55,41 @@ final class WindowsShareTests: XCTestCase {
       XCTAssertEqual(
         try String(contentsOf: link.appendingPathComponent("marker"), encoding: .utf8),
         target.lastPathComponent)
-      XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: share.path), ["worktree"])
       XCTAssertFalse(
         FileManager.default.fileExists(atPath: root.appendingPathComponent("worktree-next").path))
     }
+  }
+
+  /// A move ends this machine's sambas: the processes under QEMU running the samba binary, and
+  /// nothing else on the machine.
+  func testTheProcessesEndedOnAMoveAreThoseUnderTheMachine() throws {
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    child.arguments = ["5"]
+    try child.run()
+    defer { child.terminate() }
+    let me = ProcessInfo.processInfo.processIdentifier
+    XCTAssertEqual(
+      QEMUMachine.processes(running: "/bin/sleep", under: me), [child.processIdentifier])
+    XCTAssertEqual(QEMUMachine.processes(running: "/bin/cat", under: me), [])
+    XCTAssertEqual(QEMUMachine.processes(running: "/bin/sleep", under: child.processIdentifier), [])
+  }
+
+  /// A move waits while samba has a file open in the worktree it is leaving — a regular file, not
+  /// the directory it holds for as long as it is connected.
+  func testAnOpenFileIsSeenAndADirectoryIsNot() throws {
+    let file = directory.appendingPathComponent("open.txt")
+    try Data("x".utf8).write(to: file)
+    let me = ProcessInfo.processInfo.processIdentifier
+    let held = open(directory.path, O_RDONLY)
+    defer { close(held) }
+    XCTAssertFalse(QEMUMachine.hasFileOpen(me, under: directory))
+    let handle = try FileHandle(forReadingFrom: file)
+    XCTAssertTrue(QEMUMachine.hasFileOpen(me, under: directory))
+    XCTAssertFalse(
+      QEMUMachine.hasFileOpen(me, under: directory.appendingPathComponent("elsewhere")))
+    try handle.close()
+    XCTAssertFalse(QEMUMachine.hasFileOpen(me, under: directory))
   }
 
   func testMissingSambaOrWorktreeDoesNotPrepareShare() {

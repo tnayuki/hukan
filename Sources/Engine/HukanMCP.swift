@@ -199,7 +199,7 @@ enum HukanMCP {
       description:
         "Make a new virtual machine on this session's desk in hukan and start it: a throwaway "
         + "copy of a template, with the session's worktree mounted — as /Volumes/My Shared "
-        + "Files/worktree on macOS, as W:\\worktree on Windows — and the next one there when you "
+        + "Files/worktree on macOS, as W:\\ on Windows — and the next one there when you "
         + "change worktree. Each call makes another machine; to carry on with one you already "
         + "have, vm_list it and vm_start it. The user is asked first; once they allow it the "
         + "machine is yours to use, and the call returns when its guest agent answers — a first "
@@ -262,7 +262,7 @@ enum HukanMCP {
         "List the virtual machines open on this session's desk in hukan: each one's id, the "
         + "template it was copied from, whether it is running, and whether the user has let you "
         + "use it. Each is the session's own throwaway machine, with the session's worktree "
-        + "mounted as /Volumes/My Shared Files/worktree on macOS and as W:\\worktree on Windows.",
+        + "mounted as /Volumes/My Shared Files/worktree on macOS and as W:\\ on Windows.",
       inputSchema: ["type": "object", "properties": [String: Any](), "additionalProperties": false]
     ),
     Tool(
