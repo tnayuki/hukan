@@ -2165,9 +2165,22 @@ final class WorktreeDeskViewController: NSViewController {
   /// disk. Across every desk, not only the one showing — the alert names the file, and the tab is
   /// selected first when it is on the desk in front of you, so a Cancel lands on it.
   func confirmClosingWindow() -> Bool {
+    confirmClosingFileTabs { _, _ in true }
+  }
+
+  /// The same questions, asked only of what is about to go without its tabs being closed one by
+  /// one: a deleted session's desk, or a closing repository's — every desk of the sessions in it,
+  /// and any other desk's tab on one of its worktrees. Both used to drop the edit unasked.
+  func confirmClosing(desks: Set<UUID>, worktrees: Set<UUID> = []) -> Bool {
+    confirmClosingFileTabs { deskID, worktreeID in
+      desks.contains(deskID) || worktrees.contains(worktreeID)
+    }
+  }
+
+  private func confirmClosingFileTabs(where closing: (UUID, UUID) -> Bool) -> Bool {
     let previous = surface
     for (deskID, tabs) in fileTabsByDesk {
-      for tab in tabs where tab.content.hasUnsavedEdit {
+      for tab in tabs where tab.content.hasUnsavedEdit && closing(deskID, tab.worktreeID) {
         if deskID == self.deskID {
           surface = .file(tab.id)
           rebuildTabBar()

@@ -488,7 +488,11 @@ Workspace (one window)
   draws — so without the prompt a quit dropped the edit silently and put the tab back on the file
   as it stood on disk, which is the worst of the three available answers. The alternative was hot
   exit, VS Code's and Zed's: carry the unsaved text across too. Refused for the copy it costs,
-  not for the convenience it buys.
+  not for the convenience it buys. **Deleting a session and closing a repository ask the same**,
+  for the tabs that go with them — the deleted session's desk; every desk of the repository's
+  sessions, and any other desk's tab on one of its worktrees — since both take those tabs without
+  closing them one by one, and both dropped the edit unasked. A Cancel keeps the session or the
+  repository.
 - **A terminal's tab is named the way Terminal.app names one** — the command holding the pty
   while something is running, the working directory's last component when nothing is. The path
   relative to the worktree is the alternative, and the one thing it buys — two tabs in one

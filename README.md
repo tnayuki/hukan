@@ -233,7 +233,8 @@ dozen tabs costs the one on screen. A tab whose file, worktree or session is gon
 come back. A window saved by a version that kept a desk per worktree hands each worktree's tabs to
 the session instructed there last; a worktree no session stood in keeps only its web tabs, which
 go to the repository's latest session. Unsaved edits are not carried across: closing the window, and quitting, ask about each one
-first — Save, Don't Save or Cancel — the way closing a tab does.
+first — Save, Don't Save or Cancel — the way closing a tab does; so do deleting a session and
+closing a repository, for the tabs that go with them.
 
 A web tab's field is an address bar and a search box at once, and the text decides which: a
 scheme, a slash or a dot makes it an address, anything else is a search. A load that fails says

@@ -306,7 +306,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       self?.adoptRepository(id, from: source, at: destination) ?? false
     }
     rail.onCloseRepository = { [weak self] repositoryID in
-      guard let self else { return }
+      guard let self, self.confirmClosingEdits(inRepository: repositoryID) else { return }
       self.workspace.closeRepository(repositoryID)
       self.reload()
     }
@@ -331,7 +331,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     rail.onOpenTag = { [weak self] url, session in self?.openTag(url, of: session) }
     rail.onDeleteSession = { [weak self] session in
-      guard let self, self.workspace.deleteSession(session) else { return }
+      // The desk goes with the session, so an unsaved edit on it is asked about first; a Cancel
+      // keeps the session.
+      guard let self, self.files.desk.confirmClosing(desks: [session.id]),
+        self.workspace.deleteSession(session)
+      else { return }
       self.files.desk.deleteMachines(ofSession: session.id)
       self.reload()
     }
@@ -2135,6 +2139,14 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     reload()
   }
 
+  /// The unsaved edits a closing repository would take with it: on the desks of its sessions, and
+  /// on any other desk's tab showing one of its worktrees' files. False on a Cancel.
+  private func confirmClosingEdits(inRepository repositoryID: String) -> Bool {
+    let worktrees = workspace.worktrees.filter { $0.repositoryID == repositoryID }
+    let desks = worktrees.flatMap { workspace.sessions(inWorktree: $0.id) }.map(\.id)
+    return files.desk.confirmClosing(desks: Set(desks), worktrees: Set(worktrees.map(\.id)))
+  }
+
   /// Closing is per repository, never per worktree. Worktrees are enumerated from git, so
   /// hiding one individually would leave a state git disagrees with; they come and go with
   /// the repository, or with landing the work.
@@ -2160,6 +2172,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       alert.addButton(withTitle: "Cancel")
       guard alert.runModal() == .alertFirstButtonReturn else { return }
     }
+    guard confirmClosingEdits(inRepository: repository) else { return }
 
     workspace.closeRepository(repository)
     reload()
