@@ -12,7 +12,14 @@
 //   {"id":3,"op":"read","path":...}          -> {"id":3,"ok":true,"data":"<b64>"}
 //   {"id":4,"op":"write","path":...,"data":"<b64>"}  -> {"id":4,"ok":true}
 //   {"id":5,"op":"display","width":1920,"height":1080}  -> {"id":5,"ok":true,"mode":"1920x1080"}
-// A failure is {"id":n,"ok":false,"error":"..."}. Unasked, every fifteen seconds: {"hello":"user"}.
+//   {"id":6,"op":"await_exit","pid":1234}   -> {"id":6,"ok":true}, once that agent process has ended
+// A failure is {"id":n,"ok":false,"error":"..."}. Unasked, every fifteen seconds:
+// {"hello":"user","pid":1234}.
+//
+// The pid is there because the host cannot see the other end of a port close: the guest's driver
+// never tells QEMU, so a user half that ended with its logon still reads as connected. The root
+// half, which outlives every logon, is asked to wait on the user half's process instead, and the
+// host learns it has gone the moment Windows says so.
 
 using System;
 using System.Collections.Generic;
@@ -184,7 +191,15 @@ namespace HukanGuestAgent
             }
         }
 
-        void Hello() { Send(new Dictionary<string, object> { ["hello"] = mode, ["version"] = Program.Version }); }
+        void Hello()
+        {
+            Send(new Dictionary<string, object>
+            {
+                ["hello"] = mode,
+                ["version"] = Program.Version,
+                ["pid"] = Process.GetCurrentProcess().Id,
+            });
+        }
 
         void Send(Dictionary<string, object> message)
         {
@@ -250,6 +265,8 @@ namespace HukanGuestAgent
                     Directory.CreateDirectory(Path.GetDirectoryName(path));
                     File.WriteAllBytes(path, Convert.FromBase64String(Text(request, "data")));
                     return new Dictionary<string, object> { ["ok"] = true };
+                case "await_exit":
+                    return AwaitExit(Convert.ToInt32(request["pid"]));
                 case "display":
                     return Display.Set(Convert.ToInt32(request["width"]), Convert.ToInt32(request["height"]));
                 case "windows":
@@ -281,6 +298,25 @@ namespace HukanGuestAgent
                 default:
                     return Failure("unknown op");
             }
+        }
+
+        /// Answers once the agent process with this pid has ended — at once if it already has, or if
+        /// the pid now belongs to something else, which is the same agent having ended.
+        static Dictionary<string, object> AwaitExit(int pid)
+        {
+            Process process;
+            try { process = Process.GetProcessById(pid); }
+            catch (ArgumentException) { return new Dictionary<string, object> { ["ok"] = true }; }
+            using (process)
+            {
+                try
+                {
+                    if (string.Equals(process.ProcessName, "hukan-guest-agent", StringComparison.OrdinalIgnoreCase))
+                        process.WaitForExit();
+                }
+                catch (InvalidOperationException) { }
+            }
+            return new Dictionary<string, object> { ["ok"] = true };
         }
 
         static Dictionary<string, object> Execute(Dictionary<string, object> request)

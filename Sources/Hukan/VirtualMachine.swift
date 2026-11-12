@@ -106,7 +106,8 @@ final class MachinePaneViewController: NSViewController {
   /// replaced is a port about to go away, and dialling one has crashed Virtualization.framework.
   var agentsHeard: Set<String> {
     if let qemu {
-      return keyboardSettled && (shareMapped || !qemu.sharesWorktree) ? qemu.agentsHeard : []
+      let shared = sharedForArrival == qemu.userArrivals || !qemu.sharesWorktree
+      return keyboardSettled && shared ? qemu.agentsHeard : []
     }
     return agentUpdate == .ready ? runner?.agentsHeard ?? [] : []
   }
@@ -398,6 +399,8 @@ final class MachinePaneViewController: NSViewController {
     self.qemu = qemu
     keyboardSettled = false
     keyboardBusy = false
+    sharedForArrival = nil
+    mappingArrival = nil
     clockSet = false
     agentChecked = false
     resolutionRestored = false
@@ -411,8 +414,7 @@ final class MachinePaneViewController: NSViewController {
         self.resolutionRestored = true
         try? self.applyResolution()
       }
-      // Every boot, since a restart for the keyboard loses the mapping; a resumed one still has it.
-      if qemu.agentsHeard.isSuperset(of: ["user", "root"]) { self.mapShare(on: qemu) }
+      self.mapShare(on: qemu)
       guard half == "root" else { return }
       self.setClock(on: qemu)
       self.settleKeyboard(on: qemu)
@@ -485,14 +487,20 @@ final class MachinePaneViewController: NSViewController {
     }
   }
 
+  /// The user half the share was last mapped for, and the one it is being mapped for now.
+  private var sharedForArrival: Int?
+  private var mappingArrival: Int?
+
   /// The share as `W:`, which is the worktree itself, for the user the agent's commands run as. Windows 11 turns away a share
   /// that takes guests and does not sign, which is what one only the guest can reach is, so the
-  /// client is told to accept it first.
-  private var shareMapped = false
-
+  /// client is told to accept it first. A drive letter belongs to a logon, so this runs once for
+  /// each user half that arrives — a new logon, or a restarted agent — and not on every hello.
   private func mapShare(on qemu: QEMUMachine) {
-    guard qemu.sharesWorktree else { return }
-    shareMapped = false
+    let arrival = qemu.userArrivals
+    guard qemu.sharesWorktree, qemu.agentsHeard.isSuperset(of: ["user", "root"]),
+      mappingArrival != arrival
+    else { return }
+    mappingArrival = arrival
     GuestAgent.exec(
       [
         "powershell.exe", "-NoProfile", "-Command",
@@ -508,7 +516,10 @@ final class MachinePaneViewController: NSViewController {
       ) { [weak self] _ in
         // Mapped or not, the machine is handed over: a share that would not map is no reason to
         // keep the rest of it from the agent.
-        DispatchQueue.main.async { self?.shareMapped = true }
+        DispatchQueue.main.async {
+          guard let self, self.mappingArrival == arrival else { return }
+          self.sharedForArrival = arrival
+        }
       }
     }
   }

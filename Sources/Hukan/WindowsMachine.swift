@@ -657,8 +657,8 @@ final class QEMUGuestChannel {
 
   /// Whether the half has said hello on this connection. Main thread.
   private(set) var isHeard = false
-  /// Told on the main thread each time the agent says hello.
-  var onHello: (() -> Void)?
+  /// Told on the main thread each time the agent says hello, with the guest pid it names.
+  var onHello: ((Int?) -> Void)?
 
   init(socket path: String, half: String) {
     self.path = path
@@ -737,6 +737,22 @@ final class QEMUGuestChannel {
     if let completion { DispatchQueue.main.async { completion(result) } }
   }
 
+  /// The agent at the other end has ended while the port stays connected — which the guest's
+  /// driver never reports, so it is learnt from the other half. What was waiting on it fails now
+  /// rather than never, and the half is not heard until a new agent says hello. Main thread.
+  func abandon() {
+    isHeard = false
+    lock.lock()
+    let pending = waiting
+    waiting = [:]
+    lock.unlock()
+    for completion in pending.values {
+      DispatchQueue.main.async {
+        completion(.failure(MachineError("The guest agent went away.")))
+      }
+    }
+  }
+
   private func finishWaiting() {
     lock.lock()
     let pending = waiting
@@ -793,9 +809,10 @@ final class QEMUGuestChannel {
       return
     }
     if object["hello"] != nil {
+      let process = (object["pid"] as? NSNumber)?.intValue
       DispatchQueue.main.async { [self] in
         isHeard = true
-        onHello?()
+        onHello?(process)
       }
       return
     }
@@ -826,6 +843,14 @@ final class QEMUMachine: GuestLink {
 
   /// Which halves of the guest agent are there to be spoken to.
   var agentsHeard: Set<String> { Set(channels.filter { $0.value.isHeard }.keys) }
+
+  /// How many user halves have arrived on this run: each is a new process, so a new logon or a
+  /// restarted agent, and a drive mapped for the one before is not there for it.
+  private(set) var userArrivals = 0
+  /// The user half's guest pid, from its hello; nil for an agent too old to say.
+  private var userProcess: Int?
+  private var userPresent = false
+  private var watchingUser = false
 
   func guestRequest(
     _ body: [String: Any], admin: Bool,
@@ -859,9 +884,41 @@ final class QEMUMachine: GuestLink {
   private func startChannels() {
     for (half, socket) in agentSockets {
       let channel = QEMUGuestChannel(socket: socket, half: half)
-      channel.onHello = { [weak self] in self?.onAgentHello?(half) }
-      channels[half] = channel
+      adopt(channel, as: half)
       channel.start()
+    }
+  }
+
+  // Internal so tests can hand in channels over socketpairs instead of QEMU's sockets.
+  func adopt(_ channel: QEMUGuestChannel, as half: String) {
+    channel.onHello = { [weak self] process in self?.heard(half, process: process) }
+    channels[half] = channel
+  }
+
+  private func heard(_ half: String, process: Int?) {
+    if half == "user", !userPresent || process != userProcess {
+      userPresent = true
+      userProcess = process
+      userArrivals += 1
+      watchingUser = false
+    }
+    watchUser()
+    onAgentHello?(half)
+  }
+
+  /// Asks the root half to answer when the user half's process ends. A failure is the root half
+  /// going away, and its next hello asks again.
+  private func watchUser() {
+    guard !watchingUser, userPresent, let process = userProcess,
+      let root = channels["root"], root.isHeard
+    else { return }
+    watchingUser = true
+    root.send(["op": "await_exit", "pid": process]) { [weak self] result in
+      guard let self, self.userPresent, self.userProcess == process else { return }
+      self.watchingUser = false
+      guard case .success = result else { return }
+      self.userPresent = false
+      self.channels["user"]?.abandon()
     }
   }
 

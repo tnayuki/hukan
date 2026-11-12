@@ -33,7 +33,7 @@ final class QEMUGuestChannelTests: XCTestCase {
     let first = expectation(description: "first reply")
     let second = expectation(description: "second reply")
     let hello = expectation(description: "hello")
-    channel.onHello = { hello.fulfill() }
+    channel.onHello = { _ in hello.fulfill() }
     channel.send(["op": "first"]) { result in
       XCTAssertEqual(try? result.get()["value"] as? String, "first")
       first.fulfill()
@@ -101,5 +101,72 @@ final class QEMUGuestChannelTests: XCTestCase {
       finished.fulfill()
     }
     wait(for: [failed, finished], timeout: 3)
+  }
+
+  func testAUserHalfThatEndsIsDroppedOnTheRootHalfsWordAndANewOneArrives() throws {
+    let qemu = QEMUMachine(machine: QEMUMachineTests.machine(at: URL(fileURLWithPath: "/unused")))
+    var guests: [String: Int32] = [:]
+    var readers: [XCTestExpectation] = []
+    for half in ["user", "root"] {
+      var sockets: [Int32] = [0, 0]
+      XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets), 0)
+      var timeout = timeval(tv_sec: 2, tv_usec: 0)
+      XCTAssertEqual(
+        setsockopt(
+          sockets[1], SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)), 0)
+      let channel = QEMUGuestChannel(socket: "unused", half: half)
+      channel.receive(descriptor: sockets[0])
+      qemu.adopt(channel, as: half)
+      guests[half] = sockets[1]
+      let finished = expectation(description: "\(half) reader ended")
+      readers.append(finished)
+      DispatchQueue.global().async {
+        channel.readConnection()
+        finished.fulfill()
+      }
+    }
+    defer { for fd in guests.values { close(fd) } }
+    func say(_ half: String, _ text: String) {
+      let data = Data((text + "\n").utf8)
+      XCTAssertEqual(
+        data.withUnsafeBytes { write(guests[half]!, $0.baseAddress, $0.count) }, data.count)
+    }
+    func hello(_ half: String, pid: Int) {
+      let heard = expectation(description: "\(half) \(pid) heard")
+      qemu.onAgentHello = { if $0 == half { heard.fulfill() } }
+      say(half, "{\"hello\":\"\(half)\",\"pid\":\(pid)}")
+      wait(for: [heard], timeout: 3)
+    }
+
+    hello("user", pid: 100)
+    hello("root", pid: 5)
+    XCTAssertEqual(qemu.agentsHeard, ["user", "root"])
+    XCTAssertEqual(qemu.userArrivals, 1)
+    hello("user", pid: 100)
+    XCTAssertEqual(qemu.userArrivals, 1, "the same agent saying hello again is not a new one")
+
+    var bytes = [UInt8](repeating: 0, count: 1024)
+    let count = read(guests["root"]!, &bytes, bytes.count)
+    XCTAssertGreaterThan(count, 0)
+    let request = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(bytes.prefix(count))) as? [String: Any])
+    XCTAssertEqual(request["op"] as? String, "await_exit")
+    XCTAssertEqual(request["pid"] as? Int, 100)
+
+    let failed = expectation(description: "the request to the ended agent failed")
+    qemu.guestRequest(["op": "ping"], admin: false) { result in
+      if case .success = result { XCTFail("an ended agent answered") }
+      failed.fulfill()
+    }
+    say("root", "{\"id\":\(try XCTUnwrap(request["id"] as? Int)),\"ok\":true}")
+    wait(for: [failed], timeout: 3)
+    XCTAssertEqual(qemu.agentsHeard, ["root"], "the root half is still there to be spoken to")
+
+    hello("user", pid: 200)
+    XCTAssertEqual(qemu.agentsHeard, ["user", "root"])
+    XCTAssertEqual(qemu.userArrivals, 2)
+
+    for half in ["user", "root"] { shutdown(guests[half]!, SHUT_RDWR) }
+    wait(for: readers, timeout: 3)
   }
 }
