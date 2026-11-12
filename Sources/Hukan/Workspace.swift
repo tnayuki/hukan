@@ -904,6 +904,11 @@ final class Workspace {
     guard session.heldByPID == nil else { return false }
     guard let home = transcriptHome(of: session) else { return false }
     sessions.removeAll { $0 === session }
+    // A terminal is a tab on its session's desk, so it leaves with the session — as it does in
+    // `dropWorktrees`. Left in the store, its shell ran on with no tab to reach it until the app
+    // quit, along with whatever had been started in it.
+    for terminal in terminals where terminal.deskID == session.id { terminal.terminate() }
+    terminals.removeAll { $0.deskID == session.id }
     // The archive flag goes with it. Nothing would read a flag for an id that no longer resolves,
     // but leaving it would keep the id in the stored set for as long as the window lives.
     archivedSessionIDs.remove(session.id)

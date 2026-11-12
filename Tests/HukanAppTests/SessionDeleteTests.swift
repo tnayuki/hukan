@@ -75,6 +75,26 @@ final class SessionDeleteTests: XCTestCase {
     XCTAssertFalse(ClaudeSessionStore.isResumable(id: id, worktree: worktree))
   }
 
+  /// A terminal is a tab on its session's desk, so deleting the session takes it out of the store
+  /// — and leaves another session's terminal where it was.
+  func testDeleteTakesTheSessionsTerminals() throws {
+    let repository = Repository(id: worktree.path)
+    let main = Worktree(url: worktree, branch: "main", repository: repository)
+    repository.worktrees = [main]
+    let workspace = Workspace()
+    workspace.repositories = [repository]
+    let session = AgentSession(id: try writeTranscript(), worktreeID: main.id)
+    let other = AgentSession(id: try writeTranscript(), worktreeID: main.id)
+    workspace.sessions = [session, other]
+    let doomed = TerminalSession(deskID: session.id, cwd: worktree)
+    let kept = TerminalSession(deskID: other.id, cwd: worktree)
+    workspace.terminals = [doomed, kept]
+
+    XCTAssertTrue(workspace.deleteSession(session))
+
+    XCTAssertEqual(workspace.terminals.map(\.id), [kept.id])
+  }
+
   /// A session another live process holds is refused outright: that engine is still writing the
   /// transcript, and the row must survive the refusal rather than half-leave.
   func testDeleteRefusesASessionHeldElsewhere() throws {
