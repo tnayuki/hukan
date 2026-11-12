@@ -48,6 +48,14 @@ struct BrowserGrant: Equatable {
     self.init(level: level, origin: Self.origin(of: url) ?? "")
   }
 
+  /// The grant a card's answer makes: on the site the card *named*, then held to the lapse rule
+  /// as though the tab had moved since — which it may have, the card having stood for as long as
+  /// the person took to read it. Made on the site showing at the answer instead, a page that
+  /// navigated while the card was up got a drive on a site nobody was shown.
+  init(level: Level, asked: URL?, showing: URL?) {
+    self = BrowserGrant(level: level, at: asked).afterNavigating(to: showing)
+  }
+
   func allows(_ level: Level) -> Bool { self.level >= level }
 
   /// The grant after the tab moves to `url`. A drive is held to the site it was granted on and

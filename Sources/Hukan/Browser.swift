@@ -573,6 +573,11 @@ final class BrowserPaneViewController: NSViewController, WKNavigationDelegate, W
     grant = level.flatMap { BrowserGrant(level: $0, at: currentURL) }
   }
 
+  /// Make or raise the grant a card asked for at `asked` (see `BrowserGrant.init(level:asked:showing:)`).
+  func share(_ level: BrowserGrant.Level, askedAt asked: URL?) {
+    grant = BrowserGrant(level: level, asked: asked, showing: currentURL)
+  }
+
   private func lapseGrantIfNeeded() {
     guard let grant else { return }
     let after = grant.afterNavigating(to: webView.url)

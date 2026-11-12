@@ -52,6 +52,20 @@ final class BrowserToolsTests: XCTestCase {
     XCTAssertEqual(drive.afterNavigating(to: URL(string: "https://example.com/")!).level, .read)
   }
 
+  /// A card's answer is a grant on the site the card named. A page that navigated elsewhere while
+  /// the card was up gets a read at most, never a drive on a site nobody was shown.
+  func testAnAnswerGrantsOnTheSiteTheCardNamed() {
+    let asked = URL(string: "https://a.example/page")!
+    let stayed = BrowserGrant(level: .drive, asked: asked, showing: asked)
+    XCTAssertEqual(stayed.level, .drive)
+    XCTAssertEqual(stayed.origin, "https://a.example")
+    let moved = BrowserGrant(
+      level: .drive, asked: asked, showing: URL(string: "https://bank.example/")!)
+    XCTAssertEqual(moved.level, .read)
+    XCTAssertEqual(
+      moved.origin, "https://a.example", "held to the site asked about, not the new one")
+  }
+
   /// A bare expression is what a console reads and what an agent writes; a function body is what
   /// WebKit runs. The code decides which it is, and it runs exactly once either way.
   func testABareExpressionIsEvaluatedAndAFunctionBodyIsRunAsOne() {

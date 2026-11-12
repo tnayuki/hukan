@@ -1983,8 +1983,10 @@ final class WorktreeDeskViewController: NSViewController {
       run(call, on: pane, completion: completion)
       return
     }
+    // The site the card names, which is the one the answer is a grant on.
+    let asked = pane.currentURL
     session.requestGrant(
-      tabID: id, title: pane.pageTitle, url: pane.currentURL?.absoluteString ?? "",
+      tabID: id, title: pane.pageTitle, url: asked?.absoluteString ?? "",
       level: needed
     ) { [weak self, weak pane] granted in
       guard
@@ -2003,9 +2005,13 @@ final class WorktreeDeskViewController: NSViewController {
         return
       }
       // Raise, never lower: a read asked for on a tab already shared for driving keeps the drive.
-      if pane.grant?.allows(granted) != true { pane.share(granted) }
+      if pane.grant?.allows(granted) != true { pane.share(granted, askedAt: asked) }
       guard pane.grant?.allows(needed) == true else {
-        completion(.error("The user shared this tab for reading only; driving it was not allowed."))
+        completion(
+          .error(
+            granted >= needed
+              ? "The tab left the site the user was shown before they answered, so driving it was not allowed. Ask again."
+              : "The user shared this tab for reading only; driving it was not allowed."))
         return
       }
       self.run(call, on: pane, completion: completion)
