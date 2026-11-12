@@ -173,6 +173,10 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   // MARK: Rows
 
   func reload() {
+    // A name being typed on its row holds the list still: `reloadData` would take the field with
+    // it, and a reload arrives unasked — the menu item that brings this window forward, a tab
+    // copying a template. Ending the edit reloads, which is where the list catches up.
+    guard renaming == nil else { return }
     titleImages()
     let selected = selectedRow
     let templates = MachineStore.templates()
