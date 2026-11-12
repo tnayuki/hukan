@@ -424,7 +424,8 @@ automation: it has SIP off and is not a machine to keep anything in.
 The tab's `+` copies a template for that session (an APFS clone, so it costs only what changes),
 with the session's worktree as `/Volumes/My Shared Files/worktree` — and the next one there when the
 session moves to another, the machine running or not. The machine is
-saved when hukan quits and resumes after a relaunch; closing its tab deletes it, after asking. Its
+saved when hukan quits and resumes after a relaunch; closing its tab deletes it, after asking, and
+so does deleting its session — closing the repository keeps it for when it is opened again. Its
 right-click menu sets the resolution — following the tab, or held at a size the tab scales — and
 saves it as a new template, which can itself be the source of another. Saving shuts the guest
 down first with its screen left in the tab, so an app that stops to ask about unsaved work is

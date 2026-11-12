@@ -69,6 +69,10 @@ enum MachineStore {
 
   static func templates() -> [Machine] { machines(in: templatesURL) }
   static func sessions() -> [Machine] { machines(in: sessionsURL) }
+  /// The copies made for one session — what deleting that session takes with it.
+  static func sessions(of session: UUID) -> [Machine] {
+    sessions().filter { $0.manifest.session == session }
+  }
 
   static func session(id: UUID) -> Machine? {
     Machine(url: sessionsURL.appendingPathComponent(id.uuidString))
@@ -160,6 +164,9 @@ enum MachineStore {
   }
 
   static func delete(_ machine: Machine) throws {
+    // Whichever way a machine is deleted — its tab, its session, the window — a QEMU still on its
+    // disk is stopped first: one a hukan that died left behind belongs to no tab that could.
+    if machine.manifest.kind == .windows { QEMUMachine.stopLeftover(in: machine.url) }
     try FileManager.default.removeItem(at: machine.url)
     changed()
   }

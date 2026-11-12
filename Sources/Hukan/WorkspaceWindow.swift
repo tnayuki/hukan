@@ -331,8 +331,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     rail.onOpenTag = { [weak self] url, session in self?.openTag(url, of: session) }
     rail.onDeleteSession = { [weak self] session in
-      guard let self else { return }
-      self.workspace.deleteSession(session)
+      guard let self, self.workspace.deleteSession(session) else { return }
+      self.files.desk.deleteMachines(ofSession: session.id)
       self.reload()
     }
     // Refining the query while a session is already open does not reload the window, so bridge

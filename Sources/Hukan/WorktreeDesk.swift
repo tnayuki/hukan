@@ -1172,6 +1172,18 @@ final class WorktreeDeskViewController: NSViewController {
     }
   }
 
+  /// The session is being deleted, and its machines go with it — asked already, by the delete's
+  /// own alert. A session that is gone never comes back to adopt a copy, so a copy left on disk
+  /// would only ever be found in the Virtual Machines window. A copy with no tab yet (one the
+  /// saved state did not bring back and no reload has adopted) is not running, and goes at once.
+  func deleteMachines(ofSession session: UUID) {
+    for tab in machineTabsByDesk[session] ?? [] { removeMachineTab(tab.id, in: session) }
+    let shown = Set(machinePanes.compactMap(\.machineID))
+    for machine in MachineStore.sessions(of: session) where !shown.contains(machine.id.uuidString) {
+      try? MachineStore.delete(machine)
+    }
+  }
+
   /// The machine tab goes and its machine is deleted — asked already, by an alert or a card.
   private func removeMachineTab(_ id: UUID, in deskID: UUID) {
     guard var tabs = machineTabsByDesk[deskID], let index = tabs.firstIndex(where: { $0.id == id })
@@ -2392,7 +2404,8 @@ final class WorktreeDeskViewController: NSViewController {
       commitTabsByDesk[key] = nil
     }
     // A session gone takes its tabs, but not its machines: closing a repository is not a decision
-    // to delete what ran in it, so the machines are saved and kept on disk.
+    // to delete what ran in it, so the machines are saved and kept on disk. Deleting the session
+    // is, and has already taken them (`deleteMachines(ofSession:)`) before this runs.
     for key in machineTabsByDesk.keys where !live.contains(key) {
       for tab in machineTabsByDesk[key] ?? [] {
         tab.pane.suspendMachine()

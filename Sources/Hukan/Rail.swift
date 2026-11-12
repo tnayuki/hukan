@@ -2255,11 +2255,20 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       : (sessions.count == 1
         ? "The agent is still working, and will be stopped. "
         : "\(working) of them are still working, and will be stopped. ")
+    // A machine is deleted with its session, and it is the one thing on the desk that cost
+    // something to make, so the alert says so rather than letting it go unmentioned.
+    let machines = sessions.reduce(0) { $0 + MachineStore.sessions(of: $1.id).count }
+    let deleted =
+      switch (sessions.count == 1, machines) {
+      case (true, 0): "Its conversation"
+      case (true, 1): "Its conversation and its virtual machine"
+      case (true, _): "Its conversation and its \(machines) virtual machines"
+      case (false, 0): "Their conversations"
+      case (false, 1): "Their conversations and 1 virtual machine"
+      case (false, _): "Their conversations and \(machines) virtual machines"
+      }
     alert.informativeText =
-      stopped
-      + (sessions.count == 1
-        ? "Its conversation will be deleted for good — this cannot be undone."
-        : "Their conversations will be deleted for good — this cannot be undone.")
+      stopped + "\(deleted) will be deleted for good — this cannot be undone."
     alert.addButton(withTitle: "Delete").hasDestructiveAction = true
     alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
     guard alert.runModal() == .alertFirstButtonReturn else { return }

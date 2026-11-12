@@ -37,6 +37,36 @@ final class MachineStoreTests: XCTestCase {
     return machine
   }
 
+  /// A QEMU a hukan that died left on a machine's disk belongs to no tab, so deleting the machine
+  /// is the last moment anything can stop it — it ran on over a deleted disk before.
+  func testDeletingAWindowsMachineStopsTheQEMULeftOnItsDisk() throws {
+    var manifest = try template().manifest
+    manifest.id = UUID()
+    manifest.kind = .windows
+    let machine = Machine(
+      url: MachineStore.sessionsURL.appendingPathComponent(manifest.id.uuidString),
+      manifest: manifest)
+    try FileManager.default.createDirectory(at: machine.url, withIntermediateDirectories: true)
+    try machine.save()
+    // Anything whose path says qemu-system is what the leftover check takes for QEMU.
+    let stand = directory.appendingPathComponent("qemu-system-aarch64")
+    try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: stand)
+    let process = Process()
+    process.executableURL = stand
+    process.arguments = ["60"]
+    try process.run()
+    defer { if process.isRunning { process.terminate() } }
+    try Data("\(process.processIdentifier)\n".utf8)
+      .write(to: machine.url.appendingPathComponent("qemu.pid"))
+
+    try MachineStore.delete(machine)
+
+    let deadline = Date().addingTimeInterval(5)
+    while process.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+    XCTAssertFalse(process.isRunning)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: machine.url.path))
+  }
+
   func testManifestRoundTripAndPrivatePermissions() throws {
     let machine = try template()
     XCTAssertEqual(Machine(url: machine.url), machine)
@@ -61,6 +91,18 @@ final class MachineStoreTests: XCTestCase {
     XCTAssertEqual(try Data(contentsOf: copy.diskURL), try Data(contentsOf: source.diskURL))
     XCTAssertEqual(MachineStore.session(id: copy.id)?.id, copy.id)
     XCTAssertEqual(MachineStore.sessions().map(\.id), [copy.id])
+  }
+
+  /// What deleting a session takes with it: its own copies, and no other session's.
+  func testSessionsOfNamesOnlyThatSessionsCopies() throws {
+    let source = try template()
+    let session = UUID()
+    let first = try MachineStore.copy(source, for: session)
+    let second = try MachineStore.copy(source, for: session)
+    _ = try MachineStore.copy(source, for: UUID())
+    XCTAssertEqual(
+      Set(MachineStore.sessions(of: session).map(\.id)), [first.id, second.id])
+    XCTAssertEqual(MachineStore.sessions(of: UUID()).count, 0)
   }
 
   func testSaveAsTemplateClearsSessionAndDisplayPolicy() throws {

@@ -976,7 +976,7 @@ final class QEMUMachine: GuestLink {
       machine.manifest.qemuMachine = type
       try? machine.save()
     }
-    stopLeftover()
+    Self.stopLeftover(in: machine.url)
     for path in [displaySocket, controlSocket] + agentSockets.values {
       try? FileManager.default.removeItem(atPath: path)
     }
@@ -1074,12 +1074,17 @@ final class QEMUMachine: GuestLink {
     return arguments
   }
 
-  private var pidFile: String { machine.url.appendingPathComponent("qemu.pid").path }
+  private var pidFile: String { Self.pidFile(in: machine.url) }
+
+  private static func pidFile(in directory: URL) -> String {
+    directory.appendingPathComponent("qemu.pid").path
+  }
 
   /// A QEMU left behind by a hukan that died has this machine's disk open. Two of them on one disk
-  /// is the disk's end, so the old one goes before a new one starts.
-  private func stopLeftover() {
-    guard let text = try? String(contentsOfFile: pidFile, encoding: .utf8),
+  /// is the disk's end, so the old one goes before a new one starts — and before the machine is
+  /// deleted, or it runs on for good over a disk nobody can reach.
+  static func stopLeftover(in directory: URL) {
+    guard let text = try? String(contentsOfFile: pidFile(in: directory), encoding: .utf8),
       let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0
     else { return }
     var path = [CChar](repeating: 0, count: 4096)

@@ -382,9 +382,11 @@ Workspace (one window)
   in on Virtualization.framework rather than driving UTM or tart: what the agent needs — a channel
   into the guest, a per-session copy, a saved state — is the part those tools do not hand over. A
   copy is an APFS clone of a template; closing its tab deletes it, after asking, and quitting saves
-  it. **Templates are made with nothing to answer**, SIP off through Recovery, because a permission
-  prompt with nobody there is a wall: a template is for automation and holds nothing worth
-  protecting.
+  it. **Deleting its session deletes it too, and closing its repository does not**: a repository
+  reopened brings its sessions back to adopt their copies, while a deleted session never returns,
+  so a copy it left would be found only in the Virtual Machines window. **Templates are made with
+  nothing to answer**, SIP off through Recovery, because a permission prompt with nobody there is a
+  wall: a template is for automation and holds nothing worth protecting.
   **Window ▸ Virtual Machines is the store, not a settings window**: every row is a thing on disk,
   nothing in it is a preference. Images and session machines are excluded from Time Machine;
   templates are not.
