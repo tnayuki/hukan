@@ -43,6 +43,12 @@ namespace HukanGuestAgent
 
         static int Main(string[] args)
         {
+            // The user half is started by the Task Scheduler, which runs a task below normal
+            // priority, so a build or an installer at normal priority filling the cores starved it
+            // and everything it ran for minutes at a time. Above normal, each half answers whatever
+            // the guest is busy with; what it runs goes back to normal (see Execute).
+            try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.AboveNormal; }
+            catch (Exception) { }
             if (Array.IndexOf(args, "--root") >= 0)
             {
                 ServiceBase.Run(new AgentService());
@@ -337,6 +343,8 @@ namespace HukanGuestAgent
             if (cwd != null) start.WorkingDirectory = cwd;
             using (var process = Process.Start(start))
             {
+                // A child inherits the agent's raised priority; a command is ordinary work.
+                try { process.PriorityClass = ProcessPriorityClass.Normal; } catch (Exception) { }
                 var stdout = new MemoryStream();
                 var stderr = new MemoryStream();
                 var reading = Task.WhenAll(
