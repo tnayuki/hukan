@@ -188,6 +188,7 @@ enum MachineStore {
     var manifest = template.manifest
     manifest.id = id
     manifest.parent = template.manifest.id
+    manifest.ancestors = [template.manifest.id] + template.manifest.lineage
     manifest.session = session
     manifest.macAddress = MachineManifest.randomMACAddress()
     manifest.created = Date()
@@ -292,6 +293,15 @@ struct MachineManifest: Codable, Equatable {
   var machineIdentifier: String?
   /// The template this was copied from, if it was.
   var parent: UUID?
+  /// Every template behind it, nearest first, written when it is copied. A template can be
+  /// deleted from under its copies, and its own manifest — the one place that named what it came
+  /// from in turn — goes with it; a copy that knew only its parent would then read as sharing
+  /// nothing with a template two steps back that still holds most of its disk. Absent on a
+  /// machine made before this was recorded, which knows its parent alone.
+  var ancestors: [UUID]?
+
+  /// The templates behind this one, nearest first.
+  var lineage: [UUID] { ancestors ?? parent.map { [$0] } ?? [] }
   /// The session a copy belongs to — whose desk its tab stands on. Written on the machine itself,
   /// so the tab can be found again from the disk when the window's saved state does not have it.
   var session: UUID?
@@ -366,48 +376,94 @@ struct Machine: Equatable {
   /// What the directory occupies on this Mac — the blocks written, sparse holes not counted, but
   /// blocks it shares with a clone counted in full, since they are its as much as the clone's.
   var allocatedSize: Int64 {
-    files.reduce(Int64(0)) { sum, file in
-      let values = try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey])
-      return sum + Int64(values?.totalFileAllocatedSize ?? 0)
+    files.values.reduce(Int64(0)) { $0 + Self.allocatedSize(of: $1) }
+  }
+
+  /// What this machine holds that `parent` does not: file by file, the bytes that are not on the
+  /// very blocks the parent's file has at the same place. A clone starts at nothing and grows as
+  /// it is written, and the answer is the same whatever else has been cloned from either since —
+  /// which APFS's own count of a file's private blocks is not, that one falling to nothing the
+  /// moment a second clone is taken. It walks both files' extents, so it is not for the main
+  /// thread: a disk a guest has worked in for a while is tens of thousands of them.
+  func size(beyond parent: Machine) -> Int64 {
+    let theirs = parent.files
+    return files.reduce(Int64(0)) { sum, file in
+      let own =
+        theirs[file.key].flatMap { Self.bytes(of: file.value, notSharedWith: $0) }
+        // A file the parent has not got, or a volume that will not say where a file's blocks are.
+        ?? Self.allocatedSize(of: file.value)
+      return sum + own
     }
   }
 
-  /// What only this machine holds: the blocks no clone shares with it, which is what deleting it
-  /// gives back. APFS answers it per file (`ATTR_CMNEXT_PRIVATESIZE`), so it costs a call per
-  /// file and no walk of the disk image's blocks. Nil where the volume does not say.
-  var privateSize: Int64? {
-    var total: Int64 = 0
-    for file in files {
-      guard let size = Self.privateSize(of: file.path) else { return nil }
-      total += size
+  /// Every file under the directory, by its path within it.
+  private var files: [String: URL] {
+    let base = url.resolvingSymlinksInPath().path + "/"
+    let walk = FileManager.default.enumerator(
+      at: url, includingPropertiesForKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey])
+    var files: [String: URL] = [:]
+    while let file = walk?.nextObject() as? URL {
+      guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+      else { continue }
+      let path = file.resolvingSymlinksInPath().path
+      files[path.hasPrefix(base) ? String(path.dropFirst(base.count)) : path] = file
     }
-    return total
+    return files
   }
 
-  private var files: [URL] {
-    (try? FileManager.default.contentsOfDirectory(
-      at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey])) ?? []
+  private static func allocatedSize(of file: URL) -> Int64 {
+    let values = try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey])
+    return Int64(values?.totalFileAllocatedSize ?? 0)
   }
 
-  private static func privateSize(of path: String) -> Int64? {
-    var list = attrlist()
-    list.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
-    list.commonattr = attrgroup_t(ATTR_CMN_RETURNED_ATTRS)
-    list.forkattr = attrgroup_t(ATTR_CMNEXT_PRIVATESIZE)
-    // The reply: its length, the attributes returned, then the size.
-    var buffer = [UInt8](repeating: 0, count: 64)
-    let result = getattrlist(
-      path, &list, &buffer, buffer.count, UInt32(FSOPT_ATTR_CMN_EXTENDED))
-    guard result == 0 else { return nil }
-    let returned = buffer.withUnsafeBytes {
-      $0.load(fromByteOffset: MemoryLayout<UInt32>.size, as: attribute_set_t.self)
+  /// The bytes of `file` that sit somewhere other than where `other` has the same offset. Nil
+  /// where the volume does not answer for a file's blocks.
+  private static func bytes(of file: URL, notSharedWith other: URL) -> Int64? {
+    let mine = open(file.path, O_RDONLY)
+    let theirs = open(other.path, O_RDONLY)
+    defer {
+      if mine >= 0 { close(mine) }
+      if theirs >= 0 { close(theirs) }
     }
-    guard returned.forkattr & attrgroup_t(ATTR_CMNEXT_PRIVATESIZE) != 0 else { return nil }
-    return buffer.withUnsafeBytes {
-      $0.loadUnaligned(
-        fromByteOffset: MemoryLayout<UInt32>.size + MemoryLayout<attribute_set_t>.size,
-        as: Int64.self)
+    guard mine >= 0, theirs >= 0 else { return nil }
+    /// Where on the device `offset` is, and how far the file runs on from there unbroken.
+    func extent(_ descriptor: Int32, at offset: off_t, upTo length: off_t) -> (
+      device: off_t, length: off_t
+    )? {
+      var query = log2phys()
+      query.l2p_devoffset = offset
+      query.l2p_contigbytes = length
+      guard fcntl(descriptor, F_LOG2PHYS_EXT, &query) == 0, query.l2p_contigbytes > 0 else {
+        return nil
+      }
+      return (query.l2p_devoffset, query.l2p_contigbytes)
     }
+    let end = lseek(mine, 0, SEEK_END)
+    let theirEnd = lseek(theirs, 0, SEEK_END)
+    var offset: off_t = 0
+    var own: Int64 = 0
+    while offset < end {
+      // Holes hold nothing, on either side's account.
+      let data = lseek(mine, offset, SEEK_DATA)
+      guard data >= 0 else { break }
+      let hole = max(lseek(mine, data, SEEK_HOLE), data)
+      offset = data
+      while offset < hole {
+        guard let here = extent(mine, at: offset, upTo: hole - offset) else { return nil }
+        guard offset < theirEnd,
+          let there = extent(theirs, at: offset, upTo: min(here.length, theirEnd - offset))
+        else {
+          own += here.length
+          offset += here.length
+          continue
+        }
+        let length = min(here.length, there.length)
+        if here.device != there.device { own += length }
+        offset += length
+      }
+      if hole == data { break }
+    }
+    return own
   }
 
   private static let encoder: JSONEncoder = {

@@ -54,27 +54,60 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   private var machines: [Machine] = []
   private var indentation: [UUID: Int] = [:]
 
-  /// The template a machine was copied from, if that template is still here. One whose template
-  /// was deleted is an origin of its own now — the blocks it shared are its alone.
+  /// The nearest template behind a machine that is still here: the one it was copied from, or
+  /// with that one deleted, the one that was copied from, and so on back. A machine with none
+  /// left is an origin of its own now, with nothing here to share its blocks with.
   private func originParent(of machine: Machine) -> UUID? {
-    guard let parent = machine.manifest.parent, templateTitles[parent] != nil else { return nil }
-    return parent
+    machine.manifest.lineage.first { templateTitles[$0] != nil }
   }
 
-  /// The machines copied from `machine` that are still here.
+  /// The machines that stand directly on `machine`, which is what deleting it leaves on their own
+  /// or on the template behind it.
   private func copies(of machine: Machine) -> [Machine] {
-    machines.filter { $0.manifest.parent == machine.id }
+    machines.filter { originParent(of: $0) == machine.id }
   }
 
-  /// What a machine costs this Mac, counted so the list adds up: an origin — a template made from
-  /// an installer, or one whose template is gone — counts everything it holds, shared blocks
-  /// included; a copy counts only what it has written since, as `+`. A template is never written
-  /// to once made, so what a copy shares is exactly what its origin already counted.
+  /// What a machine costs this Mac: an origin — a template made from an installer, or one with
+  /// no template behind it left — counts everything it holds; a copy counts what it holds that
+  /// the nearest template still behind it does not, as `+`. Measured against the template rather than asked of APFS as
+  /// the blocks no clone shares, because that answer moves with what else has been cloned: saving
+  /// a session's machine as a template took everything the session had written off its row.
   private func onThisMac(_ machine: Machine) -> String {
-    if originParent(of: machine) != nil {
-      return "+" + Self.size(machine.privateSize ?? machine.allocatedSize)
+    guard originParent(of: machine) != nil else { return Self.size(machine.allocatedSize) }
+    return beyondParent[machine.id].map { "+" + Self.size($0) } ?? "Measuring…"
+  }
+
+  /// What each copy holds beyond its template, by the copy's id. Kept across reloads, so a row
+  /// goes on saying what it last said while it is measured again.
+  private var beyondParent: [UUID: Int64] = [:]
+  /// Which measurement is the latest asked for, so one that lands late is dropped.
+  private var measurement = 0
+
+  /// Measures every copy against its template, off the main thread — it walks both disks'
+  /// extents — and redraws the rows if any answer moved.
+  private func measure() {
+    let pairs = machines.compactMap { machine in
+      originParent(of: machine).flatMap { parent in machines.first { $0.id == parent } }
+        .map { (machine, $0) }
     }
-    return Self.size(machine.allocatedSize)
+    measurement += 1
+    let asked = measurement
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let sizes = Dictionary(
+        uniqueKeysWithValues: pairs.map { ($0.0.id, $0.0.size(beyond: $0.1)) })
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+          guard let self, asked == self.measurement, sizes != self.beyondParent else { return }
+          self.beyondParent = sizes
+          // A name being typed holds the list still; ending the edit reloads it.
+          guard self.renaming == nil else { return }
+          let selected = self.table.selectedRowIndexes
+          self.table.reloadData()
+          self.table.selectRowIndexes(selected, byExtendingSelection: false)
+          self.update()
+        }
+      }
+    }
   }
 
   private init() {
@@ -214,6 +247,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
       table.selectRowIndexes([index], byExtendingSelection: false)
     }
     update()
+    measure()
   }
 
   private static func same(_ a: Row, _ b: Row) -> Bool {
@@ -580,17 +614,14 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     case .template(let machine):
       url = machine.url
       alert.messageText = "Delete the template “\(machine.manifest.title)”?"
+      // No size: what a delete gives back depends on what else shares the blocks, and with
+      // copies standing that is next to nothing. What the copies need said is that they survive.
       let copies = copies(of: machine)
-      let freed = machine.privateSize ?? machine.allocatedSize
-      if copies.isEmpty {
-        alert.informativeText = "This gives back \(Self.size(freed))."
-      } else {
-        // What it shares stays: the copies made from it hold the same blocks.
-        let kept = max(0, machine.allocatedSize - freed)
-        let count = copies.count == 1 ? "the machine" : "the \(copies.count) machines"
+      if !copies.isEmpty {
         alert.informativeText =
-          "This gives back about \(Self.size(freed)). The other \(Self.size(kept)) stays in use by"
-          + " \(count) copied from it, which keep working."
+          copies.count == 1
+          ? "The machine copied from it keeps working."
+          : "The \(copies.count) machines copied from it keep working."
       }
     case .session(let machine):
       url = machine.url
@@ -1019,8 +1050,6 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     }
   }
 
-  /// A clone counts in full — APFS says nothing of which blocks are shared — so the size is what
-  /// a machine would cost alone, and deleting it may give back less.
   private static func size(_ bytes: Int64) -> String {
     ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
   }

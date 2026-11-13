@@ -168,6 +168,48 @@ final class MachineStoreTests: XCTestCase {
     XCTAssertNotNil(MachineStore.template(id: saved.id))
   }
 
+  /// A copy names every template behind it, so one deleted from the middle leaves the copy still
+  /// knowing the one before.
+  func testACopyNamesEveryTemplateBehindIt() throws {
+    let source = try template()
+    let copy = try MachineStore.copy(source, for: UUID())
+    XCTAssertEqual(copy.manifest.lineage, [source.id])
+    let saved = try MachineStore.saveAsTemplate(copy, title: "With tools")
+    XCTAssertEqual(saved.manifest.lineage, [source.id])
+    let second = try MachineStore.copy(saved, for: UUID())
+    XCTAssertEqual(second.manifest.lineage, [saved.id, source.id])
+    XCTAssertEqual(Machine(url: second.url)?.manifest.lineage, [saved.id, source.id])
+
+    // One made before the lineage was written knows its parent, and a copy of it carries that on.
+    var old = saved
+    old.manifest.ancestors = nil
+    try old.save()
+    XCTAssertEqual(try MachineStore.copy(old, for: UUID()).manifest.lineage, [saved.id, source.id])
+  }
+
+  /// A copy is measured by what it holds that its template does not, and saving it as a template
+  /// leaves that standing — the clone that takes a file's private blocks to nothing.
+  func testACopyIsMeasuredAgainstItsTemplateWhateverElseIsCloned() throws {
+    let megabyte = 1 << 20
+    let source = try template()
+    try Data((0..<4 * megabyte).map { _ in UInt8.random(in: 0...255) }).write(to: source.diskURL)
+    let copy = try MachineStore.copy(source, for: UUID())
+    // Its manifest is a file of its own, so a block or two stands beyond the template at once.
+    XCTAssertLessThan(copy.size(beyond: source), 64 << 10)
+
+    let disk = try FileHandle(forWritingTo: copy.diskURL)
+    try disk.seek(toOffset: UInt64(megabyte))
+    try disk.write(contentsOf: Data((0..<megabyte).map { _ in UInt8.random(in: 0...255) }))
+    try disk.close()
+    let written = Int64(megabyte)..<Int64(megabyte + (64 << 10))
+    XCTAssertTrue(written.contains(copy.size(beyond: source)))
+
+    let saved = try MachineStore.saveAsTemplate(copy, title: "With tools")
+    XCTAssertTrue(written.contains(copy.size(beyond: source)))
+    XCTAssertTrue(written.contains(saved.size(beyond: source)))
+    XCTAssertLessThan(saved.size(beyond: copy), 64 << 10)
+  }
+
   func testImagesExcludePartialAndUnrelatedFiles() throws {
     for name in ["A.ipsw", "B.ISO", "C.ipsw.download", "notes.txt"] {
       try Data([1]).write(to: MachineStore.imagesURL.appendingPathComponent(name))
