@@ -20,6 +20,50 @@ final class MachineStoreTests: XCTestCase {
     try FileManager.default.removeItem(at: directory)
   }
 
+  /// What another hukan is still making is left alone; what nobody holds goes. A claim is a
+  /// `flock` on its own open file, so one taken here stands in for one taken by another process.
+  func testOnlyWhatNoRunningHukanHoldsIsDiscarded() throws {
+    let fm = FileManager.default
+    let held = MachineStore.templatesURL.appendingPathComponent(".building-held")
+    let abandoned = MachineStore.templatesURL.appendingPathComponent(".building-abandoned")
+    let copying = MachineStore.imagesURL.appendingPathComponent("Fixture.iso.download")
+    for url in [held, abandoned] {
+      try fm.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+    fm.createFile(atPath: copying.path, contents: Data("partial".utf8))
+    var claims = try [held, copying].map { try XCTUnwrap(MachineStore.Claim.take($0)) }
+    // A claim file nobody holds is what a crash leaves beside nothing.
+    fm.createFile(
+      atPath: MachineStore.Claim.file(for: abandoned).path, contents: nil)
+
+    MachineStore.discardUnfinished()
+    try waitUntil { !fm.fileExists(atPath: abandoned.path) }
+    try waitUntil { !fm.fileExists(atPath: MachineStore.Claim.file(for: abandoned).path) }
+    XCTAssertTrue(fm.fileExists(atPath: held.path))
+    XCTAssertTrue(fm.fileExists(atPath: copying.path))
+
+    for claim in claims { claim.release() }
+    claims = []
+    XCTAssertFalse(fm.fileExists(atPath: MachineStore.Claim.file(for: held).path))
+    MachineStore.discardUnfinished()
+    try waitUntil { !fm.fileExists(atPath: held.path) && !fm.fileExists(atPath: copying.path) }
+    let left =
+      try fm.contentsOfDirectory(atPath: MachineStore.templatesURL.path)
+      + fm.contentsOfDirectory(atPath: MachineStore.imagesURL.path)
+    XCTAssertEqual(left.filter { $0.hasPrefix(".") && $0 != ".DS_Store" }, [])
+  }
+
+  private func waitUntil(_ condition: () -> Bool) throws {
+    let deadline = Date().addingTimeInterval(5)
+    while !condition() {
+      guard Date() < deadline else {
+        struct NeverHappened: Error {}
+        throw NeverHappened()
+      }
+      Thread.sleep(forTimeInterval: 0.02)
+    }
+  }
+
   private func template() throws -> Machine {
     let manifest = MachineManifest(
       id: UUID(), kind: .macOS, title: "macOS fixture", cpuCount: 4,

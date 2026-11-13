@@ -54,6 +54,12 @@ enum MachineStore {
   /// building. What goes is decided here, on the caller's thread, and only the removing is left
   /// for later: the whole of this on a background queue could run after a build had begun, and took
   /// that build's directory out from under a running install, twenty minutes before anyone found out.
+  ///
+  /// "When hukan last stopped" is a fact about every hukan, not this one: the released app and a
+  /// Dev build share this store, so one launched while the other was twenty minutes into an
+  /// install took that install's directory too. What a running hukan is still making carries a
+  /// claim, and a claim still held is passed over — the lock goes with the process that took it,
+  /// so one left by a quit or a crash is no claim at all.
   static func discardUnfinished() {
     let fm = FileManager.default
     let building =
@@ -61,10 +67,77 @@ enum MachineStore {
       .filter { $0.lastPathComponent.hasPrefix(".building-") }
     let downloads =
       ((try? fm.contentsOfDirectory(at: imagesURL, includingPropertiesForKeys: nil)) ?? [])
-      .filter { $0.pathExtension == "download" }
-    DispatchQueue.global(qos: .utility).async {
-      for url in building + downloads { try? fm.removeItem(at: url) }
+      .filter { $0.pathExtension == "download" && !$0.lastPathComponent.hasPrefix(Claim.prefix) }
+    let unclaimed = (building + downloads).compactMap { Claim.takeAbandoned($0) }
+    let leftover = [templatesURL, imagesURL].flatMap { directory in
+      ((try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+        .filter { $0.lastPathComponent.hasPrefix(Claim.prefix) }
     }
+    .filter { claim in
+      !(building + downloads).contains { Claim.file(for: $0) == claim }
+    }
+    .compactMap { Claim.abandonedClaim(file: $0) }
+    DispatchQueue.global(qos: .utility).async {
+      for (url, claim) in unclaimed {
+        try? fm.removeItem(at: url)
+        claim.release()
+      }
+      for claim in leftover { claim.release() }
+    }
+  }
+
+  /// A lock on something this process is still making under an unfinished name, held in a file
+  /// beside it — `.claim-<name>` — for as long as it is being made. `flock` is the whole of it:
+  /// the kernel drops the lock when the process ends, however it ends.
+  final class Claim {
+    static let prefix = ".claim-"
+    private var descriptor: Int32
+    private let file: URL
+
+    static func file(for url: URL) -> URL {
+      url.deletingLastPathComponent().appendingPathComponent(prefix + url.lastPathComponent)
+    }
+
+    private init(descriptor: Int32, file: URL) {
+      self.descriptor = descriptor
+      self.file = file
+    }
+
+    /// Claims `url` for this process; nil only when the claim file cannot be made, which leaves
+    /// the work unprotected rather than refused.
+    static func take(_ url: URL) -> Claim? {
+      lock(file(for: url), blocking: true)
+    }
+
+    /// The claim on `url` when no running process holds it, which is what makes `url` safe to
+    /// remove; nil while another hukan is still making it.
+    static func takeAbandoned(_ url: URL) -> (URL, Claim)? {
+      lock(file(for: url), blocking: false).map { (url, $0) }
+    }
+
+    static func abandonedClaim(file claimFile: URL) -> Claim? {
+      lock(claimFile, blocking: false)
+    }
+
+    private static func lock(_ file: URL, blocking: Bool) -> Claim? {
+      let fd = open(file.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+      guard fd >= 0 else { return nil }
+      guard flock(fd, LOCK_EX | (blocking ? 0 : LOCK_NB)) == 0 else {
+        close(fd)
+        return nil
+      }
+      return Claim(descriptor: fd, file: file)
+    }
+
+    /// Done with: the file goes first, so no one can take a claim on a name about to be free.
+    func release() {
+      guard descriptor >= 0 else { return }
+      unlink(file.path)
+      close(descriptor)
+      descriptor = -1
+    }
+
+    deinit { release() }
   }
 
   static func templates() -> [Machine] { machines(in: templatesURL) }
@@ -134,6 +207,8 @@ enum MachineStore {
   static func saveAsTemplate(_ machine: Machine, title: String) throws -> Machine {
     let id = UUID()
     let building = templatesURL.appendingPathComponent(".building-\(id.uuidString)")
+    let claim = Claim.take(building)
+    defer { claim?.release() }
     try FileManager.default.copyItem(at: machine.url, to: building)
     var manifest = machine.manifest
     manifest.id = id

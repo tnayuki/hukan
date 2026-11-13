@@ -383,6 +383,8 @@ final class MacTemplateBuilder {
     case granting
   }
   private var stage = Stage.firstBoot
+  /// Held while the template is being made, so another hukan launching meanwhile leaves it be.
+  private var claim: MachineStore.Claim?
   private var keyboard: GuestKeyboard?
   /// Times Recovery may be gone through again after the keystrokes did not take.
   private var recoveryRetriesLeft = 2
@@ -439,6 +441,7 @@ final class MacTemplateBuilder {
     let url = MachineStore.templatesURL.appendingPathComponent(".building-\(id.uuidString)")
     do {
       try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+      claim = MachineStore.Claim.take(url)
       let cpus = max(
         requirements.minimumSupportedCPUCount,
         request.cpuCount ?? min(ProcessInfo.processInfo.processorCount / 2, 8))
@@ -609,6 +612,7 @@ final class MacTemplateBuilder {
     let destination = MachineStore.templatesURL.appendingPathComponent(machine.id.uuidString)
     do {
       try FileManager.default.moveItem(at: machine.url, to: destination)
+      claim = nil
       onPhase?(.done)
     } catch {
       onPhase?(.failed(error.localizedDescription))

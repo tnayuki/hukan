@@ -36,6 +36,9 @@ final class WindowsTemplateBuilder {
 
   static let qemu = "/opt/homebrew/bin/qemu-system-aarch64"
 
+  /// Held while the template is being made, so another hukan launching meanwhile leaves it be.
+  private var claim: MachineStore.Claim?
+
   /// The versioned type the bare `virt` stands for in the QEMU installed now, read off its own
   /// list (`virt … (alias of virt-11.1)`), or nil where QEMU cannot say.
   static func machineType() -> String? {
@@ -215,6 +218,7 @@ final class WindowsTemplateBuilder {
     let url = MachineStore.templatesURL.appendingPathComponent(".building-\(id.uuidString)")
     let manager = FileManager.default
     try manager.createDirectory(at: url, withIntermediateDirectories: true)
+    claim = MachineStore.Claim.take(url)
     let performance = Self.performanceCores
     let manifest = MachineManifest(
       id: id, kind: .windows, title: request.title, cpuCount: request.cpuCount ?? performance,
@@ -641,6 +645,7 @@ final class WindowsTemplateBuilder {
     let destination = MachineStore.templatesURL.appendingPathComponent(machine.id.uuidString)
     do {
       try manager.moveItem(at: machine.url, to: destination)
+      claim = nil
       MachineStore.changed()
       onPhase?(.done)
     } catch {

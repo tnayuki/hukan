@@ -76,6 +76,8 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     let destination = MachineStore.imagesURL.appendingPathComponent(file.lastPathComponent)
     DispatchQueue.global(qos: .userInitiated).async {
       let partial = destination.appendingPathExtension("download")
+      let claim = MachineStore.Claim.take(partial)
+      defer { claim?.release() }
       let result = Result {
         if FileManager.default.fileExists(atPath: destination.path) { return }
         try? FileManager.default.removeItem(at: partial)
