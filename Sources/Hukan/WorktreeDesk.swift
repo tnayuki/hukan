@@ -1640,11 +1640,8 @@ final class WorktreeDeskViewController: NSViewController {
     let admin = call.arguments["admin"] as? Bool ?? false
     // Never dial a half that has not said hello: a connection to a port nobody listens on has
     // crashed Virtualization.framework.
-    guard pane.agentsHeard.contains(admin ? "root" : "user") else {
-      completion(
-        .error(
-          "The guest agent has not started yet — it comes up with the guest's login, and says so"
-            + " within fifteen seconds. Try again shortly."))
+    if let absence = pane.agentAbsence(admin ? "root" : "user") {
+      completion(.error(absence))
       return
     }
     if pane.runsOnQEMU, call.name == "guest_screenshot",

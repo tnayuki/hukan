@@ -2,6 +2,7 @@ import Carbon
 import CoreGraphics
 import Foundation
 import ImageIO
+import OSLog
 import Vision
 
 /// Where QEMU's sockets go. A socket's path has to fit in 104 bytes, which the store's own
@@ -695,6 +696,8 @@ final class QEMUGuestChannel {
   private(set) var isHeard = false
   /// Told on the main thread each time the agent says hello, with the guest pid it names.
   var onHello: ((Int?) -> Void)?
+  /// Told on the main thread when a connection that had been heard on ends.
+  var onLost: (() -> Void)?
 
   init(socket path: String, half: String) {
     self.path = path
@@ -715,9 +718,14 @@ final class QEMUGuestChannel {
   func start() {
     Thread.detachNewThread { [self] in
       while !isStopped {
-        if connectToPort() { readLines() }
+        let connected = connectToPort()
+        if connected { readLines() }
         finishWaiting()
-        DispatchQueue.main.async { [self] in isHeard = false }
+        DispatchQueue.main.async { [self] in
+          let wasHeard = isHeard
+          isHeard = false
+          if connected, wasHeard { onLost?() }
+        }
         Thread.sleep(forTimeInterval: 0.5)
       }
     }
@@ -880,6 +888,28 @@ final class QEMUMachine: GuestLink {
   /// Which halves of the guest agent are there to be spoken to.
   var agentsHeard: Set<String> { Set(channels.filter { $0.value.isHeard }.keys) }
 
+  /// Why a half last stopped being heard, with when — the one error a tool could give covered a
+  /// port that closed, an agent that ended and a share being mapped alike, and which of them was
+  /// keeping a guest's tools shut for minutes at a time could not be told from it.
+  private var losses: [String: (reason: String, at: Date)] = [:]
+  static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "hukan", category: "guest")
+
+  /// Why a half is not there to be spoken to, in a sentence for the agent asking.
+  func absence(of half: String) -> String {
+    guard let loss = losses[half] else {
+      return "The guest agent has not said hello since the machine started — it comes up with the"
+        + " guest's login, and says so within fifteen seconds. Try again shortly."
+    }
+    let ago = Int(Date().timeIntervalSince(loss.at))
+    return "The guest agent's \(half) half is not answering: \(loss.reason) \(ago)s ago, and it"
+      + " has not said hello since. It says hello every fifteen seconds once it is back."
+  }
+
+  private func lose(_ half: String, _ reason: String) {
+    losses[half] = (reason, Date())
+    Self.log.notice("\(half, privacy: .public) half lost: \(reason, privacy: .public)")
+  }
+
   /// How many user halves have arrived on this run: each is a new process, so a new logon or a
   /// restarted agent, and a drive mapped for the one before is not there for it.
   private(set) var userArrivals = 0
@@ -928,11 +958,15 @@ final class QEMUMachine: GuestLink {
   // Internal so tests can hand in channels over socketpairs instead of QEMU's sockets.
   func adopt(_ channel: QEMUGuestChannel, as half: String) {
     channel.onHello = { [weak self] process in self?.heard(half, process: process) }
+    channel.onLost = { [weak self] in self?.lose(half, "its connection to the guest ended") }
     channels[half] = channel
   }
 
   private func heard(_ half: String, process: Int?) {
     if half == "user", !userPresent || process != userProcess {
+      Self.log.notice(
+        "user half arrived: pid \(process ?? -1) after \(self.userProcess ?? -1), arrival \(self.userArrivals + 1)"
+      )
       userPresent = true
       userProcess = process
       userArrivals += 1
@@ -952,9 +986,13 @@ final class QEMUMachine: GuestLink {
     root.send(["op": "await_exit", "pid": process]) { [weak self] result in
       guard let self, self.userPresent, self.userProcess == process else { return }
       self.watchingUser = false
-      guard case .success = result else { return }
+      guard case .success = result else {
+        Self.log.notice("await_exit for user pid \(process) failed; asked again at the next hello")
+        return
+      }
       self.userPresent = false
       self.channels["user"]?.abandon()
+      self.lose("user", "the root half reported its process (pid \(process)) ended")
     }
   }
 

@@ -111,6 +111,21 @@ final class MachinePaneViewController: NSViewController {
     }
     return agentUpdate == .ready ? runner?.agentsHeard ?? [] : []
   }
+  /// Why a half of the agent is not offered, in a sentence for the agent asking; nil when it is.
+  func agentAbsence(_ half: String) -> String? {
+    guard !agentsHeard.contains(half) else { return nil }
+    guard let qemu else {
+      return "The guest agent has not started yet — it comes up with the guest's login, and says"
+        + " so within fifteen seconds. Try again shortly."
+    }
+    guard qemu.agentsHeard.contains(half) else { return qemu.absence(of: half) }
+    if !keyboardSettled {
+      return "The guest is matching its keyboard to this Mac's, which restarts it the first time"
+        + " they differ. Try again in a minute."
+    }
+    return "The guest is mapping the worktree as W: for the agent's new logon. Try again shortly."
+  }
+
   /// How the guest's agent is reached, whichever kind of machine this is.
   var guestLink: (any GuestLink)? { qemu ?? runner?.vm }
   /// A picture of the screen when QEMU can take it, which it can with no agent at all.
@@ -501,6 +516,8 @@ final class MachinePaneViewController: NSViewController {
       mappingArrival != arrival
     else { return }
     mappingArrival = arrival
+    QEMUMachine.log.notice("mapping W: for user arrival \(arrival)")
+    let started = Date()
     GuestAgent.exec(
       [
         "powershell.exe", "-NoProfile", "-Command",
@@ -518,6 +535,8 @@ final class MachinePaneViewController: NSViewController {
         // keep the rest of it from the agent.
         DispatchQueue.main.async {
           guard let self, self.mappingArrival == arrival else { return }
+          QEMUMachine.log.notice(
+            "W: mapped for user arrival \(arrival) in \(Int(Date().timeIntervalSince(started)))s")
           self.sharedForArrival = arrival
         }
       }
@@ -570,6 +589,7 @@ final class MachinePaneViewController: NSViewController {
         self.compareKeyboard(on: qemu)
         return
       }
+      QEMUMachine.log.notice("replacing the guest agent with this build's; both halves restart")
       let script = Self.windowsAgentUpdateScript(path: path)
       GuestAgent.write(bundled, to: path + ".new", on: qemu, admin: true) { _ in
         GuestAgent.write(Data(script.utf8), to: directory + "\\update.cmd", on: qemu, admin: true) {
@@ -626,6 +646,7 @@ final class MachinePaneViewController: NSViewController {
 
   private func applyKeyboard(_ commands: ArraySlice<[String]>, on qemu: QEMUMachine) {
     guard let command = commands.first else {
+      QEMUMachine.log.notice("restarting the guest to match this Mac's keyboard")
       GuestAgent.exec(["shutdown.exe", "/r", "/t", "0"], on: qemu, admin: true) { _ in }
       // Once it is gone: a hello from the old agent must not start this over.
       DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
