@@ -136,6 +136,47 @@ final class WindowsTemplateBuilder {
     _ = try outcome.get()
   }
 
+  /// What WinPE runs in place of Setup's own install: the disk, the image, then Defender's services
+  /// switched off in the registry of a Windows that has never started — the one moment it can be
+  /// done, since from the first boot Defender guards those keys against SYSTEM too, and Tamper
+  /// Protection undoes anything said to it afterwards. Then the boot files, and the answer file
+  /// where the image's own first boot looks for it. Unlike the first logon's script this one stops
+  /// at a failed step, so Setup goes on and asks for the rest on screen.
+  static let installScript = [
+    "@echo off",
+    "set SRC=",
+    "for %%d in (C D E F G H I J K L) do if exist %%d:\\sources\\install.wim "
+      + "set SRC=%%d:\\sources\\install.wim",
+    "if not defined SRC for %%d in (C D E F G H I J K L) do if exist %%d:\\sources\\install.esd "
+      + "set SRC=%%d:\\sources\\install.esd",
+    "set ANS=",
+    "for %%d in (C D E F G H I J K L) do if exist %%d:\\hukan-install.cmd set ANS=%%d:",
+    "if not defined SRC exit /b 1",
+    "(",
+    "echo select disk 0",
+    "echo clean",
+    "echo convert gpt",
+    "echo create partition efi size=300",
+    "echo format quick fs=fat32 label=System",
+    "echo assign letter=S",
+    "echo create partition msr size=16",
+    "echo create partition primary",
+    "echo format quick fs=ntfs label=Windows",
+    "echo assign letter=W",
+    ") > X:\\hukan-diskpart.txt",
+    "diskpart /s X:\\hukan-diskpart.txt || exit /b 1",
+    "dism /Apply-Image /ImageFile:%SRC% /Name:\"Windows 11 Pro\" /ApplyDir:W:\\ || exit /b 1",
+    "reg load HKLM\\hukan W:\\Windows\\System32\\config\\SYSTEM || exit /b 1",
+    "for %%s in (Sense WdBoot WdFilter WdNisDrv WdNisSvc WinDefend) do "
+      + "reg add HKLM\\hukan\\ControlSet001\\Services\\%%s /v Start /t REG_DWORD /d 4 /f",
+    "reg unload HKLM\\hukan",
+    "bcdboot W:\\Windows /s S: /f UEFI || exit /b 1",
+    "mkdir W:\\Windows\\Panther",
+    "copy /y %ANS%\\autounattend.xml W:\\Windows\\Panther\\unattend.xml || exit /b 1",
+    "wpeutil reboot",
+    "",
+  ].joined(separator: "\r\n")
+
   /// What the first logon runs, from the answers disc: the drivers, the agent's two halves, and a
   /// sign-in that holds.
   /// Every step is left to fail on its own: a template without one of these still boots, and says
@@ -194,6 +235,8 @@ final class WindowsTemplateBuilder {
     try manager.createDirectory(at: answers, withIntermediateDirectories: true)
     try answerFile(language: language).write(
       to: answers.appendingPathComponent("autounattend.xml"), atomically: true, encoding: .utf8)
+    try Self.installScript.write(
+      to: answers.appendingPathComponent("hukan-install.cmd"), atomically: true, encoding: .ascii)
     try Self.setupScript.write(
       to: answers.appendingPathComponent("hukan-setup.cmd"), atomically: true, encoding: .ascii)
     guard let agent = Bundle.main.url(forResource: "hukan-guest-agent", withExtension: "exe") else {
@@ -319,16 +362,24 @@ final class WindowsTemplateBuilder {
             <UILanguage>\(language)</UILanguage>
             <UserLocale>\(language)</UserLocale>
       """
-    let checks = [
+    let checkNames = [
       "BypassTPMCheck", "BypassSecureBootCheck", "BypassCPUCheck", "BypassRAMCheck",
       "BypassStorageCheck",
-    ].enumerated().map { index, check in
+    ]
+    let checks = checkNames.enumerated().map { index, check in
       """
       <RunSynchronousCommand wcm:action="add"><Order>\(index + 1)</Order>\
       <Path>reg add HKLM\\SYSTEM\\Setup\\LabConfig /v \(check) /t REG_DWORD /d 1 /f</Path>\
       </RunSynchronousCommand>
       """
     }.joined(separator: "\n        ")
+    // Setup runs these before it touches the disk, and the last one never comes back: the image is
+    // laid down by the script and WinPE restarts into it, so Setup's own install never starts.
+    let install = """
+      <RunSynchronousCommand wcm:action="add"><Order>\(checkNames.count + 1)</Order>\
+      <Path>cmd /c for %d in (C D E F G H I J K L) do if exist %d:\\hukan-install.cmd \
+      call %d:\\hukan-install.cmd</Path></RunSynchronousCommand>
+      """
     let setup =
       "cmd /c for %d in (D E F G H I J) do if exist %d:\\hukan-setup.cmd call %d:\\hukan-setup.cmd"
     let firstLogon =
@@ -354,32 +405,17 @@ final class WindowsTemplateBuilder {
           <component \(component("Microsoft-Windows-Setup"))>
             <RunSynchronous>
               \(checks)
+              \(install)
             </RunSynchronous>
-            <DiskConfiguration>
-              <Disk wcm:action="add">
-                <DiskID>0</DiskID>
-                <WillWipeDisk>true</WillWipeDisk>
-                <CreatePartitions>
-                  <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>300</Size></CreatePartition>
-                  <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
-                  <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
-                </CreatePartitions>
-                <ModifyPartitions>
-                  <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>
-                  <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
-                </ModifyPartitions>
-              </Disk>
-            </DiskConfiguration>
-            <ImageInstall>
-              <OSImage>
-                <InstallFrom><MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>Windows 11 Pro</Value></MetaData></InstallFrom>
-                <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
-              </OSImage>
-            </ImageInstall>
             <UserData>
               <AcceptEula>true</AcceptEula>
               <ProductKey><Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key></ProductKey>
             </UserData>
+          </component>
+        </settings>
+        <settings pass="specialize">
+          <component \(component("Microsoft-Windows-Shell-Setup"))>
+            <ProductKey>VK7JG-NPHTM-C97JM-9MPGT-3V66T</ProductKey>
           </component>
         </settings>
         <settings pass="oobeSystem">

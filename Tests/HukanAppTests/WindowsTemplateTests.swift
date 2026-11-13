@@ -78,6 +78,33 @@ final class WindowsTemplateTests: XCTestCase {
     }
   }
 
+  func testTheImageIsLaidDownByTheScriptWithDefenderOff() throws {
+    let builder = WindowsTemplateBuilder(
+      request: .init(
+        title: "Fixture", iso: URL(fileURLWithPath: "/unused.iso"), diskSize: 1,
+        username: "guest"))
+    let document = try XMLDocument(xmlString: builder.answerFile(language: "en-US"))
+    for field in ["DiskConfiguration", "ImageInstall"] {
+      XCTAssertTrue(try document.nodes(forXPath: "//*[local-name()='\(field)']").isEmpty, field)
+    }
+    let commands = try document.nodes(
+      forXPath: "//*[local-name()='settings'][@pass='windowsPE']//*[local-name()='Path']")
+    XCTAssertTrue(commands.last?.stringValue?.contains("call %d:\\hukan-install.cmd") ?? false)
+
+    let script = WindowsTemplateBuilder.installScript
+    let order = try [
+      "diskpart /s", "dism /Apply-Image",
+      "reg load HKLM\\hukan W:\\Windows\\System32\\config\\SYSTEM",
+      "reg unload HKLM\\hukan", "bcdboot W:\\Windows", "W:\\Windows\\Panther\\unattend.xml",
+      "wpeutil reboot",
+    ].map { try XCTUnwrap(script.range(of: $0)?.lowerBound, $0) }
+    XCTAssertEqual(order, order.sorted())
+    XCTAssertTrue(
+      script.contains(
+        "in (Sense WdBoot WdFilter WdNisDrv WdNisSvc WinDefend) do reg add HKLM\\hukan"))
+    XCTAssertTrue(script.contains("/v Start /t REG_DWORD /d 4 /f"))
+  }
+
   func testSetupInstallsDriversAndBothAgentHalves() {
     let script = WindowsTemplateBuilder.setupScript
     for driver in [
