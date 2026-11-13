@@ -165,6 +165,7 @@ final class RunningColumnViewController: NSViewController {
       return TranscriptPath.file(named: token, relativeTo: root)
     }
     textView.onOpenFile = { [weak self] url in self?.onOpenFile?(url) }
+    textView.opensFile = { FileContentViewController.shows(fileAt: $0) }
     textView.messageActions = [
       ReadingView.MessageAction(title: "Fork Before This Message") {
         [weak self] anchor, range in

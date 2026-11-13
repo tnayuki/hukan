@@ -733,6 +733,18 @@ final class FileContentViewController: NSViewController {
     }
   }
 
+  /// Whether a tab here would show the file rather than the note `read` puts in its place —
+  /// asked by the transcript's menu, which offers Open only when there is something to open. The
+  /// same two tests `read` makes, the whole file included: deciding from its head would offer
+  /// Open on a file that turns out not to be UTF-8 further down. An image is taken at its
+  /// extension and not decoded, which is a right-click's worth of work spent on one too large or
+  /// too broken to draw.
+  static func shows(fileAt url: URL) -> Bool {
+    if ImageFile.covers(path: url.path) { return true }
+    guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return false }
+    return String(data: data, encoding: .utf8) != nil
+  }
+
   /// Read the file. An image is read as one — the extension decides, see `ImageFile` — and
   /// anything else mapped rather than copied, since the decision being made here is whether the
   /// bytes are UTF-8 at all and a file large enough for that to matter is one this should not be

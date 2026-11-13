@@ -70,6 +70,35 @@ final class TranscriptPathTests: XCTestCase {
     XCTAssertEqual(menu.items.map(\.title), ["Open “Hukan” in Finder"])
   }
 
+  /// A file the editor would only say it cannot read is not offered to it: Open With, whose first
+  /// row is the default application, is the way to open it, and the rest stays.
+  @MainActor
+  func testAFileTheEditorCannotShowIsNotOfferedToIt() throws {
+    try Data([0x50, 0x4B, 0x03, 0x04, 0xFF, 0xFE, 0x00, 0x80]).write(
+      to: root.appendingPathComponent("archive.zip"))
+    try Data([0x89, 0x50, 0x4E, 0x47]).write(to: root.appendingPathComponent("shot.png"))
+    let archive = root.appendingPathComponent("archive.zip")
+    XCTAssertFalse(FileContentViewController.shows(fileAt: archive))
+    XCTAssertTrue(FileContentViewController.shows(fileAt: model))
+    XCTAssertTrue(
+      FileContentViewController.shows(fileAt: root.appendingPathComponent("shot.png")),
+      "an image is taken at its extension")
+
+    _ = NSApplication.shared
+    let (scrollView, textView) = makeReadingView()
+    scrollView.frame = NSRect(x: 0, y: 0, width: 600, height: 300)
+    textView.frame = NSRect(x: 0, y: 0, width: 600, height: 300)
+    textView.setContent(Transcript.markdown("Wrote `archive.zip` just now\n"))
+    textView.resolvePath = { [root] in TranscriptPath.file(named: $0, relativeTo: root) }
+    textView.opensFile = { FileContentViewController.shows(fileAt: $0) }
+    let text = textView.string as NSString
+    let at = text.range(of: "archive").location
+    let rect = try XCTUnwrap(textView.rects(for: NSRange(location: at, length: 1)).first)
+    let menu = try XCTUnwrap(textView.menu(at: CGPoint(x: rect.midX, y: rect.midY)))
+    XCTAssertEqual(
+      menu.items.map(\.title).filter { $0 != "Open With" }, ["Quick Look", "Reveal in Finder"])
+  }
+
   /// The menu is offered on the token a double-click would select — here inside a code span,
   /// which is where an agent puts nearly every path — and Open hands the file to the owner.
   @MainActor

@@ -129,6 +129,10 @@ public final class ReadingView: NSView {
   public var resolvePath: ((String) -> URL?)?
   /// Where Open takes the file `resolvePath` found.
   public var onOpenFile: ((URL) -> Void)?
+  /// Whether Open has anywhere to take the file — nil offers it for every file. A file the
+  /// editor would only say it cannot read leaves Open With, whose first row is its default
+  /// application, as the way to open it.
+  public var opensFile: ((URL) -> Bool)?
   /// What the Quick Look panel is showing while this view feeds it.
   fileprivate var quickLookFile: URL?
 
@@ -858,8 +862,8 @@ public final class ReadingView: NSView {
   }
 
   /// A link under the pointer offers what its click and ⌘-click do, and its address; a file named
-  /// under it offers to be opened here, in another application, looked at, or revealed in the
-  /// Finder, and a directory to be opened in the Finder; a selection offers Copy whether or not the press landed on either. The fold link is
+  /// under it offers to be opened here (when the editor can show it), in another application,
+  /// looked at, or revealed in the Finder, and a directory to be opened in the Finder; a selection offers Copy whether or not the press landed on either. The fold link is
   /// not an address and offers nothing — but the path on a tool call's line is a file like any
   /// other.
   func menu(at point: CGPoint) -> NSMenu? {
@@ -879,12 +883,14 @@ public final class ReadingView: NSView {
       open.representedObject = file
       menu.addItem(open)
     } else if let file {
-      let open = NSMenuItem(
-        title: "Open “\(file.lastPathComponent)”", action: #selector(openFile(_:)),
-        keyEquivalent: "")
-      open.target = self
-      open.representedObject = file
-      menu.addItem(open)
+      if opensFile?(file) ?? true {
+        let open = NSMenuItem(
+          title: "Open “\(file.lastPathComponent)”", action: #selector(openFile(_:)),
+          keyEquivalent: "")
+        open.target = self
+        open.representedObject = file
+        menu.addItem(open)
+      }
       if let openWith = OpenWithMenu.item(for: file) { menu.addItem(openWith) }
       let look = NSMenuItem(
         title: "Quick Look", action: #selector(quickLookFile(_:)), keyEquivalent: "")
