@@ -289,8 +289,8 @@ A patch — `.diff`, `.patch`, `.rej` — reads as the file it patches: the payl
 colored as the language the patch names, with the added and removed rows carrying the commit
 tab's own bands behind them rather than a color of their own.
 
-A double-click takes the whole token — a hash, a path, a URL, an option — here and in the
-transcript alike, on a Japanese line as readily as an English one.
+A double-click takes the whole token — a hash, a path, a URL with its query string, an option —
+here and in the transcript alike, on a Japanese line as readily as an English one.
 
 **Opening from outside.** `open -a hukan <path>` — or a Finder drop — opens a directory in the
 worktree that contains it, its repository first when none does, and a file as a lasting tab — on

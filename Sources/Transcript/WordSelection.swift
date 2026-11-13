@@ -15,7 +15,9 @@ import AppKit
 /// On top of that, three separators that break an English word do not break what is being read
 /// here: a session id and a branch name keep their hyphens, a path and a URL keep their slashes,
 /// and an option keeps its leading dashes. A path takes a trailing `:120` with it, because a file
-/// and a line is the unit an agent is handed.
+/// and a line is the unit an agent is handed. An `http(s)` URL is read whole before any of that,
+/// query string and all, by the rule the prose's autolink cuts one with — a `?`, `=` or `&` is
+/// not a separator anyone means to stop at inside an address.
 ///
 /// **There is nowhere else to put this.** `selectionRange(forProposedRange:granularity:)` — the
 /// documented hook, and the only one — is never called on a TextKit 2 view: word selection is
@@ -172,6 +174,33 @@ enum WordSelection {
     return NSRange(location: lo, length: hi - lo)
   }
 
+  // MARK: A URL is read whole
+
+  /// The `http(s)` URL around `index`, or nil when the character there is not inside one: the
+  /// last scheme in the run of printable ASCII that starts at or before it, cut where the prose's
+  /// autolink cuts a URL. The right-click's link inside code asks the same question, so what a
+  /// double-click selects there is exactly what the menu would open.
+  static func url(in s: NSString, at index: Int) -> NSRange? {
+    guard index >= 0, index < s.length,
+      let span = span(s, around: NSRange(location: index, length: 1))
+    else { return nil }
+    let run = s.substring(with: span)
+    let click = run.utf16.index(run.utf16.startIndex, offsetBy: index - span.location)
+    // Searched a scheme's length past the click, so a click on `https` itself still counts.
+    let limit = run.utf16.index(click, offsetBy: 8, limitedBy: run.endIndex) ?? run.endIndex
+    guard
+      let scheme = ["https://", "http://"]
+        .compactMap({ run.range(of: $0, options: .backwards, range: run.startIndex..<limit) })
+        .filter({ $0.lowerBound <= click })
+        .max(by: { $0.lowerBound < $1.lowerBound })
+    else { return nil }
+    let tail = run[scheme.lowerBound...]
+    let end = Transcript.autolinkEnd(of: tail)
+    guard end > scheme.upperBound, click < end else { return nil }
+    let range = NSRange(scheme.lowerBound..<end, in: run)
+    return NSRange(location: range.location + span.location, length: range.length)
+  }
+
   // MARK: What to select
 
   /// The word under `click`, or nil to leave `selection` exactly as AppKit made it.
@@ -190,15 +219,17 @@ enum WordSelection {
     let tokens = enWordRanges(s.substring(with: span)).map {
       NSRange(location: $0.location + span.location, length: $0.length)
     }
-    func token(at i: Int) -> NSRange? { tokens.first { NSLocationInRange(i, $0) } }
+    func word(at i: Int) -> NSRange? {
+      url(in: s, at: i) ?? tokens.first { NSLocationInRange(i, $0) }.map { grow(s, $0) }
+    }
     let anchor = min(max(click, span.location), NSMaxRange(span) - 1)
-    guard var result = token(at: anchor).map({ grow(s, $0) }) else { return nil }
+    guard var result = word(at: anchor) else { return nil }
     // Dragged past the word it started on: take in the word under the far end too.
     if let appkitWord, !NSEqualRanges(selection, appkitWord) {
       let far =
         selection.location < appkitWord.location
         ? selection.location : max(NSMaxRange(selection) - 1, selection.location)
-      if let t = token(at: far) { result = NSUnionRange(result, grow(s, t)) }
+      if let t = word(at: far) { result = NSUnionRange(result, t) }
     }
     return NSEqualRanges(result, selection) ? nil : result
   }

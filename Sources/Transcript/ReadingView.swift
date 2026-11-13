@@ -941,43 +941,15 @@ public final class ReadingView: NSView {
   }
 
   /// A URL under `point` — asked for code, where a URL is quoted rather than linked, so the menu
-  /// is the one way to follow it. Not the double-click's token: that rule words a query string at
-  /// every `?`, `=` and `&`, so the run between spaces is searched instead, for the last
-  /// `http(s)://` that starts before the pointer, and the URL is cut the way the prose's autolink
-  /// cuts it. The pointer has to land inside what that leaves.
+  /// is the one way to follow it. What a double-click there selects, by the same rule.
   private func codeURL(at point: CGPoint) -> URL? {
     guard let offset = characterOffset(at: point), let segment = segment(containing: offset),
       segment.length > 0
     else { return nil }
     let string = segment.storage.string as NSString
     let local = min(offset - segment.start, segment.length - 1)
-    let spaces = CharacterSet.whitespacesAndNewlines
-    var start = local
-    while start > 0, let scalar = Unicode.Scalar(string.character(at: start - 1)),
-      !spaces.contains(scalar)
-    {
-      start -= 1
-    }
-    var end = local
-    while end < string.length, let scalar = Unicode.Scalar(string.character(at: end)),
-      !spaces.contains(scalar)
-    {
-      end += 1
-    }
-    let run = string.substring(with: NSRange(location: start, length: end - start))
-    let click = run.utf16.index(run.utf16.startIndex, offsetBy: local - start)
-    // Searched a scheme's length past the pointer, so a press on `https` itself still counts.
-    let limit = run.utf16.index(click, offsetBy: 8, limitedBy: run.endIndex) ?? run.endIndex
-    guard
-      let scheme = ["https://", "http://"]
-        .compactMap({ run.range(of: $0, options: .backwards, range: run.startIndex..<limit) })
-        .filter({ $0.lowerBound <= click })
-        .max(by: { $0.lowerBound < $1.lowerBound })
-    else { return nil }
-    let tail = run[scheme.lowerBound...]
-    let cut = Transcript.autolinkEnd(of: tail)
-    guard cut > scheme.upperBound, click < cut else { return nil }
-    return URL(string: String(tail[..<cut]))
+    guard let range = WordSelection.url(in: string, at: local) else { return nil }
+    return URL(string: string.substring(with: range))
   }
 
   /// The token a double-click at `point` would select, if it lies inside one segment.

@@ -72,6 +72,22 @@ final class WordSelectionTests: XCTestCase {
 
   // MARK: A path and a URL are one word, and so is an option
 
+  /// A query string is part of the address: a `?`, `=` or `&` broke the word, so a double-click on
+  /// a parameter took the parameter's name alone. The same line with kana on it has to agree, and
+  /// sentence punctuation after the URL stays the sentence's.
+  func testAURLsQueryStringIsPartOfIt() {
+    let url = "https://example.com/search?q=hukan_app&page=2#top"
+    for line in ["Open \(url) now", "\(url) を開く"] {
+      for token in ["https", "example", "q=", "hukan_app", "page", "2#", "top"] {
+        XCTAssertEqual(word(line, clicking: token), url, "\(token) in \(line)")
+      }
+    }
+    XCTAssertEqual(
+      word("See https://example.com/a?b=c. Then", clicking: "b=c"), "https://example.com/a?b=c")
+    // Not every `?` is in a URL.
+    XCTAssertNotEqual(word("why?b=c", clicking: "b=c"), "why?b=c")
+  }
+
   func testPathAndURLAreOneWord() {
     XCTAssertEqual(
       word("Sources/Hukan/Model.swift:120 を見て", clicking: "Hukan"),
