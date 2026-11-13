@@ -45,9 +45,29 @@ final class TranscriptPathTests: XCTestCase {
 
   func testWhatIsNotAFileOnDiskNamesNothing() {
     XCTAssertNil(TranscriptPath.file(named: "Sources/Hukan/Gone.swift", relativeTo: root))
-    XCTAssertNil(TranscriptPath.file(named: "Sources/Hukan", relativeTo: root), "a directory")
     XCTAssertNil(TranscriptPath.file(named: "https://example.com/a", relativeTo: root))
     XCTAssertNil(TranscriptPath.file(named: "maximumSpan", relativeTo: root))
+  }
+
+  /// A directory is answered as one, so the menu can offer it to the Finder and nothing else.
+  @MainActor
+  func testADirectoryOffersOnlyTheFinder() throws {
+    let directory = try XCTUnwrap(TranscriptPath.file(named: "Sources/Hukan", relativeTo: root))
+    XCTAssertTrue(directory.hasDirectoryPath)
+    XCTAssertEqual(
+      directory.path, root.appendingPathComponent("Sources/Hukan").standardizedFileURL.path)
+
+    _ = NSApplication.shared
+    let (scrollView, textView) = makeReadingView()
+    scrollView.frame = NSRect(x: 0, y: 0, width: 600, height: 300)
+    textView.frame = NSRect(x: 0, y: 0, width: 600, height: 300)
+    textView.setContent(Transcript.markdown("Look in `Sources/Hukan` first\n"))
+    textView.resolvePath = { [root] in TranscriptPath.file(named: $0, relativeTo: root) }
+    let text = textView.string as NSString
+    let at = text.range(of: "Hukan").location
+    let rect = try XCTUnwrap(textView.rects(for: NSRange(location: at, length: 1)).first)
+    let menu = try XCTUnwrap(textView.menu(at: CGPoint(x: rect.midX, y: rect.midY)))
+    XCTAssertEqual(menu.items.map(\.title), ["Open “Hukan” in Finder"])
   }
 
   /// The menu is offered on the token a double-click would select — here inside a code span,

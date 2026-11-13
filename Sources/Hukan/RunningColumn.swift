@@ -1484,8 +1484,8 @@ struct RemoteControlDisplay {
 /// The token is what a double-click selects, so a path arrives with the `:120` an agent hands a
 /// file and its line in; the line is dropped, a tab having no way to be opened at one. A token
 /// the disk does not answer for names nothing — the file an old turn mentioned and a later one
-/// deleted, or a word that only looks like a path — and a directory is not offered either, the
-/// files panel and the Finder being where a directory is opened.
+/// deleted, or a word that only looks like a path. A directory is answered too, and the menu
+/// offers it only to the Finder.
 enum TranscriptPath {
   static func file(named token: String, relativeTo root: URL?) -> URL? {
     var path = token
@@ -1508,9 +1508,8 @@ enum TranscriptPath {
     }
     let standardized = url.standardizedFileURL
     var isDirectory: ObjCBool = false
-    guard FileManager.default.fileExists(atPath: standardized.path, isDirectory: &isDirectory),
-      !isDirectory.boolValue
+    guard FileManager.default.fileExists(atPath: standardized.path, isDirectory: &isDirectory)
     else { return nil }
-    return standardized
+    return URL(fileURLWithPath: standardized.path, isDirectory: isDirectory.boolValue)
   }
 }

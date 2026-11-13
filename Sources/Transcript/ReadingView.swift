@@ -859,7 +859,7 @@ public final class ReadingView: NSView {
 
   /// A link under the pointer offers what its click and ⌘-click do, and its address; a file named
   /// under it offers to be opened here, in another application, looked at, or revealed in the
-  /// Finder; a selection offers Copy whether or not the press landed on either. The fold link is
+  /// Finder, and a directory to be opened in the Finder; a selection offers Copy whether or not the press landed on either. The fold link is
   /// not an address and offers nothing — but the path on a tool call's line is a file like any
   /// other.
   func menu(at point: CGPoint) -> NSMenu? {
@@ -869,7 +869,16 @@ public final class ReadingView: NSView {
     let selected = selectedRange.length > 0 || selectedTable?.table.selectedText() != nil
     guard pressed != nil || file != nil || selected else { return nil }
     let menu = NSMenu()
-    if let file {
+    if let file, file.hasDirectoryPath {
+      // A directory has no tab to open in and nothing for Open With or Quick Look to add, so the
+      // one thing offered is the folder itself, in the Finder.
+      let open = NSMenuItem(
+        title: "Open “\(file.lastPathComponent)” in Finder",
+        action: #selector(openDirectoryInFinder(_:)), keyEquivalent: "")
+      open.target = self
+      open.representedObject = file
+      menu.addItem(open)
+    } else if let file {
       let open = NSMenuItem(
         title: "Open “\(file.lastPathComponent)”", action: #selector(openFile(_:)),
         keyEquivalent: "")
@@ -932,6 +941,11 @@ public final class ReadingView: NSView {
   @objc func openFile(_ sender: NSMenuItem) {
     guard let url = sender.representedObject as? URL else { return }
     onOpenFile?(url)
+  }
+
+  @objc func openDirectoryInFinder(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    NSWorkspace.shared.open(url)
   }
 
   @objc func revealFileInFinder(_ sender: NSMenuItem) {
