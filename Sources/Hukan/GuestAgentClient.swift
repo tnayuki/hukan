@@ -1,10 +1,10 @@
 import Foundation
 import Virtualization
 
-/// Talking to `hukan-guest-agent` in a macOS guest, over the machine's vsock device. No network,
-/// no address, no credential: the channel exists only between this process and the guest it is
-/// running, so being able to open it is the whole of the authority — the same reason the agent
-/// answers only the host.
+/// Talking to `hukan-guest-agent` in a macOS or Linux guest, over the machine's vsock device. No
+/// network, no address, no credential: the channel exists only between this process and the guest
+/// it is running, so being able to open it is the whole of the authority — the same reason the
+/// agent answers only the host.
 ///
 /// Two agents, two ports: the logged-in user's (commands run as the person would, with the
 /// desktop there) and the administrator's, for what would otherwise need sudo.
@@ -32,9 +32,16 @@ enum GuestAgent {
   /// is sending without end, and a reply that size is not one worth holding in memory.
   static let replyLimit = 512 << 20
 
-  /// The binary hukan ships for the guest, and what it is installed as there.
-  static var bundledBinary: URL? {
-    Bundle.main.url(forResource: "hukan-guest-agent", withExtension: nil)
+  /// The binary hukan ships for a guest, and what it is installed as there — the same path on
+  /// macOS and Linux.
+  static var bundledBinary: URL? { bundledBinary(for: .macOS) }
+
+  static func bundledBinary(for kind: MachineKind) -> URL? {
+    switch kind {
+    case .macOS: Bundle.main.url(forResource: "hukan-guest-agent", withExtension: nil)
+    case .linux: Bundle.main.url(forResource: "hukan-guest-agent-linux", withExtension: nil)
+    case .windows: Bundle.main.url(forResource: "hukan-guest-agent", withExtension: "exe")
+    }
   }
   static let guestBinaryPath = "/usr/local/libexec/hukan-guest-agent"
   static let agentLabel = "dev.tnayuki.hukan.guest-agent"

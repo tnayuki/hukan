@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Virtualization
 
@@ -16,6 +17,8 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
   enum Source {
     case latest
     case address(URL)
+    /// An address whose publisher states the file's SHA-256, which the download is held to.
+    case checked(URL, sha256: String)
     case file(URL)
   }
 
@@ -23,6 +26,7 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     case locating
     case copying
     case downloading(Double)
+    case packages(String)
     case done(URL)
     case failed(String)
   }
@@ -31,22 +35,29 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
   private(set) var name: String?
   var onChange: (() -> Void)?
 
+  private let cancellation = Progress(totalUnitCount: 1)
+
   private var session: URLSession?
   private var task: URLSessionDownloadTask?
   private let source: Source
+  private var expectedSHA256: String? {
+    if case .checked(_, let sha256) = source { return sha256.lowercased() }
+    return nil
+  }
 
   init(_ source: Source = .latest) {
     self.source = source
     switch source {
     case .latest: break
-    case .address(let url), .file(let url): name = url.lastPathComponent
+    case .address(let url), .checked(let url, _), .file(let url): name = url.lastPathComponent
     }
   }
 
   func start() {
+    guard !cancellation.isCancelled else { return }
     switch source {
     case .latest: locateLatest()
-    case .address(let url): fetch(url)
+    case .address(let url), .checked(let url, _): fetch(url)
     case .file(let url): copy(url)
     }
   }
@@ -54,7 +65,23 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
   private func fetch(_ url: URL) {
     let destination = MachineStore.imagesURL.appendingPathComponent(url.lastPathComponent)
     if FileManager.default.fileExists(atPath: destination.path) {
-      finish(.done(destination))
+      guard let expected = expectedSHA256 else {
+        imageReady(destination)
+        return
+      }
+      state = .copying
+      onChange?()
+      DispatchQueue.global(qos: .userInitiated).async { [self] in
+        let actual = Self.sha256(of: destination)
+        DispatchQueue.main.async { [self] in
+          guard !cancellation.isCancelled else { return }
+          if actual == expected {
+            imageReady(destination)
+          } else {
+            finish(.failed("The existing ISO does not match its publisher's checksum."))
+          }
+        }
+      }
       return
     }
     let session = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
@@ -74,20 +101,28 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     onChange?()
     MachineStore.prepare()
     let destination = MachineStore.imagesURL.appendingPathComponent(file.lastPathComponent)
+    let partial = destination.appendingPathExtension("download")
     DispatchQueue.global(qos: .userInitiated).async {
-      let partial = destination.appendingPathExtension("download")
+      // Held until the copy is in place, packages and all, so another hukan starting meanwhile
+      // does not take it for one left behind. Taken here, not on the main thread: it waits for
+      // a claim an earlier copy of the same file still holds, and that one is let go on main.
       let claim = MachineStore.Claim.take(partial)
-      defer { claim?.release() }
       let result = Result {
-        if FileManager.default.fileExists(atPath: destination.path) { return }
+        if FileManager.default.fileExists(atPath: destination.path) { return false }
         try? FileManager.default.removeItem(at: partial)
         try FileManager.default.copyItem(at: file, to: partial)
-        try FileManager.default.moveItem(at: partial, to: destination)
+        return true
       }
-      DispatchQueue.main.async { [weak self] in
+      DispatchQueue.main.async { [self] in
+        let release: () -> Void = { claim?.release() }
         switch result {
-        case .success: self?.finish(.done(destination))
-        case .failure(let error): self?.finish(.failed(error.localizedDescription))
+        case .success(true): settle(partial, at: destination, then: release)
+        case .success(false):
+          release()
+          imageReady(destination)
+        case .failure(let error):
+          release()
+          finish(.failed(error.localizedDescription))
         }
       }
     }
@@ -109,12 +144,14 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
   }
 
   func cancel() {
+    cancellation.cancel()
     task?.cancel()
     session?.invalidateAndCancel()
     finish(.failed("Cancelled"))
   }
 
   private func finish(_ state: State) {
+    guard !cancellation.isCancelled || state == .failed("Cancelled") else { return }
     self.state = state
     session?.finishTasksAndInvalidate()
     session = nil
@@ -127,7 +164,7 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     _ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64
   ) {
-    guard totalBytesExpectedToWrite > 0 else { return }
+    guard !cancellation.isCancelled, totalBytesExpectedToWrite > 0 else { return }
     let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
     // A redraw per percent, not per packet.
     if case .downloading(let shown) = state, Int(fraction * 100) == Int(shown * 100) { return }
@@ -139,20 +176,137 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     _ session: URLSession, downloadTask: URLSessionDownloadTask,
     didFinishDownloadingTo location: URL
   ) {
-    guard let name else { return }
+    guard !cancellation.isCancelled, let name else { return }
     MachineStore.prepare()
     let destination = MachineStore.imagesURL.appendingPathComponent(name)
     let partial = destination.appendingPathExtension("download")
+    // Claimed before anything is written there, and without waiting: a claim already held is
+    // another hukan adding the same ISO, whose file this must not replace.
+    guard let (_, claim) = MachineStore.Claim.takeAbandoned(partial) else {
+      finish(.failed("Another hukan is adding this ISO."))
+      return
+    }
     do {
       // Moved out of the system's temporary file within this call — it is gone once it returns —
       // and renamed into place only once it is all there.
       try? FileManager.default.removeItem(at: partial)
       try FileManager.default.moveItem(at: location, to: partial)
+    } catch {
+      claim.release()
+      finish(.failed(error.localizedDescription))
+      return
+    }
+    guard let expected = expectedSHA256 else {
+      settle(partial, at: destination, then: claim.release)
+      return
+    }
+    // A download that stopped short, or came from somewhere else, is not offered to a template.
+    state = .copying
+    onChange?()
+    DispatchQueue.global(qos: .userInitiated).async {
+      let actual = Self.sha256(of: partial)
+      DispatchQueue.main.async { [weak self] in
+        let release: () -> Void = { claim.release() }
+        guard actual == expected else {
+          try? FileManager.default.removeItem(at: partial)
+          release()
+          self?.finish(
+            .failed(
+              "The download does not match the checksum its publisher gives, so it was not kept."))
+          return
+        }
+        guard let self else { return release() }
+        self.settle(partial, at: destination, then: release)
+      }
+    }
+  }
+
+  /// Put the download in place — after what an Ubuntu ISO lacks for an install has been fetched
+  /// with it, still under its `.download` name: an ISO is offered only with everything a template
+  /// made from it needs, so a fetch that fails or is cancelled takes the ISO with it rather than
+  /// leaving one that would have to fetch again when a template is made.
+  private func settle(_ partial: URL, at destination: URL, then done: @escaping () -> Void = {}) {
+    guard !cancellation.isCancelled else {
+      try? FileManager.default.removeItem(at: partial)
+      done()
+      return
+    }
+    guard UbuntuRelease.title(ofImage: destination) != nil else {
+      place(partial, at: destination)
+      done()
+      return
+    }
+    fetchPackages(reading: partial) { [self] error in
+      defer { done() }
+      if let error {
+        try? FileManager.default.removeItem(at: partial)
+        finish(.failed(error))
+      } else {
+        place(partial, at: destination)
+      }
+    }
+  }
+
+  private func place(_ partial: URL, at destination: URL) {
+    do {
       try FileManager.default.moveItem(at: partial, to: destination)
       finish(.done(destination))
     } catch {
       finish(.failed(error.localizedDescription))
     }
+  }
+
+  /// An ISO already in place from before: what it lacks is fetched now if it was not then, and a
+  /// failure leaves the ISO as it was, since it was not this download that brought it.
+  private func imageReady(_ destination: URL) {
+    guard !cancellation.isCancelled else { return }
+    guard UbuntuRelease.title(ofImage: destination) != nil else {
+      finish(.done(destination))
+      return
+    }
+    fetchPackages(reading: destination) { [self] error in
+      finish(error.map { .failed($0) } ?? .done(destination))
+    }
+  }
+
+  private func fetchPackages(reading iso: URL, then: @escaping (String?) -> Void) {
+    state = .packages("Reading Ubuntu ISO…")
+    onChange?()
+    let cancellation = cancellation
+    DispatchQueue.global(qos: .userInitiated).async { [self] in
+      let result = Result {
+        _ = try UbuntuPackages.prepare(
+          iso: iso, cancellation: cancellation,
+          progress: { message in
+            DispatchQueue.main.async { [weak self] in
+              guard let self, !cancellation.isCancelled else { return }
+              self.state = .packages(message)
+              self.onChange?()
+            }
+          })
+      }
+      DispatchQueue.main.async {
+        // A cancel that came after the packages were kept is too late to undo them, so the ISO
+        // they belong to is kept with them rather than leaving packages nothing can delete.
+        // Earlier than that, the answer still goes back, so the ISO waiting on it goes.
+        if cancellation.isCancelled, case .failure = result { return then("Cancelled") }
+        switch result {
+        case .success: then(nil)
+        case .failure(let error): then(error.localizedDescription)
+        }
+      }
+    }
+  }
+
+  /// The file's SHA-256, read a megabyte at a time: an ISO is gigabytes.
+  static func sha256(of url: URL) -> String? {
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+    defer { try? handle.close() }
+    var hasher = SHA256()
+    while let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+      hasher.update(data: chunk)
+    }
+    return hasher.finalize().map { String(format: "%02x", $0) }.joined()
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

@@ -190,8 +190,8 @@ enum HukanMCP {
         ]),
     ] + machineTools
 
-  /// The virtual machines on the desk — macOS guests hukan runs, reached through the guest agent
-  /// over vsock. One grant per machine, asked the first time a call touches it: running a command
+  /// The virtual machines on the desk — macOS and Linux guests hukan runs, reached through the
+  /// guest agent over vsock, and Windows ones in QEMU, over a serial port. One grant per machine, asked the first time a call touches it: running a command
   /// is never only reading, so there is no read-only level to offer.
   static let machineTools: [Tool] = [
     Tool(
@@ -199,8 +199,9 @@ enum HukanMCP {
       description:
         "Make a new virtual machine on this session's desk in hukan and start it: a throwaway "
         + "copy of a template, with the session's worktree mounted — as /Volumes/My Shared "
-        + "Files/worktree on macOS, as W:\\ on Windows — and the next one there when you "
-        + "change worktree. Each call makes another machine; to carry on with one you already "
+        + "Files/worktree on macOS, as /worktree on Linux, as W:\\ on Windows — and the next "
+        + "one there when you change worktree. A Linux machine runs x86_64 programs through "
+        + "Rosetta, with amd64 packages installable by apt. Each call makes another machine; to carry on with one you already "
         + "have, vm_list it and vm_start it. The user is asked first; once they allow it the "
         + "machine is yours to use, and the call returns when its guest agent answers — a first "
         + "boot takes a minute or two. Without template, the only template there is is used; "
@@ -262,14 +263,15 @@ enum HukanMCP {
         "List the virtual machines open on this session's desk in hukan: each one's id, the "
         + "template it was copied from, whether it is running, and whether the user has let you "
         + "use it. Each is the session's own throwaway machine, with the session's worktree "
-        + "mounted as /Volumes/My Shared Files/worktree on macOS and as W:\\ on Windows.",
+        + "mounted as /Volumes/My Shared Files/worktree on macOS, /worktree on Linux and W:\\ "
+        + "on Windows.",
       inputSchema: ["type": "object", "properties": [String: Any](), "additionalProperties": false]
     ),
     Tool(
       name: "guest_exec",
       description:
         "Run a shell command in a virtual machine and get its exit status, stdout and stderr. "
-        + "On a macOS guest it is /bin/zsh -c, on a Windows guest PowerShell. "
+        + "On a macOS guest it is /bin/zsh -c, on Linux /bin/bash -lc, on Windows PowerShell. "
         + "It runs as the guest's logged-in user, in their desktop session, so `open -a` and GUI "
         + "apps work; set admin to run it as root instead (there is no sudo password to give). "
         + "The user is asked the first time you touch a machine.",
@@ -277,7 +279,7 @@ enum HukanMCP {
         "type": "object",
         "properties": [
           "machine": ["type": "string", "description": "The machine id from vm_list"],
-          "command": ["type": "string", "description": "A command for /bin/zsh -c"],
+          "command": ["type": "string", "description": "A command for the guest's shell"],
           "admin": ["type": "boolean", "description": "Run as root"],
           "cwd": ["type": "string", "description": "Working directory in the guest"],
           "timeout": ["type": "number", "description": "Seconds before it is stopped (600)"],
@@ -363,7 +365,8 @@ enum HukanMCP {
         + "element a line, indented: its id, role, title, value, frame and the actions it takes. "
         + "Frames are in the pixels of a screenshot — of that window's own, given a window. Prefer "
         + "this and guest_ui_press to clicking at coordinates. Ids are positions in the tree, so read "
-        + "it again after anything changes.",
+        + "it again after anything changes. Not on a Linux guest, which is driven by screenshots "
+        + "and guest_click.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -457,7 +460,7 @@ enum HukanMCP {
           "modifiers": [
             "type": "array", "items": ["type": "string"],
             "description": "Any of command, shift, option, control. On Windows, command is the "
-              + "Windows key and option is Alt.",
+              + "Windows key and option is Alt; on Linux, command is Super.",
           ],
         ],
         "required": ["machine", "key"],

@@ -1,18 +1,23 @@
 import AppKit
 import Virtualization
 
-/// A macOS machine, run in this process by Virtualization.framework. In process, because that is
-/// what puts the guest's own screen on the desk — `VZVirtualMachineView`, from the first frame of
-/// the boot — with nothing between it and the person but a view.
+/// A macOS or Linux machine, run in this process by Virtualization.framework. In process, because
+/// that is what puts the guest's own screen on the desk — `VZVirtualMachineView`, from the first
+/// frame of the boot — with nothing between it and the person but a view. (Windows is the one kind
+/// the framework cannot run, and goes to `QEMUMachine`.)
 ///
 /// It also means the machine lives exactly as long as hukan does: a quit that does not save it is
 /// a power cut. So everything that lets go of one saves it first (`save`), and the next start
 /// resumes from that.
-final class MacMachine: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListenerDelegate {
+final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
+  VZVirtioSocketListenerDelegate
+{
   let machine: Machine
   private(set) var vm: VZVirtualMachine?
-  /// The worktree the guest sees as `/Volumes/My Shared Files/worktree`.
+  /// The worktree the guest sees as `/Volumes/My Shared Files/worktree`, or on Linux `/worktree`.
   private let sharedDirectory: URL?
+  /// Woken from a saved state rather than booted: its clock is still the moment it was saved.
+  private(set) var resumedFromSave = false
 
   /// The guest stopped on its own — shut down from inside, or failed.
   var onStop: ((Error?) -> Void)?
@@ -32,12 +37,16 @@ final class MacMachine: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
     guard let device = vm?.directorySharingDevices.first as? VZVirtioFileSystemDevice else {
       return
     }
-    device.share = Self.share(directory)
+    device.share = Self.share(directory, kind: machine.manifest.kind)
   }
 
-  init(machine: Machine, sharedDirectory: URL?) {
+  /// A Linux template's install: the discs it boots from besides its own disk (`LinuxMachine`).
+  private let installing: [URL]
+
+  init(machine: Machine, sharedDirectory: URL?, installing: [URL] = []) {
     self.machine = machine
     self.sharedDirectory = sharedDirectory
+    self.installing = installing
   }
 
   var isRunning: Bool {
@@ -58,7 +67,11 @@ final class MacMachine: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
   ) {
     let vm: VZVirtualMachine
     do {
-      let configuration = try Self.configuration(for: machine, sharedDirectory: sharedDirectory)
+      let configuration =
+        machine.manifest.kind == .linux
+        ? try LinuxMachine.configuration(
+          for: machine, sharedDirectory: sharedDirectory, installing: installing)
+        : try Self.configuration(for: machine, sharedDirectory: sharedDirectory)
       try configuration.validate()
       vm = VZVirtualMachine(configuration: configuration)
     } catch {
@@ -85,6 +98,7 @@ final class MacMachine: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
         return
       }
       vm.resume { result in
+        if case .success = result { self?.resumedFromSave = true }
         if case .failure(let error) = result { completion(error) } else { completion(nil) }
       }
     }
@@ -94,6 +108,12 @@ final class MacMachine: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
     _ vm: VZVirtualMachine, provisioning: Any?, recovery: Bool,
     completion: @escaping (Error?) -> Void
   ) {
+    guard machine.manifest.kind == .macOS else {
+      vm.start { result in
+        if case .failure(let error) = result { completion(error) } else { completion(nil) }
+      }
+      return
+    }
     let options = VZMacOSVirtualMachineStartOptions()
     options.startUpFromMacOSRecovery = recovery
     if #available(macOS 27, *), let provisioning = provisioning as? VZMacGuestProvisioningOptions {
@@ -206,8 +226,14 @@ final class MacMachine: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
   /// the guest treats the volume's top as a disk of its own and writes `.Trashes` and
   /// `.fseventsd` there, which in a worktree is two folders git then reports. The fixed name is
   /// what keeps the path the same when the worktree changes under it.
-  static func share(_ directory: URL) -> VZDirectoryShare {
-    VZMultipleDirectoryShare(directories: [
+  ///
+  /// A Linux guest mounts the device itself, by its tag (`LinuxMachine.shareTag`), at a path its
+  /// template's fstab fixes, so there the worktree is the share and nothing is put around it.
+  static func share(_ directory: URL, kind: MachineKind) -> VZDirectoryShare {
+    if kind == .linux {
+      return VZSingleDirectoryShare(directory: VZSharedDirectory(url: directory, readOnly: false))
+    }
+    return VZMultipleDirectoryShare(directories: [
       "worktree": VZSharedDirectory(url: directory, readOnly: false)
     ])
   }
@@ -215,6 +241,9 @@ final class MacMachine: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
   static func configuration(for machine: Machine, sharedDirectory: URL?) throws
     -> VZVirtualMachineConfiguration
   {
+    if machine.manifest.kind == .linux {
+      return try LinuxMachine.configuration(for: machine, sharedDirectory: sharedDirectory)
+    }
     let manifest = machine.manifest
     guard
       let modelData = manifest.hardwareModel.flatMap({ Data(base64Encoded: $0) }),
@@ -279,7 +308,7 @@ final class MacMachine: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListen
       // guest first.
       let share = VZVirtioFileSystemDeviceConfiguration(
         tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag)
-      share.share = Self.share(sharedDirectory)
+      share.share = Self.share(sharedDirectory, kind: .macOS)
       configuration.directorySharingDevices = [share]
     }
     return configuration
@@ -331,6 +360,8 @@ final class MacTemplateBuilder {
     case preparing
     case installing(Double)
     case firstBoot
+    /// A Linux guest setting itself up from its cloud-init disc: the desktop, the agent, Rosetta.
+    case provisioning
     /// In Recovery, SIP being turned off by typed keystrokes.
     case disablingSIP
     /// SIP off; the agent's permissions being written.
@@ -346,7 +377,7 @@ final class MacTemplateBuilder {
   /// once by hukan to install its SSH key.
   let password = MacTemplateBuilder.makePassword()
   private(set) var machine: Machine?
-  private(set) var running: MacMachine? {
+  private(set) var running: VirtualizationMachine? {
     didSet { showOnScreen() }
   }
 
@@ -472,10 +503,11 @@ final class MacTemplateBuilder {
   }
 
   private func install(_ machine: Machine) {
-    let runner = MacMachine(machine: machine, sharedDirectory: nil)
+    let runner = VirtualizationMachine(machine: machine, sharedDirectory: nil)
     let vm: VZVirtualMachine
     do {
-      let configuration = try MacMachine.configuration(for: machine, sharedDirectory: nil)
+      let configuration = try VirtualizationMachine.configuration(
+        for: machine, sharedDirectory: nil)
       try configuration.validate()
       vm = VZVirtualMachine(configuration: configuration)
     } catch {
@@ -502,7 +534,7 @@ final class MacTemplateBuilder {
           // in no state to restore into again.
           self.waitForStop(vm) { self.prepare(image) }
         } else {
-          self.onPhase?(.failed(MacMachine.explain(error)))
+          self.onPhase?(.failed(VirtualizationMachine.explain(error)))
         }
       case .success:
         // The installer's machine goes on running for a moment after it reports, holding the
@@ -554,7 +586,7 @@ final class MacTemplateBuilder {
   /// Wait for both agents to say they are up, then switch SSH off and shut down as root through
   /// the agent. The user half only starts at login, so once the daemon has said hello and the
   /// user half has not, the daemon restarts the guest and automatic login brings it up. Nothing
-  /// here dials an agent that has not been heard from — see `MacMachine.agentsHeard`.
+  /// here dials an agent that has not been heard from — see `VirtualizationMachine.agentsHeard`.
   private func closeTheDoor() {
     guard let runner = running else { return }
     var restarted = false
@@ -624,7 +656,7 @@ final class MacTemplateBuilder {
   }
 
   /// The guest reads the account only on this boot, then sets itself up and logs in.
-  private func firstBoot(_ machine: Machine, runner: MacMachine, attemptsLeft: Int) {
+  private func firstBoot(_ machine: Machine, runner: VirtualizationMachine, attemptsLeft: Int) {
     guard #available(macOS 27, *) else {
       onPhase?(
         .failed("Setting up the guest's account needs macOS 27 on this Mac; macOS is installed."))
@@ -653,13 +685,13 @@ final class MacTemplateBuilder {
         if attemptsLeft > 1, Self.isLockContention(error) {
           DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             self.firstBoot(
-              machine, runner: MacMachine(machine: machine, sharedDirectory: nil),
+              machine, runner: VirtualizationMachine(machine: machine, sharedDirectory: nil),
               attemptsLeft: attemptsLeft - 1)
           }
           return
         }
         self.discard(machine)
-        self.onPhase?(.failed(MacMachine.explain(error)))
+        self.onPhase?(.failed(VirtualizationMachine.explain(error)))
       } else {
         self.onPhase?(.firstBoot)
         self.finishSetup(machine)
@@ -673,7 +705,7 @@ final class MacTemplateBuilder {
   private func stopped(_ machine: Machine, error: Error?) {
     running = nil
     if let error {
-      onPhase?(.failed(MacMachine.explain(error)))
+      onPhase?(.failed(VirtualizationMachine.explain(error)))
       return
     }
     switch stage {
@@ -700,12 +732,12 @@ final class MacTemplateBuilder {
   /// costs the whole install, and leaves nothing behind since Recovery changed nothing.
   private func bootRecovery(_ machine: Machine) {
     onPhase?(.disablingSIP)
-    let runner = MacMachine(machine: machine, sharedDirectory: nil)
+    let runner = VirtualizationMachine(machine: machine, sharedDirectory: nil)
     running = runner
     runner.onStop = { [weak self] error in self?.stopped(machine, error: error) }
     runner.start(recovery: true) { [weak self] error in
       guard let self, let vm = runner.vm else {
-        if let error { self?.onPhase?(.setupFailed(MacMachine.explain(error))) }
+        if let error { self?.onPhase?(.setupFailed(VirtualizationMachine.explain(error))) }
         return
       }
       // The machine exists only now that it has started; the view was set while it did not.
@@ -749,12 +781,12 @@ final class MacTemplateBuilder {
   /// and shut down — the template is then ready.
   private func bootToGrant(_ machine: Machine) {
     onPhase?(.granting)
-    let runner = MacMachine(machine: machine, sharedDirectory: nil)
+    let runner = VirtualizationMachine(machine: machine, sharedDirectory: nil)
     running = runner
     runner.onStop = { [weak self] error in self?.stopped(machine, error: error) }
     runner.start { [weak self] error in
       self?.showOnScreen()
-      if let error { self?.onPhase?(.setupFailed(MacMachine.explain(error))) }
+      if let error { self?.onPhase?(.setupFailed(VirtualizationMachine.explain(error))) }
     }
     let deadline = Date().addingTimeInterval(10 * 60)
     var granted = false

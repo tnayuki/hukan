@@ -160,7 +160,7 @@ enum MachineStore {
     let urls =
       (try? FileManager.default.contentsOfDirectory(
         at: imagesURL, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-    return urls.filter { ["ipsw", "iso"].contains($0.pathExtension.lowercased()) }
+    return urls.filter { MachineKind(image: $0) != nil }
       .sorted { $0.lastPathComponent > $1.lastPathComponent }
   }
 
@@ -250,6 +250,18 @@ enum MachineStore {
 enum MachineKind: String, Codable {
   case macOS
   case windows
+  /// Run by Virtualization.framework in this process, like macOS, with Rosetta to run x86_64.
+  case linux
+
+  /// What a template made from `image` is: an IPSW is macOS, Ubuntu's desktop ISO Linux, and any
+  /// other ISO Windows. Anything else is not an image a template is made from.
+  init?(image: URL) {
+    switch image.pathExtension.lowercased() {
+    case "ipsw": self = .macOS
+    case "iso": self = UbuntuRelease.isUbuntu(image) ? .linux : .windows
+    default: return nil
+    }
+  }
 }
 
 /// What a machine is, written beside its disk as `machine.json`. hukan's own format: it is read
@@ -274,7 +286,9 @@ struct MachineManifest: Codable, Equatable {
   var fitsWindow: Bool?
   /// macOS: `VZMacHardwareModel.dataRepresentation`, base64.
   var hardwareModel: String?
-  /// macOS: `VZMacMachineIdentifier.dataRepresentation`, base64.
+  /// macOS: `VZMacMachineIdentifier.dataRepresentation`; Linux: `VZGenericMachineIdentifier`'s.
+  /// Base64. A saved state restores only into the machine it was saved from, and this is part of
+  /// what says which.
   var machineIdentifier: String?
   /// The template this was copied from, if it was.
   var parent: UUID?
@@ -293,6 +307,10 @@ struct MachineManifest: Codable, Equatable {
   /// whatever the installed QEMU is newest at. A saved state only loads into the hardware it was
   /// saved from, and a versioned type is QEMU's promise that a later QEMU still builds that.
   var qemuMachine: String? = nil
+  /// Linux: whether the machine is set up for Rosetta (nil means yes — every template before this
+  /// was). Chosen when the template is made, since the guest's binfmt and amd64 packages are set
+  /// up then; without it the Rosetta share is not given either.
+  var rosetta: Bool? = nil
 
   static func randomMACAddress() -> String {
     // Locally administered, unicast: the first octet's low bits are 10.

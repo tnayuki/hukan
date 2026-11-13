@@ -405,6 +405,51 @@ Workspace (one window)
   sent at all but turned into the guest's agent selecting the input source. What a boot tells the
   guest — that Japanese input, and this Mac's time zone — is told every boot rather than once in
   the template, so a template outlives a change of keyboard or of place.
+- **A Linux machine runs in this process, like a macOS one, with Rosetta.** Virtualization.framework
+  runs Linux on its generic platform, so everything a macOS machine has — the screen as a view,
+  vsock to the agent, a saved state, a share moved with the session — comes with it, and QEMU is
+  not needed; Rosetta is the reason to want Linux here at all, since the program to run in it is
+  often an x86_64 one with no Arm build (Unity's editor is the case that asked for it). It is not
+  Rosetta's general-purpose half, which macOS retires after 27: from 27 the translation for Linux
+  guests is part of the system. **Rosetta is the template's choice, on unless turned off**: off,
+  the template has no Rosetta share, no binfmt entry and no amd64 package sources, so apt fetches
+  arm64 alone; it is decided when the template is made because the guest is set up for it then.
+  **Ubuntu, from its desktop ISO, by its own installer run
+  unattended**, as a macOS template is made from its IPSW and a Windows one from its ISO: a cloud
+  image was tried first and refused, being a disk with no desktop on it, so every template cost a
+  desktop's worth of downloads. Offered by LTS release rather than as "the latest", since which
+  release a kept template is decides what runs on it, and read from Canonical's own lists rather
+  than a table here. **The install runs with no network, and what the ISO lacks is fetched before
+  it, once.** The installer fetched the kernel itself at first — and Japanese input — so a dropped
+  connection failed a template minutes in, on an error screen the installer then waits on for
+  good. What the ISO lacks is a fact about the ISO, not the release: 26.04.1's install layer
+  carries its kernel and only needs keeping from upgrading it, while 24.04.5 has one only in the
+  live system. So what is missing — that kernel, `ibus-mozc`, their dependencies — is read from
+  Ubuntu's archive as the last part of the ISO's download, checked from Ubuntu's signing key down
+  to each package, and kept per ISO beside the virtio-win drivers, which is the same shape:
+  fetched once, then a template made with no network at all. Fetched with the ISO rather than
+  with the template, since the download is already the moment that wants a connection, and the
+  ISO is put in place only once they are all there: a fetch that fails or is cancelled takes the
+  ISO with it, so no ISO is offered that would have to go back to the network for a template. An
+  ISO added from a file is held to the same rule, its copy finished only once they are fetched;
+  making a template still fetches them should they be missing all the same. Deleting an ISO
+  deletes its packages, which were fetched for it alone. It reaches the installer as a repository
+  on the answers disc, and the installer is given no network, so nothing it would refresh, update
+  or look up can make a template depend on the connection again.
+  **`autoinstall` reaches the kernel's command line through a boot disk of hukan's**
+  carrying the ISO's own GRUB and a menu of its own, since the ISO's menu cannot be edited but by
+  keys typed against a timeout. **Its disks are `.cached`, never `.automatic`**: on the automatic
+  mode a Linux guest read back pages that were not what it wrote — journald failing, systemd
+  killed by SIGILL, the installer aborting — and the same install cached went through clean.
+  **GNOME, on X11 where the release has it**, because that is what Unity's editor is supported on
+  and what the agent's screen tools speak; 26.04 has no X11 session and is offered knowing those
+  tools fail there. **The agent is Go**, a static binary cross-compiled here that drives the
+  screen over the X11 protocol itself, so the guest needs nothing installed for it; the protocol
+  is a package of its own, which the macOS and Windows agents are to move onto in turn — Go
+  rather than Swift because Go builds the Windows one from this Mac, which Swift cannot. **There is
+  no GPU**: the framework gives a Linux guest a screen and
+  nothing to render with, so drawing is llvmpipe on the CPU. The account takes this Mac's user id,
+  so what either side writes in the shared worktree is the same user's.
 - **A Windows machine runs in QEMU from Homebrew, because Virtualization.framework cannot run
   Windows.** It is the one kind of machine that is not in this process. QEMU is a dependency of
   the cask, as ripgrep is: hukan is built for one person, who uses Windows guests, so the size it
@@ -1437,8 +1482,8 @@ Workspace (one window)
   it runs in, and it is not even in the command list a stream-json engine reports, so a composer
   that offered it would be offering a dead word. **The line this does not cross is the outbound
   one.** hukan opens no socket and sends no credential — the engine bridges, hukan only says
-  when — which is what leaves the cask check and a restore image the only requests hukan makes
-  for itself. What it does
+  when — which is what leaves the cask check and the images a template is made from the only
+  requests hukan makes for itself. What it does
   mean is that the conversation travels via Anthropic's servers, and that is why nothing about it
   is implicit.
   **Three facts arrive in the initialize reply and they are kept apart, because the engine keeps
@@ -1602,11 +1647,15 @@ Workspace (one window)
   npm updater and sets `autoUpdatesProtectedForNative`, which exempts its own — so there is nothing
   to tell you that will not have happened by morning anyway. The cask does not follow anything, so
   hukan is the one of the two that can go quietly stale.
-  **Three outbound requests are hukan's own, and the line around them is the whole of why they are
+  **Five outbound requests are hukan's own, and the line around them is the whole of why they are
   allowed.** The cask check: one fixed URL, GET, nothing sent, no credentials, nothing about the
   work. A macOS restore image, fetched only when someone asks for one in the template sheet, from
-  the address Virtualization.framework names. And the virtio-win drivers, from one fixed address,
-  once, the first time a Windows template is made. libgit2 is built network-less on purpose and
+  the address Virtualization.framework names. An Ubuntu desktop ISO, likewise only when asked for:
+  Canonical's list of supported LTS releases (`meta-release-lts`), each release's `SHA256SUMS` to
+  find its newest point release and hold the download to, and the ISO. And the virtio-win drivers, from one
+  fixed address, once, the first time a Windows template is made. And the packages an Ubuntu ISO
+  lacks for an install, from Ubuntu's archive, once per ISO, as the end of its download. libgit2
+  is built network-less on purpose and
   the browser's traffic is the user's own; these are neither, so they are stated as a constraint
   rather than as a beginning.
   **It reads the cask, not the tag's GitHub Release.** The two disagree for a minute at a time —
@@ -1925,8 +1974,9 @@ file-system-synchronized, so a new file under `Sources/` just appears. `Resource
 `Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework` and the
 query files under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
 step, not part of the build. `Resources/hukan-guest-agent` is the guest agent, built by
-`Vendor/build-guest-agent.sh`, and `Resources/hukan-guest-agent.exe` its Windows counterpart, built
-on the Mac by `Vendor/build-windows-agent.sh`; `Resources/Hukan.entitlements` carries the one entitlement
+`Vendor/build-guest-agent.sh`, `Resources/hukan-guest-agent.exe` its Windows counterpart, built
+on the Mac by `Vendor/build-windows-agent.sh`, and `Resources/hukan-guest-agent-linux` the Linux
+one, cross-compiled from Go by `Vendor/build-linux-agent.sh`; `Resources/Hukan.entitlements` carries the one entitlement
 Virtualization.framework requires, which ad-hoc signing can hold.
 
 ripgrep is the one program hukan runs. The files panel's filter and its

@@ -7,13 +7,13 @@ final class QEMUGuestChannelTests: XCTestCase {
   func testWindowsCommandsUsePowerShellAndUTF8WithoutShellQuotingTheCommand() {
     let command = "Write-Output '日本語 & <hello>'; $value = 42"
     XCTAssertEqual(
-      WorktreeDeskViewController.guestCommand(command, windows: true),
+      WorktreeDeskViewController.guestCommand(command, kind: .windows),
       [
         "powershell.exe", "-NoProfile", "-Command",
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; " + command,
       ])
     XCTAssertEqual(
-      WorktreeDeskViewController.guestCommand(command, windows: false),
+      WorktreeDeskViewController.guestCommand(command, kind: .macOS),
       ["/bin/zsh", "-c", command])
   }
 

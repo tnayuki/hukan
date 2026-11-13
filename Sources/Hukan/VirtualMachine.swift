@@ -48,12 +48,14 @@ final class MachinePaneViewController: NSViewController {
   /// quit is one that was running and is resumed.
   private(set) var isStopped = false
 
-  private var runner: MacMachine?
+  private var runner: VirtualizationMachine?
   /// A Windows machine runs in QEMU rather than in this process, with a screen of its own.
   private var qemu: QEMUMachine?
   private let qemuScreen = QEMUScreenView()
-  /// Whether this tab's machine is a Windows one, which has no resolution to change yet.
-  private(set) var runsOnQEMU = false
+  /// What system the machine runs, which decides how it is run and how its guest is spoken to.
+  let kind: MachineKind
+  /// Whether this tab's machine is a Windows one, run in QEMU rather than in this process.
+  var runsOnQEMU: Bool { kind == .windows }
   private let screen = MachineScreenView()
   private let statusLabel = NSTextField(wrappingLabelWithString: "")
   /// Turning while the status is something under way, so a wait reads as one and not as a tab that
@@ -71,7 +73,7 @@ final class MachinePaneViewController: NSViewController {
 
   init(template: Machine) {
     self.templateID = template.id
-    self.runsOnQEMU = template.manifest.kind == .windows
+    self.kind = template.manifest.kind
     self.name = template.manifest.title
     self.machineTitle = template.manifest.title
     super.init(nibName: nil, bundle: nil)
@@ -79,9 +81,9 @@ final class MachinePaneViewController: NSViewController {
 
   init(restoring state: MachineTabState) {
     self.templateID = nil
-    self.runsOnQEMU =
+    self.kind =
       UUID(uuidString: state.machineID).flatMap(MachineStore.session(id:))?.manifest.kind
-      == .windows
+      ?? .macOS
     self.machineID = state.machineID
     self.isStopped = state.stopped
     // Stopped is what it is, whether or not the tab has been looked at since.
@@ -265,6 +267,11 @@ final class MachinePaneViewController: NSViewController {
     guard request == resolutionRequest, runner?.vm != nil else { return }
     do {
       try display.reconfigure(sizeInPixels: target)
+      // GNOME takes the panel's new size as its mode by itself; there is nothing to ask.
+      if kind == .linux {
+        settle("guest mode \(Int(target.width))x\(Int(target.height))")
+        return
+      }
       matchGuestMode(to: target, request: request, triesLeft: 10)
     } catch {
       guard triesLeft > 0 else {
@@ -670,7 +677,7 @@ final class MachinePaneViewController: NSViewController {
     try? applyResolution()
     let resuming = FileManager.default.fileExists(atPath: machine.stateURL.path)
     show(status: resuming ? "Resuming \(machineTitle)…" : "Starting \(machineTitle)…")
-    let runner = MacMachine(machine: machine, sharedDirectory: sharedDirectory())
+    let runner = VirtualizationMachine(machine: machine, sharedDirectory: sharedDirectory())
     self.runner = runner
     agentUpdate = .unchecked
     modeAsked = false
@@ -691,7 +698,7 @@ final class MachinePaneViewController: NSViewController {
           self.whenStopped = nil
           whenStopped(error)
         } else if let error {
-          self.show(failure: MacMachine.explain(error), retry: true)
+          self.show(failure: VirtualizationMachine.explain(error), retry: true)
         } else {
           self.show(stopped: "\(self.machineTitle) shut down.")
         }
@@ -701,7 +708,7 @@ final class MachinePaneViewController: NSViewController {
       guard let self else { return }
       if let error {
         self.runner = nil
-        self.show(failure: MacMachine.explain(error), retry: true)
+        self.show(failure: VirtualizationMachine.explain(error), retry: true)
         return
       }
       self.screen.virtualMachine = runner.vm
@@ -761,7 +768,7 @@ final class MachinePaneViewController: NSViewController {
   /// A fixed size is put to the guest once per boot, when its agent is first usable.
   private var modeAsked = false
 
-  private func agentSaidHello(_ half: String, on runner: MacMachine) {
+  private func agentSaidHello(_ half: String, on runner: VirtualizationMachine) {
     switch agentUpdate {
     case .unchecked:
       if half == "root", let vm = runner.vm {
@@ -788,6 +795,19 @@ final class MachinePaneViewController: NSViewController {
     }
     guestPrepared = true
     let zone = TimeZone.current.identifier
+    if kind == .linux {
+      // A guest woken from a saved state keeps the clock it was saved with, however long ago.
+      let now =
+        runner?.resumedFromSave == true ? "date -s @\(Int(Date().timeIntervalSince1970)); " : ""
+      GuestAgent.exec(
+        ["/bin/sh", "-c", now + "timedatectl set-timezone \"$1\"", "sh", zone], on: vm,
+        admin: true
+      ) { _ in }
+      if MachineScreenView.hostIsJIS {
+        GuestAgent.exec(["/bin/sh", "-c", Self.linuxJapaneseInput], on: vm) { _ in }
+      }
+      return
+    }
     GuestAgent.exec(
       [
         "/bin/sh", "-c",
@@ -805,9 +825,37 @@ final class MachinePaneViewController: NSViewController {
     }
   }
 
+  /// A Linux guest's Japanese input, put to it each boot as a macOS guest's is: Mozc beside the US
+  /// layout in GNOME's input sources, starting in hiragana — it starts in direct input otherwise,
+  /// and かな would bring up Mozc only to type romaji. Nothing where the template has no Mozc.
+  static let linuxJapaneseInput = #"""
+    dpkg -s ibus-mozc >/dev/null 2>&1 || exit 0
+    gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 'mozc-jp')]"
+    f="$HOME/.config/mozc/ibus_config.textproto"
+    grep -q 'active_on_launch: True' "$f" 2>/dev/null && exit 0
+    mkdir -p "$(dirname "$f")"
+    printf '%s\n' 'engines {' '  name : "mozc-jp"' '  longname : "Mozc"' '  layout : "default"' \
+      '  layout_variant : ""' '  layout_option : ""' '  rank : 80' '}' 'active_on_launch: True' > "$f"
+    ibus restart
+    """#
+
   /// かな or 英数, pressed on the guest's screen.
   private func selectInputSource(_ japanese: Bool) {
     guard let vm = runner?.vm, agentsHeard.contains("user") else { return }
+    if kind == .linux {
+      // GNOME owns the input sources and has only a key to step through them, so the key is sent
+      // when the engine is not the one asked for — sent regardless, it would step away from it.
+      let wanted = japanese ? "mozc-jp" : "xkb:us::eng"
+      GuestAgent.exec(["ibus", "engine"], on: vm) { result in
+        guard case .success(let run) = result,
+          String(decoding: run.stdout, as: UTF8.self).trimmingCharacters(
+            in: .whitespacesAndNewlines)
+            != wanted
+        else { return }
+        GuestAgent.request(["op": "key", "key": "space", "modifiers": ["command"]], to: vm) { _ in }
+      }
+      return
+    }
     let id =
       japanese ? "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese" : "com.apple.keylayout.ABC"
     GuestAgent.request(["op": "input_source", "id": id], to: vm) { _ in }
@@ -815,7 +863,8 @@ final class MachinePaneViewController: NSViewController {
 
   private func askForGuestMode() {
     prepareGuest()
-    guard !modeAsked, agentsHeard.contains("user"), let size = fixedResolution else { return }
+    guard kind != .linux, !modeAsked, agentsHeard.contains("user"), let size = fixedResolution
+    else { return }
     modeAsked = true
     matchGuestMode(
       to: CGSize(width: size.width, height: size.height), request: resolutionRequest, triesLeft: 10)
@@ -823,12 +872,14 @@ final class MachinePaneViewController: NSViewController {
 
   /// Compared byte for byte rather than by a version number, so a build nobody remembered to
   /// number is still delivered. A machine this cannot be read from carries on with what it has.
-  private func checkAgent(on vm: VZVirtualMachine, runner: MacMachine) {
+  private func checkAgent(on vm: VZVirtualMachine, runner: VirtualizationMachine) {
     GuestAgent.read(GuestAgent.guestBinaryPath, on: vm, admin: true) { result in
       DispatchQueue.main.async { [weak self, weak runner] in
         guard let self, let runner, self.runner === runner else { return }
         guard case .success(let installed) = result,
-          let bundled = GuestAgent.bundledBinary.flatMap({ try? Data(contentsOf: $0) }),
+          let bundled = GuestAgent.bundledBinary(for: self.kind).flatMap({
+            try? Data(contentsOf: $0)
+          }),
           installed != bundled
         else {
           self.agentUpdate = .ready
@@ -846,16 +897,26 @@ final class MachinePaneViewController: NSViewController {
   /// port to dial. The permissions are written again first: a row goes in by path, but the first
   /// capture has tccd add the code requirement of the binary that made it, and an ad-hoc signature's
   /// requirement is its hash, so the new binary lost Screen Recording until the row was rewritten.
-  private func replaceAgent(with bundled: Data, on vm: VZVirtualMachine, runner: MacMachine) {
+  private func replaceAgent(
+    with bundled: Data, on vm: VZVirtualMachine, runner: VirtualizationMachine
+  ) {
     agentUpdate = .updating
     let path = GuestAgent.guestBinaryPath
     let incoming = path + ".new"
+    // On Linux both halves are systemd services that come back by themselves; matched by their
+    // whole command line, since a name past fifteen characters is not what `killall` sees there.
+    let stop =
+      kind == .linux ? "pkill -x -f '\(path) --(user|root)'" : "killall hukan-guest-agent"
+    let group = kind == .linux ? "root" : "wheel"
     let install =
-      "chmod 755 '\(incoming)' && chown root:wheel '\(incoming)' && mv -f '\(incoming)' '\(path)'"
-      + " && { (sleep 0.5; killall hukan-guest-agent) >/dev/null 2>&1 & }"
+      "chmod 755 '\(incoming)' && chown root:\(group) '\(incoming)' && mv -f '\(incoming)' '\(path)'"
+      + " && { (sleep 0.5; \(stop)) >/dev/null 2>&1 & }"
     let username = machineID.flatMap(UUID.init(uuidString:)).flatMap(MachineStore.session(id:))?
       .manifest.username
-    let grant = username.map { MacTemplateBuilder.grantScript(user: $0) } ?? "true"
+    // Screen Recording and the rest are macOS's; a Linux guest has nothing to grant.
+    let grant =
+      kind == .macOS
+      ? username.map { MacTemplateBuilder.grantScript(user: $0) } ?? "true" : "true"
     GuestAgent.write(bundled, to: incoming, on: vm, admin: true) { written in
       guard case .success = written else {
         DispatchQueue.main.async { [weak self] in self?.agentUpdate = .ready }
@@ -915,7 +976,7 @@ final class MachinePaneViewController: NSViewController {
       whenStopped = { [weak self] error in
         if let error {
           completion(.failure(error))
-          self?.show(failure: MacMachine.explain(error), retry: true)
+          self?.show(failure: VirtualizationMachine.explain(error), retry: true)
         } else {
           self?.copyToTemplate(machine, title: title, completion: completion)
         }

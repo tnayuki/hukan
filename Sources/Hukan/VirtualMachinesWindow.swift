@@ -35,9 +35,14 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
 
   private var builder: MacTemplateBuilder?
   private var windowsBuilder: WindowsTemplateBuilder?
-  private var isBuilding: Bool { builder != nil || windowsBuilder != nil }
-  private var buildTitle: String { builder?.request.title ?? windowsBuilder?.request.title ?? "" }
-  private var buildSymbol: String { windowsBuilder != nil ? "pc" : "apple.logo" }
+  private var linuxBuilder: LinuxTemplateBuilder?
+  private var isBuilding: Bool { builder != nil || windowsBuilder != nil || linuxBuilder != nil }
+  private var buildTitle: String {
+    builder?.request.title ?? windowsBuilder?.request.title ?? linuxBuilder?.request.title ?? ""
+  }
+  private var buildSymbol: String {
+    Self.symbol(windowsBuilder != nil ? .windows : linuxBuilder != nil ? .linux : .macOS)
+  }
   /// The latest IPSW being fetched into Images, while it is.
   private var download: RestoreImageDownload?
   private var buildPhase: MacTemplateBuilder.Phase?
@@ -316,7 +321,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
         symbol: buildSymbol, title: buildTitle,
         status: Self.describe(buildPhase), progress: Self.fraction(buildPhase), controls: [],
         facts: [],
-        screen: windowsBuilder?.screenView
+        screen: windowsBuilder?.screenView ?? linuxBuilder?.screenView
           ?? (builder?.screenMachine == nil ? nil : builder?.screenView),
         canShutDown: Self.isSetupFailed(buildPhase), password: nil)
     case .template(let machine), .session(let machine):
@@ -356,6 +361,9 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
       ("Created", manifest.created.formatted(date: .abbreviated, time: .shortened)),
     ]
     if let user = manifest.username { facts.append(("Account", user)) }
+    if manifest.kind == .linux {
+      facts.append(("Rosetta", manifest.rosetta == false ? "Off" : "On — x86_64 programs run"))
+    }
     return facts
   }
 
@@ -454,13 +462,19 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     menu.addItem(.separator())
     let latest = menu.addItem(
       withTitle: "Download the Latest macOS", action: #selector(downloadLatest), keyEquivalent: "")
+    // Ubuntu by release rather than "the latest": a template is kept for years, and which LTS it
+    // is decides what runs on it. Which there are is asked when this is chosen.
+    let ubuntu = [
+      menu.addItem(
+        withTitle: "Download Ubuntu…", action: #selector(downloadUbuntu), keyEquivalent: "")
+    ]
     let file = menu.addItem(
       withTitle: "Add Image from File…", action: #selector(addImageFromFile), keyEquivalent: "")
     let address = menu.addItem(
       withTitle: "Add Image from Address…", action: #selector(addImageFromAddress),
       keyEquivalent: "")
-    for item in [template, latest, file, address] { item.target = self }
-    for item in [latest, file, address] { item.isEnabled = download == nil }
+    for item in [template, latest, file, address] + ubuntu { item.target = self }
+    for item in [latest, file, address] + ubuntu { item.isEnabled = download == nil }
     menu.autoenablesItems = false
     let frame = addRemove.frame
     menu.popUp(positioning: nil, at: NSPoint(x: frame.minX, y: frame.minY), in: addRemove.superview)
@@ -468,10 +482,45 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
 
   @objc private func downloadLatest() { startDownload(.latest) }
 
+  /// The supported LTS releases, each at its newest point release, read from Canonical's lists
+  /// before anything is offered — and the one chosen downloaded and held to its checksum.
+  @objc private func downloadUbuntu() {
+    guard let window else { return }
+    UbuntuRelease.fetchAvailable { [weak self] result in
+      guard let self else { return }
+      switch result {
+      case .failure(let error):
+        let alert = NSAlert()
+        alert.messageText = "Ubuntu's releases could not be read."
+        alert.informativeText = error.localizedDescription
+        alert.beginSheetModal(for: window)
+      case .success(let releases):
+        let alert = NSAlert()
+        alert.messageText = "Download Ubuntu"
+        alert.informativeText =
+          "Downloads the desktop ISO for Apple silicon, checks Ubuntu's checksum, then fetches"
+          + " the packages needed to make a template offline."
+        let popUp = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 240, height: 26))
+        for release in releases { popUp.addItem(withTitle: release.title) }
+        alert.accessoryView = popUp
+        alert.addButton(withTitle: "Download")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+          guard response == .alertFirstButtonReturn,
+            releases.indices.contains(popUp.indexOfSelectedItem)
+          else { return }
+          let release = releases[popUp.indexOfSelectedItem]
+          self?.startDownload(.checked(release.url, sha256: release.sha256))
+        }
+      }
+    }
+  }
+
   @objc private func addImageFromFile() {
     guard let window else { return }
     let panel = NSOpenPanel()
-    // A macOS restore image or a Windows ISO: which one is made from it is read off its kind.
+    // A macOS restore image, a Windows ISO or Ubuntu's: which one is made from it is read off
+    // its kind.
     panel.allowedContentTypes = ["ipsw", "iso"].compactMap { UTType(filenameExtension: $0) }
     panel.beginSheetModal(for: window) { [weak self] response in
       guard response == .OK, let url = panel.url else { return }
@@ -514,6 +563,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     let sheet = NewMacTemplateSheet()
     sheet.onCreate = { [weak self] request in self?.startBuilding(request) }
     sheet.onCreateWindows = { [weak self] request in self?.startBuilding(request) }
+    sheet.onCreateLinux = { [weak self] request in self?.startBuilding(request) }
     newTemplateSheet = sheet
     window.beginSheet(sheet.window!) { [weak self] _ in self?.newTemplateSheet = nil }
   }
@@ -558,6 +608,27 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     alert.buttons.first?.hasDestructiveAction = true
     alert.beginSheetModal(for: window) { [weak self] response in
       guard response == .alertFirstButtonReturn else { return }
+      // An Ubuntu ISO's packages go with it: they were fetched for it alone. Finding them means
+      // reading the ISO through, so it is done off the main thread, before the ISO goes.
+      if case .image(let image) = selected, UbuntuRelease.title(ofImage: image) != nil {
+        DispatchQueue.global(qos: .userInitiated).async {
+          // Kept by content, so another ISO with the same content still needs them.
+          if let snapshot = UbuntuPackages.snapshot(for: image),
+            !MachineStore.images().contains(where: {
+              $0 != image && UbuntuRelease.title(ofImage: $0) != nil
+                && UbuntuPackages.snapshot(for: $0) == snapshot
+            })
+          {
+            try? FileManager.default.removeItem(at: snapshot)
+          }
+          let result = Result { try FileManager.default.removeItem(at: image) }
+          DispatchQueue.main.async {
+            if case .failure(let error) = result { NSAlert(error: error).runModal() }
+            self?.reload()
+          }
+        }
+        return
+      }
       do {
         try FileManager.default.removeItem(at: url)
         if case .session(let machine) = selected {
@@ -702,7 +773,14 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   func buildForScripting(title: String) -> String? {
     guard !isBuilding else { return "a template is already being made" }
     guard let image = MachineStore.images().first else { return "no image in Images" }
-    if image.pathExtension.lowercased() == "iso" {
+    if MachineKind(image: image) == .linux {
+      startBuilding(
+        LinuxTemplateBuilder.Request(
+          title: title, image: image, diskSize: 64 << 30, cpuCount: nil, memorySize: nil,
+          username: NSUserName()))
+      return nil
+    }
+    if MachineKind(image: image) == .windows {
       startBuilding(
         WindowsTemplateBuilder.Request(
           title: title, iso: image, diskSize: 64 << 30, cpuCount: nil, memorySize: nil,
@@ -754,6 +832,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     case .locating, nil: return "Finding the latest macOS…"
     case .copying: return "Copying…"
     case .downloading(let fraction): return "Downloading… \(Int(fraction * 100))%"
+    case .packages(let message): return message
     case .done: return "Downloaded"
     case .failed(let message): return message
     }
@@ -762,13 +841,14 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   private static func fraction(_ state: RestoreImageDownload.State?) -> Double? {
     switch state {
     case .downloading(let fraction): return fraction
-    case .locating, .copying, nil: return -1
+    case .locating, .copying, .packages, nil: return -1
     default: return nil
     }
   }
 
   static func imageTitle(name: String?) -> String {
     guard let name else { return "macOS" }
+    if let ubuntu = UbuntuRelease.title(ofImage: URL(fileURLWithPath: name)) { return ubuntu }
     return imageTitle(URL(fileURLWithPath: name))
   }
 
@@ -777,6 +857,18 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   private func startBuilding(_ request: WindowsTemplateBuilder.Request) {
     let builder = WindowsTemplateBuilder(request: request)
     windowsBuilder = builder
+    buildPhase = .preparing
+    builder.onPhase = { [weak self] phase in self?.advance(phase) }
+    reload()
+    if let index = rows.firstIndex(of: .building) {
+      table.selectRowIndexes([index], byExtendingSelection: false)
+    }
+    builder.run()
+  }
+
+  private func startBuilding(_ request: LinuxTemplateBuilder.Request) {
+    let builder = LinuxTemplateBuilder(request: request)
+    linuxBuilder = builder
     buildPhase = .preparing
     builder.onPhase = { [weak self] phase in self?.advance(phase) }
     reload()
@@ -804,10 +896,12 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     case .done:
       builder = nil
       windowsBuilder = nil
+      linuxBuilder = nil
       reload()
     case .failed(let message):
       builder = nil
       windowsBuilder = nil
+      linuxBuilder = nil
       reload()
       let alert = NSAlert()
       alert.messageText = "The template could not be made."
@@ -824,6 +918,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   }
 
   private func shutDownBuild() {
+    linuxBuilder?.requestShutdown()
     try? builder?.running?.requestShutdown()
   }
 
@@ -844,6 +939,8 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
         ? "Installing Windows… this takes about half an hour"
         : "Installing macOS… \(Int(fraction * 100))%"
     case .firstBoot: return "Setting up the account and the agent…"
+    case .provisioning: return "Installing Ubuntu… about ten minutes"
+
     case .disablingSIP: return "Turning SIP off in Recovery…"
     case .granting: return "Giving the agent its permissions…"
     case .setupFailed(let message):
@@ -857,7 +954,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   private static func fraction(_ phase: MacTemplateBuilder.Phase?) -> Double? {
     switch phase {
     case .installing(let fraction): return fraction
-    case .preparing, .firstBoot, .disablingSIP, .granting, nil: return -1
+    case .preparing, .firstBoot, .provisioning, .disablingSIP, .granting, nil: return -1
     default: return nil
     }
   }
@@ -868,7 +965,11 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   }
 
   private static func symbol(_ kind: MachineKind) -> String {
-    kind == .macOS ? "apple.logo" : "pc"
+    switch kind {
+    case .macOS: "apple.logo"
+    case .windows: "pc"
+    case .linux: "terminal"
+    }
   }
 
   /// `UniversalMac_27.2_26B123_Restore.ipsw` reads as `macOS 27.2 (26B123)`.
@@ -877,6 +978,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     if url.pathExtension.lowercased() == "ipsw", parts.count >= 3, parts[0] == "UniversalMac" {
       return "macOS \(parts[1]) (\(parts[2]))"
     }
+    if let ubuntu = UbuntuRelease.title(ofImage: url) { return ubuntu }
     return storedTitle(url) ?? url.lastPathComponent
   }
 
@@ -903,7 +1005,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   /// Reads the title of every ISO that has none yet, off the main thread, and lists them again.
   private func titleImages() {
     for url in MachineStore.images()
-    where url.pathExtension.lowercased() == "iso" && Self.storedTitle(url) == nil
+    where MachineKind(image: url) == .windows && Self.storedTitle(url) == nil
       && !titling.contains(url)
     {
       titling.insert(url)
@@ -1250,6 +1352,7 @@ private final class MachineDetailView: NSView {
 private final class NewMacTemplateSheet: NSWindowController {
   var onCreate: ((MacTemplateBuilder.Request) -> Void)?
   var onCreateWindows: ((WindowsTemplateBuilder.Request) -> Void)?
+  var onCreateLinux: ((LinuxTemplateBuilder.Request) -> Void)?
   /// Ask the window to fetch the latest IPSW; the sheet closes, since a download of tens of
   /// gigabytes is minutes away from being something to make a template from.
 
@@ -1261,6 +1364,11 @@ private final class NewMacTemplateSheet: NSWindowController {
   private let processorsPopUp = NSPopUpButton()
   private let memoryPopUp = NSPopUpButton()
   private let diskNote = NSTextField(labelWithString: "")
+  /// Linux: whether its machines are set up for Rosetta. On unless turned off, since an x86_64
+  /// program is often the reason to want Linux here at all.
+  private let rosettaCheckbox = NSButton(
+    checkboxWithTitle: "Run x86_64 programs", target: nil, action: nil)
+  private var rosettaRow: NSGridRow?
   /// The name the sheet filled in itself, so choosing another image can replace it — and a name
   /// the person typed is left alone.
   private var suggestedTitle = ""
@@ -1282,15 +1390,16 @@ private final class NewMacTemplateSheet: NSWindowController {
 
   private func build() {
     guard let content = window?.contentView else { return }
-    systemControl.segmentCount = 2
-    systemControl.setLabel("macOS", forSegment: 0)
-    systemControl.setLabel("Windows", forSegment: 1)
+    systemControl.segmentCount = Self.systems.count
+    for (index, kind) in Self.systems.enumerated() {
+      systemControl.setLabel(Self.name(of: kind), forSegment: index)
+    }
     systemControl.trackingMode = .selectOne
-    // Windows when there is nothing to make macOS from and an ISO to make Windows from.
+    // macOS when there is an image to make it from, and otherwise the first system there is one
+    // for.
     let images = MachineStore.images()
     systemControl.selectedSegment =
-      !images.contains(where: { Self.kind(of: $0) == .macOS })
-        && images.contains(where: { Self.kind(of: $0) == .windows }) ? 1 : 0
+      Self.systems.firstIndex { kind in images.contains { Self.kind(of: $0) == kind } } ?? 0
     systemControl.target = self
     systemControl.action = #selector(systemChosen)
     // Half the Mac's cores up to eight, and 8 GB: enough for a desktop and a build, and leaves
@@ -1323,9 +1432,15 @@ private final class NewMacTemplateSheet: NSWindowController {
       [NSTextField(labelWithString: "Disk:"), disk],
       [NSTextField(labelWithString: "Processors:"), processorsPopUp],
       [NSTextField(labelWithString: "Memory:"), memoryPopUp],
+      [NSTextField(labelWithString: "Rosetta:"), rosettaCheckbox],
     ])
     grid.column(at: 0).xPlacement = .trailing
     grid.column(at: 1).width = 280
+    rosettaRow = grid.row(at: grid.numberOfRows - 1)
+    rosettaCheckbox.state = .on
+    rosettaCheckbox.toolTip =
+      "x86_64 programs run through Rosetta, with amd64 packages installable by apt. Off, the"
+      + " template has neither, and apt fetches arm64 only."
     note.textColor = .secondaryLabelColor
     note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
@@ -1342,26 +1457,41 @@ private final class NewMacTemplateSheet: NSWindowController {
     note.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
     content.addSubview(stack)
     stack.pin(to: content)
+    rosettaRow?.isHidden = system != .linux
   }
 
-  private var system: MachineKind { systemControl.selectedSegment == 1 ? .windows : .macOS }
+  private static let systems: [MachineKind] = [.macOS, .windows, .linux]
 
-  /// An IPSW is macOS and an ISO is Windows; nothing else makes a template.
-  private static func kind(of image: URL) -> MachineKind? {
-    switch image.pathExtension.lowercased() {
-    case "ipsw": return .macOS
-    case "iso": return .windows
-    default: return nil
+  private static func name(of kind: MachineKind) -> String {
+    switch kind {
+    case .macOS: "macOS"
+    case .windows: "Windows"
+    case .linux: "Linux"
     }
   }
+
+  private var system: MachineKind {
+    Self.systems.indices.contains(systemControl.selectedSegment)
+      ? Self.systems[systemControl.selectedSegment] : .macOS
+  }
+
+  private static func kind(of image: URL) -> MachineKind? { MachineKind(image: image) }
 
   @objc private func systemChosen() {
     reloadImages()
     suggestTitle()
     describeAccount()
+    rosettaRow?.isHidden = system != .linux
   }
 
   private func describeAccount() {
+    if system == .linux {
+      note.stringValue =
+        "Ubuntu's installer runs by itself; any missing packages are fetched first. The"
+        + " account “\(NSUserName())” logs in by itself, and x86_64 programs run through Rosetta."
+        + " Its password is made up for you; copy it from the template when the guest asks for it."
+      return
+    }
     note.stringValue =
       system == .windows
       ? "The account “\(NSUserName())” is made during setup and logs in by itself. Its password is"
@@ -1392,7 +1522,7 @@ private final class NewMacTemplateSheet: NSWindowController {
 
   /// The image's own name — `macOS 27.2` — as the template's, until someone types one.
   private func suggestTitle() {
-    let fallback = system == .windows ? "Windows 11" : "macOS"
+    let fallback = system == .windows ? "Windows 11" : system == .linux ? "Ubuntu" : "macOS"
     titleField.placeholderString = fallback
     let suggestion =
       (imagePopUp.selectedItem?.representedObject as? URL).map(Self.versionTitle) ?? fallback
@@ -1408,6 +1538,7 @@ private final class NewMacTemplateSheet: NSWindowController {
     if kind(of: url) == .windows {
       return VirtualMachinesWindowController.storedTitle(url) ?? "Windows 11"
     }
+    if kind(of: url) == .linux { return VirtualMachinesWindowController.imageTitle(url) }
     let title = VirtualMachinesWindowController.imageTitle(url)
     guard let paren = title.range(of: " (") else { return title }
     return String(title[..<paren.lowerBound])
@@ -1430,7 +1561,17 @@ private final class NewMacTemplateSheet: NSWindowController {
     }
     let title = titleField.stringValue.isEmpty ? Self.versionTitle(ipsw) : titleField.stringValue
     let gigabytes = UInt64(diskField.integerValue)
-    if ipsw.pathExtension.lowercased() == "iso" {
+    if Self.kind(of: ipsw) == .linux {
+      window.sheetParent?.endSheet(window)
+      onCreateLinux?(
+        LinuxTemplateBuilder.Request(
+          title: title, image: ipsw, diskSize: gigabytes << 30,
+          cpuCount: processorsPopUp.selectedItem?.tag,
+          memorySize: memoryPopUp.selectedItem.map { UInt64($0.tag) << 30 },
+          username: NSUserName(), rosetta: rosettaCheckbox.state == .on))
+      return
+    }
+    if Self.kind(of: ipsw) == .windows {
       window.sheetParent?.endSheet(window)
       onCreateWindows?(
         WindowsTemplateBuilder.Request(

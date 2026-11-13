@@ -411,9 +411,10 @@ Automation.
 
 ### Virtual machines
 
-A session can have a macOS guest of its own, running inside hukan on Virtualization.framework and
-shown as a tab on its desk. **Window ▸ Virtual Machines** is where they are kept: templates, the
-copies sessions are using, and the restore images templates are made from. Disk space is shown as
+A session can have a macOS or Linux guest of its own, running inside hukan on
+Virtualization.framework and shown as a tab on its desk (Windows, below, runs in QEMU).
+**Window ▸ Virtual Machines** is where they are kept: templates, the copies sessions are using,
+and the restore images templates are made from. Disk space is shown as
 what each takes on this Mac, since a copy shares its blocks with its template.
 
 A template is made from a restore image in about ten minutes with nothing to answer. Images come
@@ -465,6 +466,22 @@ which the cask installs too, and moved there when the session moves, as on macOS
 has no file open there, until which it goes on seeing the one it had; without Samba
 the machine runs without it. Text on the clipboard crosses when the machine's screen takes the
 keyboard, into the guest, and when it gives it up, out of it.
+
+A Linux template is Ubuntu, made from Canonical's desktop ISO for Apple silicon: the window's
+`+` lists the supported LTS releases, each at its newest point release, downloads the one chosen
+and checks it against Ubuntu's own checksum. New Template… then runs Ubuntu's installer unattended
+— nothing to answer, about ten minutes — and sets up a GNOME desktop that signs in by itself
+(on X11 where the release still has it), the guest agent, and
+Rosetta, so x86_64 programs run, with amd64 packages installable by apt beside the arm64 ones —
+unless the sheet's Rosetta checkbox is turned off, which leaves all three out.
+The install itself needs no network: what the ISO lacks — 24.04.5's kernel, and Japanese input —
+is fetched from Ubuntu's archive and checked as the last part of the ISO's download, so making a
+template later needs no connection; if that part fails, the ISO is not kept either. An ISO added
+from a file is completed the same way. It runs inside hukan like a macOS machine and is saved and
+resumed the same way, with no limit on how many run at once; the
+worktree is `/worktree`, and moves with the session. The agent's commands run in a login bash, and
+its screenshots, clicks, typing and keys go through X11; there is no accessibility tree to read. A
+Linux guest that reboots stops, and Start brings it up again.
 
 ### Session lifetime
 

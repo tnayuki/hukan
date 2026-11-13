@@ -1,0 +1,132 @@
+import XCTest
+
+@testable import Hukan
+
+final class UbuntuPackagesTests: XCTestCase {
+  private func package(
+    _ name: String, _ version: String = "1", depends: String = "", provides: String = ""
+  ) -> UbuntuPackages.Package {
+    .init(fields: ["Package": name, "Version": version, "Depends": depends, "Provides": provides])
+  }
+
+  func testCancelledImageDownloadIgnoresRestart() {
+    let download = RestoreImageDownload(.file(URL(fileURLWithPath: "/missing.iso")))
+    download.cancel()
+    var changes = 0
+    download.onChange = { changes += 1 }
+    download.start()
+    XCTAssertEqual(download.state, .failed("Cancelled"))
+    XCTAssertEqual(changes, 0)
+  }
+
+  func testCancelledPreparationDoesNotReadISOOrFetch() {
+    let cancellation = Progress(totalUnitCount: 1)
+    cancellation.cancel()
+    XCTAssertThrowsError(
+      try UbuntuPackages.prepare(
+        iso: URL(fileURLWithPath: "/missing.iso"), cancellation: cancellation,
+        download: { _ in
+          XCTFail("A cancelled preparation must not fetch")
+          return Data()
+        })
+    ) { error in
+      XCTAssertTrue(error is CancellationError)
+    }
+  }
+
+  func testDebianVersions() {
+    for (a, b) in [
+      ("1~rc1", "1"), ("1.9", "1.10"), ("1.01-1", "1.1-2"), ("9", "1:1"), ("1+a", "1.1"),
+      ("1-1", "1-1ubuntu1"),
+    ] {
+      XCTAssertEqual(UbuntuPackages.compareVersions(a, b), .orderedAscending, "\(a), \(b)")
+      XCTAssertEqual(UbuntuPackages.compareVersions(b, a), .orderedDescending)
+    }
+    XCTAssertEqual(UbuntuPackages.compareVersions("1.01", "0:1.1-0"), .orderedSame)
+  }
+
+  func testManifestAcceptsFullAndDiffAndNormalizesArchitecture() {
+    XCTAssertEqual(
+      UbuntuPackages.manifest(
+        "libc6:arm64\t2.43\n+linux-image-7.0.0-30-generic\t7.0.0-30.30\n--- old\n+++ new\n-removed\t1\n"
+      ), ["libc6": "2.43", "linux-image-7.0.0-30-generic": "7.0.0-30.30"])
+  }
+
+  func testDependencyClosureKeepsISOVersionsAndResolvesAlternativesAndCycles() throws {
+    let available = [
+      package("kernel", depends: "image (= 7), libc6 (>= 2)"),
+      package("image", "8"), package("image", "7", depends: "modules (= 7)"),
+      package("modules", "7", depends: "image (= 7)"),
+      package("ibus-mozc", depends: "missing | mozc-server, libc6 (>= 2)"),
+      package("mozc-server"), package("libc6", "3"),
+    ]
+    let chosen = try UbuntuPackages.resolve(
+      roots: ["kernel", "ibus-mozc"], installed: ["libc6": "2"], available: available)
+    XCTAssertEqual(chosen.map(\.name), ["ibus-mozc", "image", "kernel", "modules", "mozc-server"])
+    XCTAssertEqual(chosen.first(where: { $0.name == "image" })?.version, "7")
+  }
+
+  func testUnresolvableVersionFailsInsteadOfKeepingPartialClosure() {
+    XCTAssertThrowsError(try UbuntuPackages.Requirement(":"))
+    XCTAssertThrowsError(try UbuntuPackages.Requirement("libc6 (~ 2)"))
+    XCTAssertThrowsError(
+      try UbuntuPackages.resolve(
+        roots: ["root"], installed: [:],
+        available: [package("root", depends: "image (= 7), image (>= 8)"), package("image", "7")]))
+  }
+
+  func testInstalledVirtualProviderAndPreDepends() throws {
+    var root = package("root", depends: "virtual-api (>= 2)").fields
+    root["Pre-Depends"] = "bootstrap"
+    let chosen = try UbuntuPackages.resolve(
+      roots: ["root"], installed: ["provider": "1"],
+      available: [
+        .init(fields: root), package("provider", provides: "virtual-api (= 2)"),
+        package("bootstrap"),
+      ])
+    XCTAssertEqual(chosen.map(\.name), ["bootstrap", "root"])
+  }
+
+  func testHashAndReleaseIndexVerificationRejectTampering() throws {
+    let data = Data("abc".utf8)
+    let hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    try UbuntuPackages.verify(data, sha256: hash, size: 3)
+    XCTAssertThrowsError(try UbuntuPackages.verify(data, sha256: hash, size: 4))
+    XCTAssertThrowsError(try UbuntuPackages.verify(Data("abd".utf8), sha256: hash, size: 3))
+    let release = ["SHA256": "\n \(hash) 3 main/binary-arm64/Packages.gz"]
+    try UbuntuPackages.verifyIndex(data, path: "main/binary-arm64/Packages.gz", release: release)
+    XCTAssertThrowsError(
+      try UbuntuPackages.verifyIndex(
+        data, path: "universe/binary-arm64/Packages.gz", release: release))
+  }
+
+  func testRealUbuntuSignatureAndTamperedRelease() throws {
+    // Official noble Release/Release.gpg from ports.ubuntu.com, retrieved 2026-11-16.
+    let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .appendingPathComponent("Fixtures/UbuntuArchive")
+    let release = try LinuxTemplateBuilder.tool(
+      "/usr/bin/gzip", ["-dc", fixture.appendingPathComponent("Release.gz").path])
+    let signature = try Data(contentsOf: fixture.appendingPathComponent("Release.gpg"))
+    try UbuntuArchiveSignature.verify(release: release, signature: signature)
+    XCTAssertThrowsError(
+      try UbuntuArchiveSignature.verify(
+        release: release + Data("tamper".utf8), signature: signature))
+    XCTAssertThrowsError(
+      try UbuntuArchiveSignature.verify(release: release, signature: signature.prefix(20)))
+    XCTAssertThrowsError(
+      try UbuntuArchiveSignature.verify(release: release, signature: Data([0xff, 0xff])))
+  }
+
+  func testRepositoryIndexRoundTripsMultilineAndRejectsUnsafePaths() throws {
+    let p = UbuntuPackages.Package(fields: [
+      "Package": "mozc", "Version": "1", "Filename": "pool/mozc.deb",
+      "Description": "input\n Japanese",
+    ])
+    XCTAssertEqual(
+      UbuntuPackages.stanzas(UbuntuPackages.indexText([p])).map(UbuntuPackages.Package.init), [p])
+    for path in ["/tmp/x", "../x", "pool/../../x", "pool//x", ""] {
+      XCTAssertFalse(UbuntuPackages.safePath(path))
+    }
+    XCTAssertTrue(UbuntuPackages.safePath("pool/main/m/mozc.deb"))
+  }
+}

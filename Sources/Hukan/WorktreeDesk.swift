@@ -1554,7 +1554,7 @@ final class WorktreeDeskViewController: NSViewController {
         pane.saveAsTemplate(title: name) { result in
           switch result {
           case .failure(let error):
-            completion(.error(MacMachine.explain(error)))
+            completion(.error(VirtualizationMachine.explain(error)))
           case .success(let template):
             Self.waitForAgent(tab) { outcome in
               if case .error = outcome { return completion(outcome) }
@@ -1644,10 +1644,14 @@ final class WorktreeDeskViewController: NSViewController {
       completion(.error(absence))
       return
     }
-    if pane.runsOnQEMU, call.name == "guest_screenshot",
-      let window = call.arguments["window"] as? Int
+    // A Linux guest's agent takes every screenshot itself, over X11; a Windows one takes a
+    // window's, the whole screen being QEMU's to give.
+    if call.name == "guest_screenshot",
+      pane.kind == .linux || (pane.runsOnQEMU && call.arguments["window"] != nil)
     {
-      GuestAgent.request(["op": "screenshot", "window": window], to: vm) { result in
+      var request: [String: Any] = ["op": "screenshot"]
+      if let window = call.arguments["window"] as? Int { request["window"] = window }
+      GuestAgent.request(request, to: vm) { result in
         switch result {
         case .failure(let error): completion(.error(error.localizedDescription))
         case .success(let reply):
@@ -1658,6 +1662,13 @@ final class WorktreeDeskViewController: NSViewController {
           completion(.image(png, mimeType: "image/png"))
         }
       }
+      return
+    }
+    if pane.kind == .linux, call.name.hasPrefix("guest_ui_") {
+      completion(
+        .error(
+          "A Linux guest has no accessibility tree to read here — use guest_screenshot and"
+            + " guest_click."))
       return
     }
     if let request = Self.interfaceRequest(for: call) {
@@ -1678,7 +1689,7 @@ final class WorktreeDeskViewController: NSViewController {
       }
       let timeout = (call.arguments["timeout"] as? Double) ?? 600
       GuestAgent.exec(
-        Self.guestCommand(command, windows: pane.runsOnQEMU),
+        Self.guestCommand(command, kind: pane.kind),
         on: vm, admin: admin, cwd: call.string("cwd"),
         timeout: timeout
       ) { result in
@@ -1748,14 +1759,19 @@ final class WorktreeDeskViewController: NSViewController {
     }
   }
 
-  // Internal so Windows shell selection can be tested without a running guest.
-  static func guestCommand(_ command: String, windows: Bool) -> [String] {
-    windows
-      ? [
+  // Internal so shell selection can be tested without a running guest.
+  static func guestCommand(_ command: String, kind: MachineKind) -> [String] {
+    switch kind {
+    case .windows:
+      return [
         "powershell.exe", "-NoProfile", "-Command",
         // Its output is otherwise in the system's code page, which is not what is read back.
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; " + command,
-      ] : ["/bin/zsh", "-c", command]
+      ]
+    // A login shell, so what the profile adds to PATH — ~/.local/bin, a toolchain's — is there.
+    case .linux: return ["/bin/bash", "-lc", command]
+    case .macOS: return ["/bin/zsh", "-c", command]
+    }
   }
 
   /// The guest agent's request for a tool that reads or drives the interface — each is a call's
