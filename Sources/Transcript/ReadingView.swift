@@ -861,14 +861,16 @@ public final class ReadingView: NSView {
     menu(at: convert(event.locationInWindow, from: nil))
   }
 
-  /// A link under the pointer offers what its click and ⌘-click do, and its address; a file named
-  /// under it offers to be opened here (when the editor can show it), in another application,
-  /// looked at, or revealed in the Finder, and a directory to be opened in the Finder; a selection offers Copy whether or not the press landed on either. The fold link is
-  /// not an address and offers nothing — but the path on a tool call's line is a file like any
-  /// other.
+  /// A link under the pointer offers what its click and ⌘-click do, and its address — and so does
+  /// a URL inside code, which is never coloured or followed by a click; a file named under it
+  /// offers to be opened here (when the editor can show it), in another application, looked at,
+  /// or revealed in the Finder, and a directory to be opened in the Finder; a selection offers
+  /// Copy whether or not the press landed on either. The fold link is not an address and offers
+  /// nothing — but the path on a tool call's line is a file like any other.
   func menu(at point: CGPoint) -> NSMenu? {
     let url = link(at: point)?.url ?? tableLink(at: point)
-    let pressed = url == Transcript.toolCallLinkURL ? nil : url
+    let linked = url == Transcript.toolCallLinkURL ? nil : url
+    let pressed = linked ?? codeURL(at: point)
     let file = pressed == nil ? file(at: point) : nil
     let selected = selectedRange.length > 0 || selectedTable?.table.selectedText() != nil
     guard pressed != nil || file != nil || selected else { return nil }
@@ -934,14 +936,59 @@ public final class ReadingView: NSView {
   /// only once someone has right-clicked, which is the one moment the question is cheap: one
   /// token, one stat.
   private func file(at point: CGPoint) -> URL? {
-    guard let resolvePath, let offset = characterOffset(at: point) else { return nil }
+    guard let resolvePath, let token = token(at: point) else { return nil }
+    return resolvePath(token)
+  }
+
+  /// A URL under `point` — asked for code, where a URL is quoted rather than linked, so the menu
+  /// is the one way to follow it. Not the double-click's token: that rule words a query string at
+  /// every `?`, `=` and `&`, so the run between spaces is searched instead, for the last
+  /// `http(s)://` that starts before the pointer, and the URL is cut the way the prose's autolink
+  /// cuts it. The pointer has to land inside what that leaves.
+  private func codeURL(at point: CGPoint) -> URL? {
+    guard let offset = characterOffset(at: point), let segment = segment(containing: offset),
+      segment.length > 0
+    else { return nil }
+    let string = segment.storage.string as NSString
+    let local = min(offset - segment.start, segment.length - 1)
+    let spaces = CharacterSet.whitespacesAndNewlines
+    var start = local
+    while start > 0, let scalar = Unicode.Scalar(string.character(at: start - 1)),
+      !spaces.contains(scalar)
+    {
+      start -= 1
+    }
+    var end = local
+    while end < string.length, let scalar = Unicode.Scalar(string.character(at: end)),
+      !spaces.contains(scalar)
+    {
+      end += 1
+    }
+    let run = string.substring(with: NSRange(location: start, length: end - start))
+    let click = run.utf16.index(run.utf16.startIndex, offsetBy: local - start)
+    // Searched a scheme's length past the pointer, so a press on `https` itself still counts.
+    let limit = run.utf16.index(click, offsetBy: 8, limitedBy: run.endIndex) ?? run.endIndex
+    guard
+      let scheme = ["https://", "http://"]
+        .compactMap({ run.range(of: $0, options: .backwards, range: run.startIndex..<limit) })
+        .filter({ $0.lowerBound <= click })
+        .max(by: { $0.lowerBound < $1.lowerBound })
+    else { return nil }
+    let tail = run[scheme.lowerBound...]
+    let cut = Transcript.autolinkEnd(of: tail)
+    guard cut > scheme.upperBound, click < cut else { return nil }
+    return URL(string: String(tail[..<cut]))
+  }
+
+  /// The token a double-click at `point` would select, if it lies inside one segment.
+  private func token(at point: CGPoint) -> String? {
+    guard let offset = characterOffset(at: point) else { return nil }
     let word = wordRange(at: offset)
     guard word.length > 0, let segment = segment(containing: word.location),
       NSMaxRange(word) <= segment.start + segment.length
     else { return nil }
-    let token = (segment.storage.string as NSString).substring(
+    return (segment.storage.string as NSString).substring(
       with: NSRange(location: word.location - segment.start, length: word.length))
-    return resolvePath(token)
   }
 
   @objc func openFile(_ sender: NSMenuItem) {

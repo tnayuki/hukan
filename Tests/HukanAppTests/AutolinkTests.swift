@@ -106,6 +106,51 @@ final class AutolinkTests: XCTestCase {
     XCTAssertNil(textView.menu(at: CGPoint(x: word.midX, y: word.midY)))
   }
 
+  /// A URL inside code is quoted, so it is never coloured and a click does not follow it — but a
+  /// right-click offers it as a link, in a code span and in a fenced block alike, cut where the
+  /// prose's autolink would cut it.
+  func testARightClickOnAURLInCodeOffersItAsALink() throws {
+    _ = NSApplication.shared
+    let (scrollView, textView) = makeReadingView()
+    scrollView.frame = NSRect(x: 0, y: 0, width: 600, height: 300)
+    textView.frame = NSRect(x: 0, y: 0, width: 600, height: 300)
+    textView.setContent(
+      Transcript.markdown(
+        "See `https://github.com/o/r/pull/42.` now\n\n```\ncurl https://example.com/a?b=c_d&e=1\n```\n"
+      ))
+    var opened: [URL] = []
+    textView.onOpenURL = { url in
+      opened.append(url)
+      return true
+    }
+    let text = textView.string as NSString
+    func menu(on needle: String) throws -> NSMenu {
+      let at = text.range(of: needle).location
+      XCTAssertNotEqual(at, NSNotFound, needle)
+      let rect = try XCTUnwrap(textView.rects(for: NSRange(location: at, length: 1)).first)
+      return try XCTUnwrap(textView.menu(at: CGPoint(x: rect.midX, y: rect.midY)), needle)
+    }
+
+    let span = try menu(on: "pull")
+    XCTAssertEqual(
+      span.items.map(\.title), ["Open Link", "Open Link in Default Browser", "Copy Link"])
+    textView.openLink(span.items[0])
+    XCTAssertEqual(try menu(on: "https://github").items.first?.title, "Open Link", "on the scheme")
+    let fenced = try menu(on: "b=c")
+    textView.openLink(fenced.items[0])
+    XCTAssertEqual(
+      opened,
+      [
+        URL(string: "https://github.com/o/r/pull/42")!,
+        URL(string: "https://example.com/a?b=c_d&e=1")!,
+      ])
+
+    // The word beside it is still nothing.
+    let word = try XCTUnwrap(
+      textView.rects(for: NSRange(location: text.range(of: "curl").location, length: 1)).first)
+    XCTAssertNil(textView.menu(at: CGPoint(x: word.midX, y: word.midY)))
+  }
+
   /// The fold link and a real link share the `.link` attribute — the delegate tells them apart by
   /// value — so a plan whose text contains a URL must keep both working.
   func testAnOpenedPlanKeepsBothKindsOfLink() {

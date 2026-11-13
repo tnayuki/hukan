@@ -858,8 +858,8 @@ public enum Transcript {
   /// Where an autolinked URL stops: the first space, less the punctuation that belongs to the
   /// sentence rather than the address. A closing bracket is given back only when it closes
   /// nothing inside the URL, so `(https://example.com/a_(b))` keeps its inner pair and loses the
-  /// outer one.
-  private static func autolinkEnd(of text: Substring) -> Substring.Index {
+  /// outer one. The reading view asks it too, for a URL right-clicked inside code.
+  static func autolinkEnd(of text: Substring) -> Substring.Index {
     var end = text.firstIndex(where: { $0.isWhitespace }) ?? text.endIndex
     let trailing = Set(".,;:!?'\"\u{201d}\u{2019}\u{3001}\u{3002}\u{ff0c}\u{ff0e}")
     while end > text.startIndex {

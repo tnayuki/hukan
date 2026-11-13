@@ -241,7 +241,8 @@ scheme, a slash or a dot makes it an address, anything else is a search. A load 
 so on the page — with what went wrong, the address it was, and the offer to search for what you
 typed instead, or to open it in Safari. A link in the transcript opens here rather than in the
 default browser, ⌘-click sends it out, and a bare URL is a link (code, quoted or fenced, is not).
-Right-clicking one offers both of those and copying its address.
+Right-clicking one offers both of those and copying its address, and so does right-clicking a
+URL inside code, which a click still does not follow.
 A path in the transcript is not coloured as a link, but right-clicking one — in a code span or
 on a tool call's line, what a double-click selects, `:120` and all — offers to open the file in
 a tab here, to open it with another application, to look at it in Quick Look, or to reveal it
