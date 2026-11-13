@@ -244,9 +244,9 @@ default browser, ⌘-click sends it out, and a bare URL is a link (code, quoted 
 Right-clicking one offers both of those and copying its address.
 A path in the transcript is not coloured as a link, but right-clicking one — in a code span or
 on a tool call's line, what a double-click selects, `:120` and all — offers to open the file in
-a tab here, to open it with another application, or to look at it in Quick Look. A relative path
-is read against the worktree the session stands in, and a path with no file behind it offers
-nothing.
+a tab here, to open it with another application, to look at it in Quick Look, or to reveal it
+in the Finder. A relative path is read against the worktree the session stands in, and a path
+with no file behind it offers nothing.
 Inside a page ⌘ is the browser's instead: ⌘-click opens the link as a tab of its own, behind the
 one being read, and ⌘⇧-click opens it in front.
 The tab does what a page expects of its browser: popups open as tabs and close themselves when

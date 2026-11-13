@@ -858,9 +858,10 @@ public final class ReadingView: NSView {
   }
 
   /// A link under the pointer offers what its click and ⌘-click do, and its address; a file named
-  /// under it offers to be opened here, in another application, or looked at; a selection offers
-  /// Copy whether or not the press landed on either. The fold link is not an address and offers
-  /// nothing — but the path on a tool call's line is a file like any other.
+  /// under it offers to be opened here, in another application, looked at, or revealed in the
+  /// Finder; a selection offers Copy whether or not the press landed on either. The fold link is
+  /// not an address and offers nothing — but the path on a tool call's line is a file like any
+  /// other.
   func menu(at point: CGPoint) -> NSMenu? {
     let url = link(at: point)?.url ?? tableLink(at: point)
     let pressed = url == Transcript.toolCallLinkURL ? nil : url
@@ -881,6 +882,12 @@ public final class ReadingView: NSView {
       look.target = self
       look.representedObject = file
       menu.addItem(look)
+      // In the files panel's order and under its name: Open, Open With, Quick Look, then this.
+      let reveal = NSMenuItem(
+        title: "Reveal in Finder", action: #selector(revealFileInFinder(_:)), keyEquivalent: "")
+      reveal.target = self
+      reveal.representedObject = file
+      menu.addItem(reveal)
     }
     if let pressed {
       for (title, action) in [
@@ -925,6 +932,11 @@ public final class ReadingView: NSView {
   @objc func openFile(_ sender: NSMenuItem) {
     guard let url = sender.representedObject as? URL else { return }
     onOpenFile?(url)
+  }
+
+  @objc func revealFileInFinder(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    NSWorkspace.shared.activateFileViewerSelecting([url])
   }
 
   /// The menu opens the panel rather than toggling it, as the files panel's item does. The view

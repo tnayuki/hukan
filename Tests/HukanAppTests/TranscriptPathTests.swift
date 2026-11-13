@@ -68,7 +68,10 @@ final class TranscriptPathTests: XCTestCase {
     let rect = try XCTUnwrap(textView.rects(for: NSRange(location: at, length: 1)).first)
     let menu = try XCTUnwrap(textView.menu(at: CGPoint(x: rect.midX, y: rect.midY)))
     XCTAssertEqual(menu.items.first?.title, "Open “Model.swift”")
-    XCTAssertTrue(menu.items.contains { $0.title == "Quick Look" }, "\(menu.items.map(\.title))")
+    // Open With is there only when some application claims a `.swift`, which is the machine's.
+    XCTAssertEqual(
+      menu.items.map(\.title).filter { $0 != "Open With" },
+      ["Open “Model.swift”", "Quick Look", "Reveal in Finder"])
     textView.openFile(menu.items[0])
     XCTAssertEqual(opened, [model])
 
