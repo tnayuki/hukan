@@ -787,8 +787,9 @@ final class MachinePaneViewController: NSViewController {
   private var guestPrepared = false
 
   /// What a guest is told each boot rather than once in its template, since what it describes —
-  /// the Mac's keyboard and its time zone — can change under a template made long before: the
-  /// Japanese input a JIS keyboard expects, and the zone this Mac is in.
+  /// the Mac's keyboard, its time zone and its scroll direction — can change under a template made
+  /// long before: the Japanese input a JIS keyboard expects, the zone this Mac is in, and on Linux
+  /// which way the wheel goes.
   private func prepareGuest() {
     guard !guestPrepared, let vm = runner?.vm, agentsHeard.isSuperset(of: ["user", "root"]) else {
       return
@@ -802,6 +803,12 @@ final class MachinePaneViewController: NSViewController {
       GuestAgent.exec(
         ["/bin/sh", "-c", now + "timedatectl set-timezone \"$1\"", "sh", zone], on: vm,
         admin: true
+      ) { _ in }
+      GuestAgent.exec(
+        [
+          "gsettings", "set", "org.gnome.desktop.peripherals.mouse", "natural-scroll",
+          Self.hostScrollsNaturally ? "true" : "false",
+        ], on: vm
       ) { _ in }
       if MachineScreenView.hostIsJIS {
         GuestAgent.exec(["/bin/sh", "-c", Self.linuxJapaneseInput], on: vm) { _ in }
@@ -823,6 +830,14 @@ final class MachinePaneViewController: NSViewController {
     ] {
       GuestAgent.request(["op": "input_source", "id": id, "enable": true], to: vm) { _ in }
     }
+  }
+
+  /// Whether this Mac scrolls naturally — on unless it has been turned off, which is the only time
+  /// the key is written. A Linux guest is handed the wheel in the device's own direction, which its
+  /// desktop reads as a mouse's, so a Mac scrolling naturally scrolled the guest backwards until the
+  /// guest's mouse was told to scroll naturally too.
+  static var hostScrollsNaturally: Bool {
+    UserDefaults.standard.object(forKey: "com.apple.swipescrolldirection") as? Bool ?? true
   }
 
   /// A Linux guest's Japanese input, put to it each boot as a macOS guest's is: Mozc beside the US
