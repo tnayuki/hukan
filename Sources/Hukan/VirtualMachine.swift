@@ -155,6 +155,7 @@ final class MachinePaneViewController: NSViewController {
     resolutionBeforeChange = fixedResolution
     fixedResolution = size
     onResolutionChange?()
+    matchGuestScale()
     if let id = machineID.flatMap(UUID.init(uuidString:)),
       var machine = MachineStore.session(
         id: id)
@@ -305,6 +306,7 @@ final class MachinePaneViewController: NSViewController {
     screen.automaticallyReconfiguresDisplay = fixedResolution == nil
     screen.isHidden = true
     screen.onInputSourceKey = { [weak self] japanese in self?.selectInputSource(japanese) }
+    screen.onBackingChange = { [weak self] in self?.matchGuestScale() }
     root.addSubview(screen)
     screen.pin(to: root)
     qemuScreen.isHidden = true
@@ -682,6 +684,7 @@ final class MachinePaneViewController: NSViewController {
     agentUpdate = .unchecked
     modeAsked = false
     guestPrepared = false
+    guestScale = nil
     runner.onAgentHello = { [weak self, weak runner] half in
       guard let self, let runner, self.runner === runner else { return }
       self.agentSaidHello(half, on: runner)
@@ -813,6 +816,7 @@ final class MachinePaneViewController: NSViewController {
       if MachineScreenView.hostIsJIS {
         GuestAgent.exec(["/bin/sh", "-c", Self.linuxJapaneseInput], on: vm) { _ in }
       }
+      matchGuestScale()
       return
     }
     GuestAgent.exec(
@@ -839,6 +843,86 @@ final class MachinePaneViewController: NSViewController {
   static var hostScrollsNaturally: Bool {
     UserDefaults.standard.object(forKey: "com.apple.swipescrolldirection") as? Bool ?? true
   }
+
+  /// The scale a Linux guest was last told to draw at, so a tab moved between two displays of the
+  /// same scale asks it nothing.
+  private var guestScale: Int?
+
+  /// A Linux guest draws at this Mac's scale while it follows the tab, and at 1× while it is held.
+  /// Following, it is handed the tab's device pixels, and GNOME left to itself drew them at 1×, so
+  /// a Retina tab showed a desktop at half the size of the Mac's around it. Held, the tab already
+  /// scales the guest, and the pixels an agent aims at by coordinates must stay the guest's own.
+  private func matchGuestScale() {
+    guard kind == .linux, guestPrepared, let vm = runner?.vm else { return }
+    let backing = screen.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+    let scale = fixedResolution == nil ? max(1, Int(backing.rounded())) : 1
+    guard scale != guestScale else { return }
+    guestScale = scale
+    GuestAgent.exec(
+      ["/bin/sh", "-c", Self.linuxScaleLauncher, "sh", Self.linuxScaleKeeper, String(scale)], on: vm
+    ) { _ in }
+  }
+
+  /// Starts the keeper below in place of the one already running. The interface's own
+  /// `scaling-factor` is put back: X11's mutter never reads it for the screen, while the settings
+  /// daemon hands it to every GTK app as theirs, so a 2 left there would double them at 1×.
+  static let linuxScaleLauncher = #"""
+    gsettings reset org.gnome.desktop.interface scaling-factor
+    pkill -f '^python3 -c # hukan-scale'
+    setsid -f python3 -c "$1" "$2" </dev/null >/dev/null 2>&1
+    """#
+
+  /// Holds GNOME's screen at a scale through mutter's own display configuration, the call its
+  /// Displays panel makes. Held rather than set once, because a tab that follows its window hands
+  /// the guest a new mode at every resize, and mutter answers each one with a layout of its own at
+  /// 100% — so the keeper puts the scale back whenever the monitors change, and does nothing when
+  /// they are already at it, which is also what keeps its own change from calling it again.
+  /// Temporary, the method that writes no `monitors.xml`: the scale is this Mac's, told each boot.
+  static let linuxScaleKeeper = #"""
+    # hukan-scale
+    import sys
+    from gi.repository import Gio, GLib
+
+    want = float(sys.argv[1])
+    name = "org.gnome.Mutter.DisplayConfig"
+    path = "/org/gnome/Mutter/DisplayConfig"
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    config = Gio.DBusProxy.new_sync(bus, 0, None, name, path, name, None)
+
+
+    def apply(*_):
+        serial, monitors, logical, _props = config.call_sync(
+            "GetCurrentState", None, 0, -1, None).unpack()
+        current = {}
+        for spec, modes, _ in monitors:
+            for mode in modes:
+                if mode[6].get("is-current"):
+                    current[spec[0]] = mode
+        wanted = []
+        for x, y, scale, transform, primary, specs, _ in logical:
+            chosen = []
+            for spec in specs:
+                mode = current.get(spec[0])
+                if mode is None:
+                    return
+                chosen.append(mode)
+            supported = [s for m in chosen for s in m[5]] or [scale]
+            nearest = min(supported, key=lambda s: abs(s - want))
+            wanted.append((x, y, nearest, transform, primary,
+                           [(s[0], m[0], {}) for s, m in zip(specs, chosen)], scale))
+        if all(abs(w[2] - w[6]) < 0.01 for w in wanted):
+            return
+        config.call_sync(
+            "ApplyMonitorsConfig",
+            GLib.Variant("(uua(iiduba(ssa{sv}))a{sv})",
+                         (serial, 1, [w[:6] for w in wanted], {})),
+            0, -1, None)
+
+
+    config.connect("g-signal", lambda _p, _s, signal, _a: signal == "MonitorsChanged" and apply())
+    apply()
+    GLib.MainLoop().run()
+    """#
 
   /// A Linux guest's Japanese input, put to it each boot as a macOS guest's is: Mozc beside the US
   /// layout in GNOME's input sources, starting in hiragana — it starts in direct input otherwise,
@@ -1215,6 +1299,13 @@ final class VirtualMachinesMenu: NSMenu, NSMenuDelegate {
 final class MachineScreenView: VZVirtualMachineView {
   /// 英数 (false) or かな (true) was pressed.
   var onInputSourceKey: ((Bool) -> Void)?
+  /// The view's window moved to a display of another scale, or the view to another window.
+  var onBackingChange: (() -> Void)?
+
+  override func viewDidChangeBackingProperties() {
+    super.viewDidChangeBackingProperties()
+    onBackingChange?()
+  }
 
   static var hostIsJIS: Bool {
     KBGetLayoutType(Int16(CGEventSource(stateID: .hidSystemState)?.keyboardType ?? 0))
