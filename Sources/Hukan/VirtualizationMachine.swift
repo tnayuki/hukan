@@ -626,8 +626,8 @@ final class MacTemplateBuilder {
   /// Once the first boot has made the account: put the guest agent in over SSH, check both its
   /// halves answer over vsock, then — through the agent, not SSH — turn Remote Login back off and
   /// shut the guest down, whose stopping is what publishes the template. What the template keeps
-  /// is the agent and nothing else: no key, no passwordless sudo, no SSH listening. If any step
-  /// cannot be done, the guest keeps running and the window's button shuts it down instead.
+  /// is the agent and sudo without a password, and nothing else: no key, no SSH listening. If any
+  /// step cannot be done, the guest keeps running and the window's button shuts it down instead.
   private func finishSetup(_ machine: Machine) {
     let mac = machine.manifest.macAddress
     let user = request.username

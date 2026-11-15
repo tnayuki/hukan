@@ -173,6 +173,10 @@ enum MachineGuest {
       // 125, "Domain does not support specified action"); a job in /Library/LaunchAgents is
       // loaded at login instead, so the caller restarts the guest and automatic login does it.
       "launchctl bootstrap system \(daemon)",
+      // sudo asks for nothing, as a Linux guest's does and Windows' UAC is off: a prompt in a
+      // machine with nobody at it is a wall, and the password is in the template for whoever is.
+      "echo \"\(user) ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/hukan",
+      "chmod 440 /etc/sudoers.d/hukan",
       "rm -f /tmp/hukan-guest-agent /tmp/\(GuestAgent.agentLabel).plist"
         + " /tmp/\(GuestAgent.daemonLabel).plist",
     ].joined(separator: " && ")
