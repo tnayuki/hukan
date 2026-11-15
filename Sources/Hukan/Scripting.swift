@@ -364,7 +364,8 @@ final class MachinesCommand: NSScriptCommand {
       guard guardedScriptingEnabled() else {
         return fail("building is honoured only under HUKAN_SCRIPTING_GUARDED=1")
       }
-      if let problem = window.buildForScripting(title: title) { return fail(problem) }
+      let gpu = evaluatedArguments?["gpu"] as? Bool ?? false
+      if let problem = window.buildForScripting(title: title, gpu: gpu) { return fail(problem) }
       return "building \(title)"
     }
     return window.scriptingReport

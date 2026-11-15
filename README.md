@@ -484,6 +484,12 @@ worktree is `/worktree`, and moves with the session. The agent's commands run in
 its screenshots, clicks, typing and keys go through X11; there is no accessibility tree to read. A
 Linux guest that reboots stops, and Start brings it up again.
 
+On macOS 27 a Linux template can be made with a GPU (the sheet's GPU checkbox, “Run OpenGL on
+this Mac's GPU”): its machines' OpenGL runs on this Mac's GPU, 4.1 core, and their desktop is
+drawn by it — enough for Unity's editor on its default OpenGL. Such a machine cannot be
+suspended — its GPU's state is not saved — so its Suspend is off and hukan quitting shuts it
+down. Each such machine renders in a process of its own, so several can run at once.
+
 ### Session lifetime
 
 Nothing leaves the rail by age, and nothing is deleted from disk except by asking — Delete

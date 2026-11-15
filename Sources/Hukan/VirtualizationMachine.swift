@@ -13,7 +13,20 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
   VZVirtioSocketListenerDelegate
 {
   let machine: Machine
-  private(set) var vm: VZVirtualMachine?
+  private(set) var vm: VZVirtualMachine? {
+    didSet { if vm == nil { releaseGPU() } }
+  }
+  /// A Linux machine's GPU (`VirglGPU`), typed as `AnyObject` so the rest of this builds against the
+  /// systems before macOS 27, which have no custom virtio devices. Present for as long as `vm` is.
+  private(set) var gpu: AnyObject?
+  /// Whether this machine has a GPU. Its state cannot be saved, so it is shut down where another
+  /// machine is suspended.
+  var hasGPU: Bool { machine.manifest.kind == .linux && machine.manifest.gpu == true }
+
+  private func releaseGPU() {
+    if #available(macOS 27, *), let gpu = gpu as? VirglGPU { gpu.shutDown() }
+    gpu = nil
+  }
   /// The worktree the guest sees as `/Volumes/My Shared Files/worktree`, or on Linux `/worktree`.
   private let sharedDirectory: URL?
   /// Woken from a saved state rather than booted: its clock is still the moment it was saved.
@@ -72,9 +85,23 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
         ? try LinuxMachine.configuration(
           for: machine, sharedDirectory: sharedDirectory, installing: installing)
         : try Self.configuration(for: machine, sharedDirectory: sharedDirectory)
+      // Not while installing: the installer has nothing to draw with it, and the guest it would
+      // pin to it does not exist yet.
+      if hasGPU, installing.isEmpty {
+        guard #available(macOS 27, *) else {
+          throw MachineError(
+            "\(machine.manifest.title) has a GPU, which needs macOS 27 or later.")
+        }
+        let (device, gpu) = VirglGPU.make(
+          width: machine.manifest.display.width, height: machine.manifest.display.height,
+          memorySize: machine.manifest.memorySize)
+        self.gpu = gpu
+        configuration.customVirtioDevices = [device]
+      }
       try configuration.validate()
       vm = VZVirtualMachine(configuration: configuration)
     } catch {
+      releaseGPU()
       completion(error)
       return
     }
@@ -127,11 +154,17 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
     vm.start(options: options) { error in completion(error) }
   }
 
-  /// Pause and write the state beside the disk, then stop — so the next start resumes here.
+  /// Pause and write the state beside the disk, then stop — so the next start resumes here. A
+  /// machine with a GPU is shut down instead: its GPU's state lives in this Mac's OpenGL and is
+  /// not saved, so a resumed guest would wake with a desktop whose every GL context was gone.
   func save(completion: @escaping () -> Void) {
     guard let vm, vm.state == .running || vm.state == .paused else {
       self.vm = nil
       completion()
+      return
+    }
+    if hasGPU {
+      shutDown(vm, completion: completion)
       return
     }
     let state = machine.stateURL
@@ -157,6 +190,34 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
         }
       }
     }
+  }
+
+  /// The power button, then a wait for the guest to go; stopped outright if it has not gone in a
+  /// minute and a half, since what is waiting on this is usually hukan quitting.
+  private func shutDown(_ vm: VZVirtualMachine, completion: @escaping () -> Void) {
+    let finish = { [weak self] in
+      self?.vm = nil
+      completion()
+    }
+    if vm.state == .paused {
+      vm.stop { _ in finish() }
+      return
+    }
+    guard (try? vm.requestStop()) != nil else {
+      vm.stop { _ in finish() }
+      return
+    }
+    let deadline = Date().addingTimeInterval(90)
+    func wait() {
+      if vm.state == .stopped || vm.state == .error {
+        finish()
+      } else if Date() > deadline {
+        vm.stop { _ in finish() }
+      } else {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: wait)
+      }
+    }
+    wait()
   }
 
   /// Ask the guest to shut down, the way the power button would.

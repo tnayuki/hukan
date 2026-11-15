@@ -1513,6 +1513,14 @@ final class WorktreeDeskViewController: NSViewController {
         completion(.text("\(pane.machineTitle) is not running."))
         return
       }
+      guard !pane.hasGPU else {
+        completion(
+          .error(
+            "\(pane.machineTitle) has a GPU, whose state cannot be saved, so it cannot be suspended."
+              + " Shut it down from inside the guest (guest_exec `sudo poweroff`) if it has to stop."
+          ))
+        return
+      }
       session.requestGrant(
         tabID: id, title: pane.machineTitle, url: "", level: .drive, machine: true, stopping: true
       ) { granted in
@@ -2735,7 +2743,8 @@ final class WorktreeDeskViewController: NSViewController {
       // Suspend saves it where it is and stops it, which gives its slot back: macOS runs two macOS
       // guests at once, and closing the tab would delete the copy rather than set it aside. A
       // stopped machine offers Start in the same place instead; one on its way up or down offers
-      // nothing it could take yet.
+      // nothing it could take yet. A machine with a GPU has no state to save, so it cannot be
+      // suspended: the item stays, off, rather than doing something else under the same place.
       let stopped = pane.isStopped && !pane.isRunning
       let power = menu.addItem(
         withTitle: stopped ? "Start" : "Suspend",
@@ -2744,7 +2753,12 @@ final class WorktreeDeskViewController: NSViewController {
         keyEquivalent: "")
       power.target = self
       power.representedObject = id
-      power.isEnabled = stopped || pane.isRunning
+      power.isEnabled = stopped || (pane.isRunning && !pane.hasGPU)
+      if !stopped, pane.hasGPU {
+        power.toolTip =
+          "This machine has a GPU, whose state cannot be saved, so it cannot be suspended."
+          + " Shut it down from inside the guest."
+      }
       let save = menu.addItem(
         withTitle: "Save as Template…", action: #selector(saveMachineAsTemplate(_:)),
         keyEquivalent: "")

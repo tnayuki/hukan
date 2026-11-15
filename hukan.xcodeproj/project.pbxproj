@@ -17,6 +17,7 @@
 		AC000000000000000000001D /* TreeSitter in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001C /* TreeSitter */; };
 		AD00000000000000000000C2 /* Clibgit2.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD00000000000000000000C1 /* Clibgit2.xcframework */; };
 		AD00000000000000000000C4 /* CtreesitterParsers.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD00000000000000000000C3 /* CtreesitterParsers.xcframework */; };
+		AD00000000000000000000C6 /* Cvirglrenderer.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD00000000000000000000C5 /* Cvirglrenderer.xcframework */; };
 		AD00000000000000000000D2 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000D1 /* SwiftTerm */; };
 		AD00000000000000000000D4 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000D3 /* SwiftTerm */; };
 		AD00000000000000000000F2 /* SwiftTreeSitter in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000F1 /* SwiftTreeSitter */; };
@@ -47,6 +48,7 @@
 		AF0000000000000000000003 /* HukanAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HukanAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AD00000000000000000000C1 /* Clibgit2.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/Clibgit2.xcframework; sourceTree = "<group>"; };
 		AD00000000000000000000C3 /* CtreesitterParsers.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/CtreesitterParsers.xcframework; sourceTree = "<group>"; };
+		AD00000000000000000000C5 /* Cvirglrenderer.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/Cvirglrenderer.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -63,6 +65,7 @@
 			files = (
 				AD00000000000000000000C2 /* Clibgit2.xcframework in Frameworks */,
 				AD00000000000000000000C4 /* CtreesitterParsers.xcframework in Frameworks */,
+				AD00000000000000000000C6 /* Cvirglrenderer.xcframework in Frameworks */,
 				AD00000000000000000000D2 /* SwiftTerm in Frameworks */,
 				AD00000000000000000000F2 /* SwiftTreeSitter in Frameworks */,
 			);
@@ -98,6 +101,7 @@
 			children = (
 				AD00000000000000000000C1 /* Clibgit2.xcframework */,
 				AD00000000000000000000C3 /* CtreesitterParsers.xcframework */,
+				AD00000000000000000000C5 /* Cvirglrenderer.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -324,7 +328,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.tnayuki.Hukan.dev";
 				PRODUCT_MODULE_NAME = Hukan;
 				PRODUCT_NAME = "Hukan Dev";
-				SWIFT_INCLUDE_PATHS = "$(BUILT_PRODUCTS_DIR)/include/CtreesitterParsers";
+				SWIFT_INCLUDE_PATHS = "$(BUILT_PRODUCTS_DIR)/include/CtreesitterParsers $(BUILT_PRODUCTS_DIR)/include/Cvirglrenderer";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 			};
 			name = Debug;
@@ -342,7 +346,7 @@
 				ICON_FILE = hukan;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tnayuki.Hukan;
 				PRODUCT_MODULE_NAME = Hukan;
-				SWIFT_INCLUDE_PATHS = "$(BUILT_PRODUCTS_DIR)/include/CtreesitterParsers";
+				SWIFT_INCLUDE_PATHS = "$(BUILT_PRODUCTS_DIR)/include/CtreesitterParsers $(BUILT_PRODUCTS_DIR)/include/Cvirglrenderer";
 				PRODUCT_NAME = Hukan;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 			};

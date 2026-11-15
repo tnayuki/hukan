@@ -382,6 +382,9 @@
             <parameter name="building" code="Bild" type="text" optional="yes" description="start making a macOS template with this name from the newest IPSW in Images, the way the window's + does">
                 <cocoa key="building"/>
             </parameter>
+            <parameter name="with gpu" code="Bgpu" type="boolean" optional="yes" description="with building: make a Linux template from the newest Ubuntu ISO in Images, its machines given a GPU">
+                <cocoa key="gpu"/>
+            </parameter>
             <result type="text"/>
         </command>
 

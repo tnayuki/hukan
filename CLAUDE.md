@@ -446,10 +446,41 @@ Workspace (one window)
   tools fail there. **The agent is Go**, a static binary cross-compiled here that drives the
   screen over the X11 protocol itself, so the guest needs nothing installed for it; the protocol
   is a package of its own, which the macOS and Windows agents are to move onto in turn — Go
-  rather than Swift because Go builds the Windows one from this Mac, which Swift cannot. **There is
-  no GPU**: the framework gives a Linux guest a screen and
-  nothing to render with, so drawing is llvmpipe on the CPU. The account takes this Mac's user id,
+  rather than Swift because Go builds the Windows one from this Mac, which Swift cannot. **The
+  framework gives a Linux guest a screen and nothing to render with**, so without the GPU below
+  drawing is llvmpipe on the CPU. The account takes this Mac's user id,
   so what either side writes in the shared worktree is the same user's.
+- **A Linux machine can have a GPU, and it is virgl on macOS's own OpenGL.** From macOS 27 a
+  process can implement a virtio device of its own (`VZCustomVirtioDeviceConfiguration`), so
+  hukan implements a virtio-gpu: the guest's stock kernel driver and Mesa's `virgl` send its
+  OpenGL down it, and virglrenderer replays that on macOS's OpenGL 4.1 core through CGL contexts
+  hukan hands it. **Not Zink over a Vulkan-on-Metal driver**: Metal has no geometry shaders or
+  transform feedback, so honest Zink on MoltenVK or KosmicKrisp is GL 2.1 and needs a version
+  override to claim more. **Not ANGLE**, the road UTM takes: it is GLES, which caps a guest's
+  desktop GL below the 3.2 core Unity's editor needs. Apple's 4.1 implements both over Metal
+  itself, so the guest gets 4.1 core with nothing claimed it does not have — at the price of
+  standing on an API Apple deprecated, the risk that keeps ANGLE as the fallback. **vrend assumes a
+  Linux host**, and macOS's GL is older and stricter, so the release is patched
+  (`Vendor/virglrenderer-macos.patch`, which says why hunk by hunk) and built with GL errors
+  non-fatal. **The renderer is a process of its own, one per machine**: this executable started
+  again with `--virgl-renderer`. virglrenderer is one renderer per process — its resource and
+  context ids are global, and a guest writes them into its command stream, so two guests in one
+  process collide on them, and remapping them would mean parsing every command. The device in
+  this process only forwards requests, over a socket; guest RAM goes to the renderer once, as a
+  Mach memory entry handed over through a bootstrap name only it is told (the rendezvous Chromium
+  uses), so its transfers touch the guest's pages directly. **The guest's screen is the GPU's,
+  drawn without a readback**: the renderer blits the scanout into IOSurfaces, two taken in turn,
+  and the tab's layer shows them, with no GL in this process at all (blitting rather than reading
+  frames back took the drawing from 59% of a core to 6.7%). **VZ's own screen stays, for input only**:
+  `VZVirtualMachineView` hands the keyboard and pointer to a guest only through a screen of VZ's,
+  so it is kept, left alone by the guest — Xorg is pinned to the GPU by PCI address at each boot,
+  by address because a path Xorg opens itself bypasses logind and gets no DRM master — and the
+  GPU follows its size, which keeps fit, fixed and agent-set resolutions working unchanged.
+  **Chosen when the template is made**, and kept by its copies, since the guest is set up then.
+  **Such a machine cannot be suspended**: its state lives in this Mac's GL and is not saved, so
+  a resumed guest would wake with every context gone. Its Suspend is off rather than renamed —
+  a shutdown cannot be carried on from, and an item in Suspend's place reads as one that can —
+  and what saves a machine on the way out (a quit, its session going) shuts it down instead.
 - **A Windows machine runs in QEMU from Homebrew, because Virtualization.framework cannot run
   Windows.** It is the one kind of machine that is not in this process. QEMU is a dependency of
   the cask, as ripgrep is: hukan is built for one person, who uses Windows guests, so the size it
@@ -1971,7 +2002,8 @@ build was not.
 
 The project is hand-authored and tracked — edit `project.pbxproj` directly. Folder groups are
 file-system-synchronized, so a new file under `Sources/` just appears. `Resources/hukan.icns`,
-`Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework` and the
+`Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework`,
+`Vendor/Cvirglrenderer.xcframework` and the
 query files under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
 step, not part of the build. `Resources/hukan-guest-agent` is the guest agent, built by
 `Vendor/build-guest-agent.sh`, `Resources/hukan-guest-agent.exe` its Windows counterpart, built
@@ -1999,6 +2031,12 @@ at all — the point being that a large repository under a storm of FSEvents use
 which also drops the OpenSSL and libssh2 dependencies, leaving one self-contained static
 archive linked with `-liconv`. Rebuild it — to bump the libgit2 version — with
 `Vendor/build-libgit2.sh`; it is not SPM, just an `xcframework` in "Link Binary With Libraries".
+
+`Cvirglrenderer.xcframework` is the same idea for a Linux machine's GPU: virglrenderer's GL
+renderer and libepoxy, the one library it needs, built static together from pinned releases by
+`Vendor/build-virglrenderer.sh`, with `Vendor/virglrenderer-macos.patch` applied. Its headers sit
+one directory down too, for the reason the tree-sitter ones do, and `SWIFT_INCLUDE_PATHS` names
+both directories.
 
 `CtreesitterParsers.xcframework` is the same idea for syntax highlighting: the tree-sitter
 *grammars*, compiled from pinned tag archives by `Vendor/build-tree-sitter.sh`, which also

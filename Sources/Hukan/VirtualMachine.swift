@@ -49,6 +49,10 @@ final class MachinePaneViewController: NSViewController {
   private(set) var isStopped = false
 
   private var runner: VirtualizationMachine?
+  /// A GPU machine's screen (`VirglScreenView`), over `screen` for as long as it runs; typed as
+  /// `NSView` for the systems before macOS 27.
+  private var gpuScreen: NSView?
+  private var gpuScreenFollowsScreen: NSKeyValueObservation?
   /// A Windows machine runs in QEMU rather than in this process, with a screen of its own.
   private var qemu: QEMUMachine?
   private let qemuScreen = QEMUScreenView()
@@ -101,6 +105,12 @@ final class MachinePaneViewController: NSViewController {
     qemu != nil ? (qemuScreen.isHidden ? nil : qemuScreen) : (screen.isHidden ? nil : screen)
   }
   var isRunning: Bool { qemu?.isRunning ?? runner?.isRunning ?? false }
+  /// A machine with a GPU, which cannot be suspended: its GPU's state is not saved. Its Suspend is
+  /// off, and what would save it on the way out (a quit, its session going) shuts it down.
+  var hasGPU: Bool {
+    machineID.flatMap(UUID.init(uuidString:)).flatMap(MachineStore.session(id:))?.manifest.gpu
+      == true
+  }
   /// The running machine, for the guest agent to be reached through.
   var virtualMachine: VZVirtualMachine? { runner?.vm }
   /// Which halves of the guest agent have said they are up; only those are dialled.
@@ -697,6 +707,7 @@ final class MachinePaneViewController: NSViewController {
         guard let self, let runner, self.runner === runner else { return }
         self.runner = nil
         self.screen.virtualMachine = nil
+        self.detachGPUScreen()
         if let whenStopped = self.whenStopped {
           self.whenStopped = nil
           whenStopped(error)
@@ -715,14 +726,38 @@ final class MachinePaneViewController: NSViewController {
         return
       }
       self.screen.virtualMachine = runner.vm
+      self.attachGPUScreen(runner)
       self.showScreen()
       // A fixed size asked for while it was starting is put to the guest now it has a display.
       if self.fixedResolution != nil { try? self.applyResolution() }
     }
   }
 
+  /// A GPU machine draws its screen through its own device rather than VZ's: that view goes over
+  /// VZ's, shown while VZ's is, and gone when the machine is.
+  private func attachGPUScreen(_ runner: VirtualizationMachine) {
+    detachGPUScreen()
+    guard #available(macOS 27, *), let gpu = runner.gpu as? VirglGPU, let root = screen.superview
+    else { return }
+    let view = VirglScreenView(gpu: gpu)
+    root.addSubview(view, positioned: .above, relativeTo: screen)
+    view.pin(to: root)
+    view.follow(runner.vm?.graphicsDevices.first?.displays.first, gpu: gpu)
+    view.shown = !screen.isHidden
+    gpuScreenFollowsScreen = screen.observe(\.isHidden, options: [.new]) { [weak view] screen, _ in
+      DispatchQueue.main.async { view?.shown = !screen.isHidden }
+    }
+    gpuScreen = view
+  }
+
+  private func detachGPUScreen() {
+    gpuScreenFollowsScreen = nil
+    gpuScreen?.removeFromSuperview()
+    gpuScreen = nil
+  }
+
   /// The tab is going without being closed — the window closing, the session going away: the
-  /// machine is saved, so the next start resumes it where it was.
+  /// machine is saved, so the next start resumes it where it was. One with a GPU is shut down.
   func suspendMachine(completion: @escaping () -> Void = {}) {
     if let qemu {
       qemuScreen.disconnect()
@@ -737,6 +772,7 @@ final class MachinePaneViewController: NSViewController {
       return
     }
     screen.virtualMachine = nil
+    detachGPUScreen()
     runner.save { [weak self] in
       self?.runner = nil
       completion()
@@ -747,6 +783,8 @@ final class MachinePaneViewController: NSViewController {
   /// it. What it is for is the slot: macOS runs two macOS guests at once, and a machine saved here
   /// gives its slot back without the copy being deleted.
   func stopMachine(completion: @escaping () -> Void) {
+    // A GPU machine has no state to save, so it cannot be set aside like this; its Suspend is off.
+    guard !hasGPU else { return completion() }
     // Writing the memory out takes a while, and a tab still showing the guest reads as nothing
     // having happened.
     if isRunning { show(status: "Saving \(machineTitle)…") }
@@ -1162,6 +1200,7 @@ final class MachinePaneViewController: NSViewController {
   func deleteMachine() {
     let machine = machineID.flatMap(UUID.init(uuidString:)).flatMap(MachineStore.session(id:))
     screen.virtualMachine = nil
+    detachGPUScreen()
     let finish = { [weak self] in
       self?.runner = nil
       if let machine { try? MachineStore.delete(machine) }

@@ -241,6 +241,8 @@ final class LinuxTemplateBuilder {
     var cpuCount: Int?
     var memorySize: UInt64?
     var username: String
+    /// Give its machines a GPU (`VirglGPU`). macOS 27 and later.
+    var gpu = false
     /// Set its machines up for Rosetta: the share, the binfmt registration, amd64 packages.
     var rosetta = true
   }
@@ -334,7 +336,7 @@ final class LinuxTemplateBuilder {
         macAddress: MachineManifest.randomMACAddress(),
         machineIdentifier: VZGenericMachineIdentifier().dataRepresentation.base64EncodedString(),
         username: request.username, password: password, created: Date(),
-        rosetta: request.rosetta ? nil : false)
+        gpu: request.gpu ? true : nil, rosetta: request.rosetta ? nil : false)
       let machine = Machine(url: url, manifest: manifest)
       try machine.save()
       // Sparse: the disk costs what the guest writes, not what it is told it has.
@@ -702,6 +704,56 @@ final class LinuxTemplateBuilder {
     if ls "$T"/usr/share/xsessions/*.desktop >/dev/null 2>&1; then
       echo 'WaylandEnable=false' >> "$T/etc/gdm3/custom.conf"
     fi
+    # A machine with a GPU has two virtio screens: VZ's own, which carries the keyboard and the
+    # pointer and which the guest leaves alone, and the GPU's, which draws. The GPU's is found at
+    # each boot from the VIRGL bit in its virtio features (bit 0, the file's first character), so
+    # whatever slot it lands in is found, and a machine without one writes nothing. Two desktops
+    # are told: Xorg, pinned to it by PCI address — not by device path, since Xorg runs as the user
+    # and gets the device from logind, which a path it opens itself would bypass, leaving it no DRM
+    # master — and mutter on Wayland, the only session 26.04 has, by udev tags: the GPU's card its
+    # primary, VZ's ignored.
+    cat > "$T/usr/local/libexec/hukan-pin-gpu" <<'EOF'
+    #!/bin/sh
+    conf=/etc/X11/xorg.conf.d/10-hukan-gpu.conf
+    rules=/run/udev/rules.d/61-hukan-gpu.rules
+    rm -f "$conf" "$rules"
+    gpu=
+    others=
+    for card in /sys/class/drm/card*; do
+      case "$card" in *-*) continue ;; esac
+      dev=$(readlink -f "$card/device")
+      for v in "$dev"/virtio*; do
+        [ -r "$v/features" ] || continue
+        if [ "$(cut -c1 "$v/features")" = 1 ]; then gpu=$(basename "$dev"); else others="$others $(basename "$dev")"; fi
+      done
+    done
+    [ -n "$gpu" ] || exit 0
+    dom=$((0x$(echo "$gpu" | cut -d: -f1))); bus=$((0x$(echo "$gpu" | cut -d: -f2)))
+    slot=$((0x$(echo "$gpu" | cut -d: -f3 | cut -d. -f1))); fn=$(echo "$gpu" | cut -d. -f2)
+    mkdir -p /etc/X11/xorg.conf.d /run/udev/rules.d
+    printf 'Section "ServerFlags"\n  Option "AutoAddGPU" "false"\nEndSection\nSection "Device"\n  Identifier "hukan-gpu"\n  Driver "modesetting"\n  BusID "PCI:%d@%d:%d:%d"\nEndSection\n' "$bus" "$dom" "$slot" "$fn" > "$conf"
+    echo "SUBSYSTEM==\"drm\", KERNEL==\"card*\", KERNELS==\"$gpu\", TAG+=\"mutter-device-preferred-primary\"" > "$rules"
+    for other in $others; do
+      echo "SUBSYSTEM==\"drm\", KERNEL==\"card*\", KERNELS==\"$other\", TAG+=\"mutter-device-ignore\"" >> "$rules"
+    done
+    udevadm control --reload
+    udevadm trigger --subsystem-match=drm --action=change
+    udevadm settle
+    EOF
+    chmod 755 "$T/usr/local/libexec/hukan-pin-gpu"
+    cat > "$T/etc/systemd/system/hukan-pin-gpu.service" <<'EOF'
+    [Unit]
+    Description=Put the desktop on hukan's GPU
+    Wants=systemd-udev-settle.service
+    After=systemd-udev-settle.service
+    Before=display-manager.service
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/libexec/hukan-pin-gpu
+    [Install]
+    WantedBy=display-manager.service
+    EOF
+    chroot "$T" systemctl enable hukan-pin-gpu.service
     # The welcome a first sign-in shows is a window over whatever the agent is looking at; the
     # account is made from /etc/skel on the first boot, so it starts out having seen it.
     mkdir -p "$T/etc/skel/.config"

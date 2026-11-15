@@ -396,6 +396,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     ]
     if let user = manifest.username { facts.append(("Account", user)) }
     if manifest.kind == .linux {
+      facts.append(("GPU", manifest.gpu == true ? "On — OpenGL on this Mac's GPU" : "Off"))
       facts.append(("Rosetta", manifest.rosetta == false ? "Off" : "On — x86_64 programs run"))
     }
     return facts
@@ -799,10 +800,21 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     return lines.isEmpty ? "(empty)" : lines.joined(separator: "\n")
   }
 
-  /// Start a build from the newest IPSW in Images, with the sheet's defaults. Answers why not,
-  /// when it cannot.
-  func buildForScripting(title: String) -> String? {
+  /// Start a build from the newest IPSW in Images, with the sheet's defaults — or, with `gpu`, a
+  /// Linux one from the newest Ubuntu ISO, its machines given a GPU. Answers why not, when it
+  /// cannot.
+  func buildForScripting(title: String, gpu: Bool = false) -> String? {
     guard !isBuilding else { return "a template is already being made" }
+    if gpu {
+      guard #available(macOS 27, *) else { return "a GPU needs macOS 27 or later" }
+      guard let image = MachineStore.images().first(where: { MachineKind(image: $0) == .linux })
+      else { return "no Ubuntu ISO in Images" }
+      startBuilding(
+        LinuxTemplateBuilder.Request(
+          title: title, image: image, diskSize: 64 << 30, cpuCount: nil, memorySize: nil,
+          username: NSUserName(), gpu: true))
+      return nil
+    }
     guard let image = MachineStore.images().first else { return "no image in Images" }
     if MachineKind(image: image) == .linux {
       startBuilding(
@@ -1393,6 +1405,11 @@ private final class NewMacTemplateSheet: NSWindowController {
   private let processorsPopUp = NSPopUpButton()
   private let memoryPopUp = NSPopUpButton()
   private let diskNote = NSTextField(labelWithString: "")
+  /// Linux on macOS 27: whether its machines get a GPU (`VirglGPU`). Off unless asked for, since it
+  /// costs the suspend and only one such machine runs at a time.
+  private let gpuCheckbox = NSButton(
+    checkboxWithTitle: "Run OpenGL on this Mac's GPU", target: nil, action: nil)
+  private var gpuRow: NSGridRow?
   /// Linux: whether its machines are set up for Rosetta. On unless turned off, since an x86_64
   /// program is often the reason to want Linux here at all.
   private let rosettaCheckbox = NSButton(
@@ -1461,15 +1478,20 @@ private final class NewMacTemplateSheet: NSWindowController {
       [NSTextField(labelWithString: "Disk:"), disk],
       [NSTextField(labelWithString: "Processors:"), processorsPopUp],
       [NSTextField(labelWithString: "Memory:"), memoryPopUp],
+      [NSTextField(labelWithString: "GPU:"), gpuCheckbox],
       [NSTextField(labelWithString: "Rosetta:"), rosettaCheckbox],
     ])
     grid.column(at: 0).xPlacement = .trailing
     grid.column(at: 1).width = 280
+    gpuRow = grid.row(at: grid.numberOfRows - 2)
     rosettaRow = grid.row(at: grid.numberOfRows - 1)
     rosettaCheckbox.state = .on
     rosettaCheckbox.toolTip =
       "x86_64 programs run through Rosetta, with amd64 packages installable by apt. Off, the"
       + " template has neither, and apt fetches arm64 only."
+    gpuCheckbox.toolTip =
+      "The guest's OpenGL (4.1 core) runs on this Mac's GPU and its desktop is drawn by it. Such a"
+      + " machine is shut down where another is suspended, and only one runs at a time."
     note.textColor = .secondaryLabelColor
     note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
@@ -1486,7 +1508,7 @@ private final class NewMacTemplateSheet: NSWindowController {
     note.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
     content.addSubview(stack)
     stack.pin(to: content)
-    rosettaRow?.isHidden = system != .linux
+    showGPUChoice()
   }
 
   private static let systems: [MachineKind] = [.macOS, .windows, .linux]
@@ -1510,6 +1532,13 @@ private final class NewMacTemplateSheet: NSWindowController {
     reloadImages()
     suggestTitle()
     describeAccount()
+    showGPUChoice()
+  }
+
+  private func showGPUChoice() {
+    var available = false
+    if #available(macOS 27, *) { available = true }
+    gpuRow?.isHidden = !(system == .linux && available)
     rosettaRow?.isHidden = system != .linux
   }
 
@@ -1597,7 +1626,8 @@ private final class NewMacTemplateSheet: NSWindowController {
           title: title, image: ipsw, diskSize: gigabytes << 30,
           cpuCount: processorsPopUp.selectedItem?.tag,
           memorySize: memoryPopUp.selectedItem.map { UInt64($0.tag) << 30 },
-          username: NSUserName(), rosetta: rosettaCheckbox.state == .on))
+          username: NSUserName(), gpu: gpuRow?.isHidden == false && gpuCheckbox.state == .on,
+          rosetta: rosettaCheckbox.state == .on))
       return
     }
     if Self.kind(of: ipsw) == .windows {

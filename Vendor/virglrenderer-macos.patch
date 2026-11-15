@@ -1,0 +1,129 @@
+# The macOS half of virglrenderer 1.3.0, applied by Vendor/build-virglrenderer.sh (patch -p1).
+#
+# vrend assumes a Linux OpenGL host. macOS's is 4.1 core over Metal: older, and stricter about
+# what drivers elsewhere let through. Each hunk is one of those, found running a Linux guest on it:
+#
+# - Multisampling is probed, and allocated, only through glTex*StorageMultisample (GL 4.3). Without
+#   it the probe reported 0 samples and the guest's Mesa offered no core profile at all; fall back
+#   to glTexImage*Multisample (3.2), which macOS has.
+# - A CLEAR_SURFACE naming a surface that does not exist failed the whole context. Mesa 25.2's virgl
+#   sends exactly that (fixed in 25.3, which skips such a clear); drop it the way 25.3 would.
+# - GLSL is written as #version 410 on macOS, leaving out #extension lines for what is core by 4.10:
+#   macOS's compiler knows almost none of the ARB names and takes no #version 130.
+# - Which vertex inputs are integers was only recorded on the vertex_attrib_binding (4.3) path, so on
+#   4.1 an integer attribute met a float input and arrived as garbage (Skia's text vanished).
+#   Recorded for every vertex element now. Takes effect with VIRGL_USE_INTEGER set.
+diff -ruN a/src/vrend/vrend_formats.c b/src/vrend/vrend_formats.c
+--- a/src/vrend/vrend_formats.c	2026-02-10 22:43:59
++++ b/src/vrend/vrend_formats.c	2026-11-15 15:40:55
+@@ -650,8 +650,10 @@
+ {
+    bool is_desktop_gl = epoxy_is_desktop_gl();
+    for (int i = 0; i < VIRGL_FORMAT_MAX_EXTENDED; i++) {
+-      bool function_available =
+-         (table[i].flags & VIRGL_TEXTURE_CAN_TEXTURE_STORAGE) ? enable_storage : is_desktop_gl;
++      /* Without glTexStorage2DMultisample (GL 4.3), desktop GL still has glTexImage2DMultisample
++       * (3.2) for every format, storage-capable or not: test with that rather than not at all. */
++      bool use_storage = (table[i].flags & VIRGL_TEXTURE_CAN_TEXTURE_STORAGE) && enable_storage;
++      bool function_available = use_storage || is_desktop_gl;
+ 
+       if (table[i].internalformat != 0 &&
+           !(table[i].flags & VIRGL_TEXTURE_CAN_MULTISAMPLE) &&
+@@ -659,7 +661,7 @@
+          GLuint tex_id;
+          glGenTextures(1, &tex_id);
+          glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, tex_id);
+-         if (table[i].flags & VIRGL_TEXTURE_CAN_TEXTURE_STORAGE) {
++         if (use_storage) {
+             glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 2,
+                                       table[i].internalformat, 32, 32, GL_TRUE);
+          } else {
+diff -ruN a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+--- a/src/vrend/vrend_renderer.c	2026-02-10 22:43:59
++++ b/src/vrend/vrend_renderer.c	2026-11-15 15:40:55
+@@ -3419,6 +3419,12 @@
+ 
+       if (desc->nr_channels == 4 && desc->swizzle[0] == PIPE_SWIZZLE_Z)
+          v->zyxw_bitmask |= 1 << i;
++
++      /* Which inputs are integers decides how the vertex shader declares them. It was only
++       * worked out on the vertex_attrib_binding path (GL 4.3), so without that path — macOS's
++       * 4.1 — an integer attribute met a float input and arrived as garbage. */
++      UPDATE_INT_SIGN_MASK(elements[i].src_format, i,
++                           v->signed_int_bitmask, v->unsigned_int_bitmask);
+    }
+ 
+    ret_handle = vrend_renderer_object_insert(ctx, v, handle,
+@@ -4907,8 +4913,9 @@
+    surf = vrend_object_lookup(sub_ctx->object_hash, surf_handle,
+                               VIRGL_OBJECT_SURFACE);
+    if (!surf) {
+-      vrend_report_context_error(ctx, VIRGL_ERROR_CTX_ILLEGAL_SURFACE,
+-                                 surf_handle);
++      /* Mesa 25.2's virgl encodes clear_render_target with the handle of a surface it never
++       * created (fixed in 25.3, which skips such a clear). Drop it as 25.3 would, rather than
++       * failing the whole context over it. */
+       return;
+    }
+ 
+@@ -8737,7 +8744,8 @@
+       }
+ 
+       if (pr->nr_samples > 1) {
+-         if (format_can_texture_storage) {
++         /* glTex*StorageMultisample is GL 4.3; macOS's 4.1 has only glTexImage*Multisample. */
++         if (format_can_texture_storage && has_feature(feat_storage_multisample)) {
+             if (gr->target == GL_TEXTURE_2D_MULTISAMPLE) {
+                glTexStorage2DMultisample(gr->target, pr->nr_samples,
+                                          internalformat, pr->width0, pr->height0,
+diff -ruN a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
+--- a/src/vrend/vrend_shader.c	2026-02-10 22:43:59
++++ b/src/vrend/vrend_shader.c	2026-11-15 15:40:55
+@@ -6169,9 +6169,35 @@
+    return true;
+ }
+ 
++#ifdef __APPLE__
++/* macOS's OpenGL is 4.1 core and nothing else: its GLSL compiler takes #version 140 to 410 and
++ * knows almost none of the ARB extension names. Every desktop shader is therefore written as
++ * 410, and an extension that is core by then is simply left out rather than required. */
++#define APPLE_GLSL_VERSION 410
++static bool core_in_apple_glsl(const char *name)
++{
++   static const char *const core[] = {
++      "ARB_texture_rectangle", "ARB_draw_instanced", "ARB_uniform_buffer_object",
++      "ARB_fragment_coord_conventions", "ARB_texture_multisample",
++      "ARB_shader_bit_encoding", "ARB_explicit_attrib_location",
++      "ARB_texture_query_lod", "ARB_texture_gather", "ARB_sample_shading", "ARB_gpu_shader5",
++      "ARB_gpu_shader_fp64", "ARB_texture_cube_map_array", "ARB_tessellation_shader",
++      "ARB_viewport_array", "ARB_separate_shader_objects",
++   };
++   for (unsigned i = 0; i < ARRAY_SIZE(core); i++)
++      if (!strcmp(name, core[i]))
++         return true;
++   return false;
++}
++#endif
++
+ static void emit_ext(struct vrend_glsl_strbufs *glsl_strbufs, const char *name,
+                      const char *verb)
+ {
++#ifdef __APPLE__
++   if (core_in_apple_glsl(name))
++      return;
++#endif
+    emit_ver_extf(glsl_strbufs, "#extension GL_%s : %s\n", name, verb);
+ }
+ 
+@@ -6270,6 +6296,11 @@
+          emit_ver_ext(glsl_strbufs, "#version 330\n");
+          emit_ext(glsl_strbufs, "ARB_compute_shader", "require");
+       } else {
++#ifdef __APPLE__
++         if (ctx->glsl_ver_required <= APPLE_GLSL_VERSION)
++            emit_ver_extf(glsl_strbufs, "#version %d\n", APPLE_GLSL_VERSION);
++         else
++#endif
+          if (ctx->glsl_ver_required > 150)
+             emit_ver_extf(glsl_strbufs, "#version %d\n", ctx->glsl_ver_required);
+          else if (ctx->prog_type == TGSI_PROCESSOR_GEOMETRY ||
