@@ -70,6 +70,9 @@ final class WindowsTemplateBuilder {
 
   let request: Request
   var onPhase: ((MacTemplateBuilder.Phase) -> Void)?
+  /// Stopped from the window: nothing from here on may report a phase or publish.
+  private var cancelled = false
+  private var machine: Machine?
   private let password = MacTemplateBuilder.makePassword()
   /// The install, for the Virtual Machines window to show.
   let screenView = QEMUScreenView()
@@ -93,8 +96,14 @@ final class WindowsTemplateBuilder {
       // Off the main thread and before QEMU, which is what the prompt's three seconds need.
       Self.warmUpRecognition()
       DispatchQueue.main.async { [self] in
+        if cancelled {
+          if case .success(let machine) = prepared { discard(machine.url) }
+          return
+        }
         switch prepared {
-        case .success(let machine): start(machine)
+        case .success(let machine):
+          self.machine = machine
+          start(machine)
         case .failure(let error): onPhase?(.failed(error.localizedDescription))
         }
       }
@@ -632,8 +641,33 @@ final class WindowsTemplateBuilder {
       .joined(separator: " ")
   }
 
+  /// Stop where it stands and leave nothing behind — the window's −. Setup stopped on an error of
+  /// its own leaves QEMU running for good, so this is the one way out of a build that will not end.
+  func cancel() {
+    guard !cancelled else { return }
+    cancelled = true
+    onPhase = nil
+    // Still preparing: the preparation's own ending throws its machine away.
+    guard let machine else { return }
+    let process = Self.running
+    DispatchQueue.global(qos: .userInitiated).async { [self] in
+      if let process, process.isRunning {
+        process.terminate()
+        process.waitUntilExit()
+      }
+      DispatchQueue.main.async { [self] in discard(machine.url) }
+    }
+  }
+
+  private func discard(_ url: URL) {
+    try? FileManager.default.removeItem(at: url)
+    claim = nil
+    MachineStore.changed()
+  }
+
   /// The guest shuts itself down at its first logon, so QEMU leaving cleanly is the install done.
   private func finished(_ machine: Machine, status: Int32, log: URL) {
+    guard !cancelled else { return }
     let manager = FileManager.default
     try? manager.removeItem(at: machine.url.appendingPathComponent(Self.answerDiscName))
     guard status == 0 else {

@@ -423,7 +423,9 @@ its address on Apple's servers; or a file already on this Mac — and New Templa
 makes one from what is there. hukan installs macOS, creates an account with a generated password,
 installs a guest agent reached over vsock, turns SSH back off, turns SIP off through Recovery so
 the agent can be given its permissions, and turns off sleep and the screen lock. A template is for
-automation: it has SIP off and is not a machine to keep anything in.
+automation: it has SIP off and is not a machine to keep anything in. The window's `−` on a template
+being made stops it and throws away what it had done — of any kind, since an installer that stops
+on an error of its own can leave its screen waiting there for good.
 
 The tab's `+` copies a template for that session (an APFS clone, so it costs only what changes),
 with the session's worktree as `/Volumes/My Shared Files/worktree` — and the next one there when the

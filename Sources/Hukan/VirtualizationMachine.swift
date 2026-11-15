@@ -494,6 +494,8 @@ final class MacTemplateBuilder {
   /// failure costs a fresh disk and another go rather than the build.
   private var installsLeft = 2
   private var image: VZMacOSRestoreImage?
+  /// Stopped from the window: nothing from here on may start another stage or report one.
+  private var cancelled = false
 
   init(request: Request) {
     self.request = request
@@ -509,7 +511,7 @@ final class MacTemplateBuilder {
     onPhase?(.preparing)
     VZMacOSRestoreImage.load(from: request.ipsw) { [weak self] result in
       DispatchQueue.main.async {
-        guard let self else { return }
+        guard let self, !self.cancelled else { return }
         switch result {
         case .failure(let error): self.onPhase?(.failed(error.localizedDescription))
         case .success(let image): self.prepare(image)
@@ -519,6 +521,7 @@ final class MacTemplateBuilder {
   }
 
   private func prepare(_ image: VZMacOSRestoreImage) {
+    guard !cancelled else { return }
     self.image = image
     guard let requirements = image.mostFeaturefulSupportedConfiguration,
       requirements.hardwareModel.isSupported
@@ -583,7 +586,7 @@ final class MacTemplateBuilder {
     }
     onPhase?(.installing(0))
     installer.install { [weak self] result in
-      guard let self else { return }
+      guard let self, !self.cancelled else { return }
       self.progressObservation = nil
       switch result {
       case .failure(let error):
@@ -716,8 +719,32 @@ final class MacTemplateBuilder {
     try? FileManager.default.removeItem(at: machine.url)
   }
 
+  /// Stop where it stands and leave nothing behind — the window's −, the way out of a build whose
+  /// guest has stopped somewhere hukan is not watching for.
+  func cancel() {
+    guard !cancelled else { return }
+    cancelled = true
+    onPhase = nil
+    guard let machine else { return }
+    let finish = { [self] in
+      discard(machine)
+      claim = nil
+      MachineStore.changed()
+    }
+    if let vm = installing {
+      installing = nil
+      vm.stop { _ in finish() }
+    } else if let running {
+      self.running = nil
+      running.forceStop(completion: finish)
+    } else {
+      finish()
+    }
+  }
+
   /// The guest reads the account only on this boot, then sets itself up and logs in.
   private func firstBoot(_ machine: Machine, runner: VirtualizationMachine, attemptsLeft: Int) {
+    guard !cancelled else { return }
     guard #available(macOS 27, *) else {
       onPhase?(
         .failed("Setting up the guest's account needs macOS 27 on this Mac; macOS is installed."))
@@ -764,6 +791,7 @@ final class MacTemplateBuilder {
   /// The guest stopped — each stage ends by shutting it down, and what comes next depends on
   /// which one did.
   private func stopped(_ machine: Machine, error: Error?) {
+    guard !cancelled else { return }
     running = nil
     if let error {
       onPhase?(.failed(VirtualizationMachine.explain(error)))
@@ -792,6 +820,7 @@ final class MacTemplateBuilder {
   /// is then stopped and sent through again, which costs a minute or two where a failed build
   /// costs the whole install, and leaves nothing behind since Recovery changed nothing.
   private func bootRecovery(_ machine: Machine) {
+    guard !cancelled else { return }
     onPhase?(.disablingSIP)
     let runner = VirtualizationMachine(machine: machine, sharedDirectory: nil)
     running = runner
@@ -841,6 +870,7 @@ final class MacTemplateBuilder {
   /// Booted again, SIP off: check it is, write the agent's permissions into both TCC databases,
   /// and shut down — the template is then ready.
   private func bootToGrant(_ machine: Machine) {
+    guard !cancelled else { return }
     onPhase?(.granting)
     let runner = VirtualizationMachine(machine: machine, sharedDirectory: nil)
     running = runner

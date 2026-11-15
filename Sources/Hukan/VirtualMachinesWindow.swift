@@ -337,7 +337,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     let selected = selectedRow
     let canDelete: Bool
     switch selected {
-    case .template, .image, .downloading: canDelete = true
+    case .template, .image, .downloading, .building: canDelete = true
     case .session(let machine):
       canDelete = !Self.runningMachineIDs.contains(machine.id.uuidString)
     default: canDelete = false
@@ -607,6 +607,10 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     guard let window, let selected = selectedRow else { return }
     if case .downloading = selected {
       download?.cancel()
+      return
+    }
+    if case .building = selected {
+      confirmStopBuilding(in: window)
       return
     }
     let alert = NSAlert()
@@ -957,6 +961,29 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
         table.reloadData(forRowIndexes: [index], columnIndexes: [0])
       }
       update()
+    }
+  }
+
+  /// − on the build's row. A setup can stop where nothing hukan watches says so — Ubuntu's
+  /// installer, failing, waits on its own error screen for good — and whether it has is plain on
+  /// the screen beside the row, so stopping is the person's call rather than a deadline's.
+  private func confirmStopBuilding(in window: NSWindow) {
+    let alert = NSAlert()
+    alert.messageText = "Stop making “\(buildTitle)”?"
+    alert.informativeText = "What it has done so far is thrown away."
+    alert.addButton(withTitle: "Stop")
+    alert.addButton(withTitle: "Cancel")
+    alert.buttons.first?.hasDestructiveAction = true
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard response == .alertFirstButtonReturn, let self, self.isBuilding else { return }
+      self.builder?.cancel()
+      self.windowsBuilder?.cancel()
+      self.linuxBuilder?.cancel()
+      self.builder = nil
+      self.windowsBuilder = nil
+      self.linuxBuilder = nil
+      self.buildPhase = nil
+      self.reload()
     }
   }
 
