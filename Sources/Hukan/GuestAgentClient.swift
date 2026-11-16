@@ -188,7 +188,7 @@ enum GuestAgent {
   }
 
   /// Put the guest's main display in the mode that draws exactly these pixels — the user half,
-  /// since a display mode belongs to the session showing it. Answers the mode, as "960x600@2".
+  /// since a display mode belongs to the session showing it. Answers the mode, as "1920x1200@1".
   static func setDisplay(
     width: Int, height: Int, on vm: any GuestLink,
     completion: @escaping (Result<String, Error>) -> Void

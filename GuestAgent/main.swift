@@ -13,8 +13,8 @@
 //                                                  -> {"ok":true,"exit":0,"stdout":"<b64>","stderr":"<b64>","timedOut":false}
 //   {"op":"read","path":...}                       -> {"ok":true,"data":"<base64>"}
 //   {"op":"write","path":...,"data":"<b64>","mode":420?}  -> {"ok":true}
-//   {"op":"display","width":1920,"height":1200}    -> {"ok":true,"mode":"960x600@2"}
-//     (user half: the main display's mode with exactly those pixels, HiDPI first)
+//   {"op":"display","width":1920,"height":1200}    -> {"ok":true,"mode":"1920x1200@1"}
+//     (user half: the main display's mode with exactly those pixels, at 1x)
 //   {"op":"windows"}                               -> {"ok":true,"text":"<one window a line>"}
 //   {"op":"ui_tree","app":?,"menus":?,"window":?}  -> {"ok":true,"text":"<one element a line>"}
 //   {"op":"ui_press","id":...,"action":?}          -> {"ok":true}
@@ -553,7 +553,9 @@ func press(_ key: String, modifiers: [String]) -> [String: Any] {
 /// the virtual panel; which mode the guest then uses on it is the guest's to choose, and it
 /// chooses the way a MacBook does — a scaled "looks like" mode drawn larger and shrunk to fit — so
 /// a panel of 1920x1200 drew at 2048x1280 and every screenshot came back that size. Of the modes
-/// with exactly those pixels, the HiDPI one is taken: the same pixels, drawn at twice the detail.
+/// with exactly those pixels, the 1x one is taken: a held size is a desktop's size, the way it is
+/// on a Linux or a Windows guest, where the HiDPI mode made 1920x1200 a 960x600 desktop — too
+/// small for the windows an agent is there to try — and drew it twice as large in the tab.
 func setDisplay(width: Int, height: Int) -> [String: Any] {
   let display = CGMainDisplayID()
   let options = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
@@ -570,7 +572,7 @@ func setDisplay(width: Int, height: Int) -> [String: Any] {
     return failure("the panel is still \(native.pixelWidth)x\(native.pixelHeight)")
   }
   let matching = modes.filter { $0.pixelWidth == width && $0.pixelHeight == height }
-  guard let mode = matching.min(by: { $0.width < $1.width }) else {
+  guard let mode = matching.max(by: { $0.width < $1.width }) else {
     let sizes = Set(modes.map { "\($0.pixelWidth)x\($0.pixelHeight)" }).sorted()
     return failure(
       "no mode draws \(width)x\(height); the display offers \(sizes.joined(separator: " "))")
