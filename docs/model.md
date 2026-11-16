@@ -169,9 +169,11 @@ and the reasoning behind it; read the file before changing the area it covers.
   under is the kernel's answer but, for a client in a terminal, only the terminal. A session started
   from there **does not take the selection**: the person may be typing into another one, and the
   composer's focus going with the new row would send what they type next somewhere they never aimed
-  it. **Not offered to Claude Code**: its sessions run inside this window, and a session reading or
-  steering its neighbours is the agent driving the app, which is what the guarded verbs exist to
-  stop.
+  it. **Not offered to Claude Code, nor refused to it**: hukan does not put it
+  in its sessions' config, but a session the person has set up to drive another — a loop of
+  agents — reaches the same tools, and is let through. What stays out of its reach is what stays
+  out of every client's: the decisions put to the person. Its note names the sending session, so
+  the loop can be followed afterwards.
 - **Scope decides where a reading goes.** The toolbar's trailing edge carries the account's plan
   usage and the app's own footprint, because both are true of the whole window; **how full a
   session's context window is goes in that session's header, beside its cost estimate**, because

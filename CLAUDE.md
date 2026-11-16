@@ -58,9 +58,9 @@ outbound list is in `docs/updates.md`, and the guarded verbs in `docs/testing.md
   network-less; the browser's traffic is the user's.
 - **Decisions put to the person stay the person's.** An approval or a question is never
   answered by an outside client or by the session's own agent: `approve`/`deny` are honoured
-  only under `HUKAN_SCRIPTING_GUARDED=1`, the steering verbs are refused to every process hukan
-  started, and a message is refused to a session waiting on a decision, since a send would cut
-  the turn and drop it.
+  only under `HUKAN_SCRIPTING_GUARDED=1`; sessions may steer each other, but a stop or the
+  like from a process hukan started, and a message from anyone, is refused to a session waiting
+  on a decision, since it would cut the turn and drop it.
 
 ### Where each area's decisions are
 

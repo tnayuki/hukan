@@ -2,8 +2,9 @@ import XCTest
 
 @testable import Hukan
 
-/// The steering verbs are refused to a process this hukan started, which is decided by walking the
-/// sender's parents up to this process.
+/// Whether a script came from a process this hukan started is decided by walking the sender's
+/// parents up to this process: it names the sender in the transcript's note, and refuses a stop or
+/// the like landing on a session waiting on the person.
 final class ScriptingCallerTests: XCTestCase {
   func testAChildIsInsideAndAParentIsNot() throws {
     let me = ProcessInfo.processInfo.processIdentifier
@@ -18,5 +19,16 @@ final class ScriptingCallerTests: XCTestCase {
     try child.run()
     defer { child.terminate() }
     XCTAssertTrue(isDescendant(child.processIdentifier, of: me))
+  }
+
+  func testAProcessNoAgentStartedIsATerminal() throws {
+    XCTAssertNil(originInside(of: getppid(), among: []), "a process outside is the person's")
+
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    child.arguments = ["5"]
+    try child.run()
+    defer { child.terminate() }
+    XCTAssertEqual(originInside(of: child.processIdentifier, among: []), "a terminal in hukan")
   }
 }

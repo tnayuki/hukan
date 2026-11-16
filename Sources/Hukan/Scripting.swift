@@ -64,19 +64,39 @@ extension NSScriptCommand {
       .attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value
   }
 
-  /// Refuse a verb that steers a session when the event came from inside this app — a session's
-  /// agent, or a shell in one of its terminals, both being processes hukan started. Steering a
-  /// neighbour is the agent driving the app: a message it sends is a prompt nobody typed, and a
-  /// send, stop or interrupt landing on a session that is waiting on the person throws their
-  /// decision away. A script run from anywhere else is the person's, and is let through; so is
+  /// Who inside this app sent the event, in the words a transcript note uses — the session whose
+  /// agent it was, or a shell in one of the terminals; nil for a process hukan did not start.
+  /// Sessions may steer each other: a loop where one agent drives another is a use, not a leak,
+  /// and the note is what lets it be followed afterwards.
+  var insideOrigin: String? {
+    guard let sender = senderPID else { return nil }
+    return originInside(
+      of: sender, among: WorkspaceWindowController.all.flatMap(\.workspace.sessions))
+  }
+
+  /// Refuse a stop, interrupt, restart or roll back from inside this app when the session is
+  /// waiting on the person: landing there would throw their decision away — a deny by another
+  /// name. `send` gets the same refusal from `ExternalMCP.send`, for everyone. A script run from
+  /// anywhere else is the person's, who may mean to stop a session stuck on a card; so is
   /// everything under `HUKAN_SCRIPTING_GUARDED`, the harness that drives a window on purpose.
-  func refusedFromInside() -> Bool {
-    guard !guardedScriptingEnabled(), let sender = senderPID,
-      isDescendant(sender, of: ProcessInfo.processInfo.processIdentifier)
+  func refusedWhileWaiting(_ session: AgentSession) -> Bool {
+    guard !guardedScriptingEnabled(), let waiting = ExternalMCP.waitingOn(session),
+      let sender = senderPID, isDescendant(sender, of: ProcessInfo.processInfo.processIdentifier)
     else { return false }
-    fail("sessions cannot be steered from a process this hukan started")
+    fail(
+      "The session is waiting on the developer for \(waiting). That is theirs to answer in hukan, "
+        + "so nothing was done.")
     return true
   }
+}
+
+/// `insideOrigin` worked out for `sender`, against the sessions whose agents could have sent it.
+func originInside(of sender: pid_t, among sessions: [AgentSession]) -> String? {
+  guard isDescendant(sender, of: ProcessInfo.processInfo.processIdentifier) else { return nil }
+  let agent = sessions.first { session in
+    session.enginePID.map { isDescendant(sender, of: $0) } ?? false
+  }
+  return agent.map { "session “\($0.title ?? "New session")”" } ?? "a terminal in hukan"
 }
 
 /// Whether `pid` is `ancestor` or one of its descendants, walking parents through the kernel.
@@ -119,12 +139,11 @@ final class SendCommand: NSScriptCommand {
     guard let text = directParameter as? String else { return fail("a message is required") }
     guard let proxy = argument("toSession", as: SDSession.self), let session = proxy.agentSession
     else { return fail("no such session") }
-    if refusedFromInside() { return nil }
     // The outside client's road, so the two cannot disagree: a session waiting on the person is
     // refused, and the transcript says where the message came from.
     let client = senderPID.flatMap(ExternalMCP.client(sending:))
     switch ExternalMCP.send(
-      text, to: session, from: client.map { "a script in \($0)" } ?? "a script",
+      text, to: session, from: insideOrigin ?? client.map { "a script in \($0)" } ?? "a script",
       reattaching: proxy.controller?.reattachIfNeeded)
     {
     case .error(let message): return fail(message)
@@ -140,7 +159,7 @@ final class RestartCommand: NSScriptCommand {
     // conversation); a bare `restart` — no session — relaunches the whole app, the dev-loop verb.
     if let proxy = argument("onSession", as: SDSession.self) {
       guard let session = proxy.agentSession else { return fail("no such session") }
-      if refusedFromInside() { return nil }
+      if refusedWhileWaiting(session) { return nil }
       if session.heldByPID != nil { return fail("session is held by another process") }
       proxy.controller?.reattachIfNeeded(session)
       session.restart()

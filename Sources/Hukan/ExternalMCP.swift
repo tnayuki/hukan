@@ -601,7 +601,8 @@ enum ExternalMCP {
 /// is plumbing between two copies of the same executable, not something a script is meant to say —
 /// though one that does is answered the same way, its note naming the app the script runs under.
 /// Not guarded: what the tools behind it may do is drawn in `ExternalMCP`, and none of it is a
-/// decision put to the person. Refused only to a process this hukan started (`refusedFromInside`).
+/// decision put to the person. A session's agent may use it too, to drive a neighbour; the note
+/// then names that session rather than the app.
 @objc(MCPCallCommand)
 final class MCPCallCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {
@@ -612,14 +613,13 @@ final class MCPCallCommand: NSScriptCommand {
       else { return fail("the arguments are not a JSON object") }
       arguments = parsed
     }
-    // Not offered to Claude Code, and a session's agent reaching it through osascript is the
-    // same case: reading and steering its neighbours is the agent driving the app.
-    if refusedFromInside() { return nil }
     let workspaces = WorkspaceWindowController.all.map(\.workspace)
     let sender = senderPID
-    let client = ExternalMCP.origin(
-      declared: argument("clientName", as: String.self),
-      app: sender.flatMap(ExternalMCP.client(sending:)))
+    let client =
+      insideOrigin
+      ?? ExternalMCP.origin(
+        declared: argument("clientName", as: String.self),
+        app: sender.flatMap(ExternalMCP.client(sending:)))
     // Suspended rather than answered inline, so a transcript read does not hold the main thread;
     // the run loop goes on and the reply is sent when the answer lands.
     suspendExecution()

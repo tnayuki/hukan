@@ -551,7 +551,7 @@ final class SDSession: NSObject {
   @objc(handleStopScriptCommand:)
   func handleStop(_ command: NSScriptCommand) -> Any? {
     guard let session = agentSession else { return command.fail("no such session") }
-    if command.refusedFromInside() { return nil }
+    if command.refusedWhileWaiting(session) { return nil }
     session.stop()
     return "ok"
   }
@@ -568,7 +568,7 @@ final class SDSession: NSObject {
   @objc(handleInterruptScriptCommand:)
   func handleInterrupt(_ command: NSScriptCommand) -> Any? {
     guard let session = agentSession else { return command.fail("no such session") }
-    if command.refusedFromInside() { return nil }
+    if command.refusedWhileWaiting(session) { return nil }
     guard session.isRunning else { return command.fail("session is not running") }
     session.interrupt()
     return "ok"
@@ -599,7 +599,7 @@ final class SDSession: NSObject {
     guard let session = agentSession, let controller else {
       return command.fail("no such session")
     }
-    if command.refusedFromInside() { return nil }
+    if command.refusedWhileWaiting(session) { return nil }
     guard session.canRollBack else {
       return command.fail(
         "session is held by another process; close it there, or fork instead")
