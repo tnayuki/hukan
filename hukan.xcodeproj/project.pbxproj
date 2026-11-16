@@ -12,6 +12,8 @@
 		AC0000000000000000000027 /* hukan-guest-agent.exe in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000026 /* hukan-guest-agent.exe */; };
 		AC0000000000000000000025 /* hukan-guest-agent in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000024 /* hukan-guest-agent */; };
 		AC0000000000000000000029 /* hukan-guest-agent-linux in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000028 /* hukan-guest-agent-linux */; };
+		AC000000000000000000002D /* hukan-rosetta-low32-arm64.so in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000002C /* hukan-rosetta-low32-arm64.so */; };
+		AC000000000000000000002B /* hukan-rosetta-low32-x86_64.so in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000002A /* hukan-rosetta-low32-x86_64.so */; };
 		AC000000000000000000001B /* hukan.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001A /* hukan.icns */; };
 		AC000000000000000000001F /* hukan-dev.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001E /* hukan-dev.icns */; };
 		AC000000000000000000001D /* TreeSitter in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001C /* TreeSitter */; };
@@ -41,6 +43,8 @@
 		AC0000000000000000000026 /* hukan-guest-agent.exe */ = {isa = PBXFileReference; lastKnownFileType = file; path = "hukan-guest-agent.exe"; sourceTree = "<group>"; };
 		AC0000000000000000000024 /* hukan-guest-agent */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = "hukan-guest-agent"; sourceTree = "<group>"; };
 		AC0000000000000000000028 /* hukan-guest-agent-linux */ = {isa = PBXFileReference; lastKnownFileType = file; path = "hukan-guest-agent-linux"; sourceTree = "<group>"; };
+		AC000000000000000000002C /* hukan-rosetta-low32-arm64.so */ = {isa = PBXFileReference; lastKnownFileType = file; path = "hukan-rosetta-low32-arm64.so"; sourceTree = "<group>"; };
+		AC000000000000000000002A /* hukan-rosetta-low32-x86_64.so */ = {isa = PBXFileReference; lastKnownFileType = file; path = "hukan-rosetta-low32-x86_64.so"; sourceTree = "<group>"; };
 		AC000000000000000000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AC000000000000000000001A /* hukan.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = hukan.icns; sourceTree = "<group>"; };
 		AC000000000000000000001E /* hukan-dev.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = "hukan-dev.icns"; sourceTree = "<group>"; };
@@ -124,6 +128,8 @@
 				AC0000000000000000000024 /* hukan-guest-agent */,
 				AC0000000000000000000026 /* hukan-guest-agent.exe */,
 				AC0000000000000000000028 /* hukan-guest-agent-linux */,
+				AC000000000000000000002C /* hukan-rosetta-low32-arm64.so */,
+				AC000000000000000000002A /* hukan-rosetta-low32-x86_64.so */,
 				AC000000000000000000001A /* hukan.icns */,
 				AC000000000000000000001E /* hukan-dev.icns */,
 				AC000000000000000000001C /* TreeSitter */,
@@ -237,6 +243,8 @@
 				AC0000000000000000000025 /* hukan-guest-agent in Resources */,
 				AC0000000000000000000027 /* hukan-guest-agent.exe in Resources */,
 				AC0000000000000000000029 /* hukan-guest-agent-linux in Resources */,
+				AC000000000000000000002D /* hukan-rosetta-low32-arm64.so in Resources */,
+				AC000000000000000000002B /* hukan-rosetta-low32-x86_64.so in Resources */,
 				AC000000000000000000001B /* hukan.icns in Resources */,
 				AC000000000000000000001F /* hukan-dev.icns in Resources */,
 				AC000000000000000000001D /* TreeSitter in Resources */,

@@ -45,6 +45,14 @@ and the reasoning behind it; read the file before changing the area it covers.
   guests is part of the system. **Rosetta is the template's choice, on unless turned off**: off,
   the template has no Rosetta share, no binfmt entry and no amd64 package sources, so apt fetches
   arm64 alone; it is decided when the template is made because the guest is set up for it then.
+  **Rosetta ignores `MAP_32BIT`**, the flag x86_64 Linux answers with a mapping below 2GB, and
+  Mono's JIT — so Unity's editor — aborts on the address it gets instead. So a template with
+  Rosetta preloads a library of hukan's into every x86_64 process that places those mappings
+  below 2GB itself and passes every other one to the kernel untouched: every process rather than
+  a wrapper around Unity, because Unity is started by its Hub, by a desktop file and by scripts,
+  and a fix that holds for one road and not the others is the failure moved somewhere harder to
+  see. It is named through the loader's `$LIB`, so an arm64 process finds an empty library under
+  the same name instead of a complaint that it is missing.
   **Ubuntu, from its desktop ISO, by its own installer run
   unattended**, as a macOS template is made from its IPSW and a Windows one from its ISO: a cloud
   image was tried first and refused, being a disk with no desktop on it, so every template cost a

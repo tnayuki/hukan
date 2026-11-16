@@ -35,7 +35,9 @@ query files under `Resources/TreeSitter/` are committed static assets; regenerat
 step, not part of the build. `Resources/hukan-guest-agent` is the guest agent, built by
 `Vendor/build-guest-agent.sh`, `Resources/hukan-guest-agent.exe` its Windows counterpart, built
 on the Mac by `Vendor/build-windows-agent.sh`, and `Resources/hukan-guest-agent-linux` the Linux
-one, cross-compiled from Go by `Vendor/build-linux-agent.sh`; `Resources/Hukan.entitlements` carries the one entitlement
+one, cross-compiled from Go by `Vendor/build-linux-agent.sh`; `Resources/hukan-rosetta-low32-*.so`
+are the library a Linux template preloads for Rosetta and its empty arm64 stand-in,
+cross-compiled with zig by `Vendor/build-rosetta-low32.sh`; `Resources/Hukan.entitlements` carries the one entitlement
 Virtualization.framework requires, which ad-hoc signing can hold.
 
 ripgrep is the one program hukan runs. The files panel's filter and its

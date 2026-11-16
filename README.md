@@ -476,8 +476,9 @@ A Linux template is Ubuntu, made from Canonical's desktop ISO for Apple silicon:
 and checks it against Ubuntu's own checksum. New Template… then runs Ubuntu's installer unattended
 — nothing to answer, about ten minutes — and sets up a GNOME desktop that signs in by itself
 (on X11 where the release still has it), the guest agent, and
-Rosetta, so x86_64 programs run, with amd64 packages installable by apt beside the arm64 ones —
-unless the sheet's Rosetta checkbox is turned off, which leaves all three out.
+Rosetta, so x86_64 programs run — Unity's editor among them, which Rosetta alone cannot start —
+with amd64 packages installable by apt beside the arm64 ones, unless the sheet's Rosetta checkbox
+is turned off, which leaves all of it out.
 The install itself needs no network: what the ISO lacks — 24.04.5's kernel, and Japanese input —
 is fetched from Ubuntu's archive and checked as the last part of the ISO's download, so making a
 template later needs no connection; if that part fails, the ISO is not kept either. An ISO added

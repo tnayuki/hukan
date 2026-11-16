@@ -478,6 +478,20 @@ final class LinuxTemplateBuilder {
       throw MachineError("The Linux guest agent is missing from this build of hukan.")
     }
     try manager.copyItem(at: agent, to: directory.appendingPathComponent("hukan-guest-agent"))
+    // Rosetta's MAP_32BIT, preloaded into x86_64 programs, and the empty arm64 library under the
+    // same name that keeps arm64 ones from reporting it missing (Vendor/rosetta-low32).
+    if request.rosetta {
+      for arch in ["x86_64", "arm64"] {
+        guard
+          let library = Bundle.main.url(
+            forResource: "hukan-rosetta-low32-\(arch)", withExtension: "so")
+        else {
+          throw MachineError("Rosetta's \(arch) library is missing from this build of hukan.")
+        }
+        try manager.copyItem(
+          at: library, to: directory.appendingPathComponent("hukan-rosetta-low32-\(arch).so"))
+      }
+    }
     try Self.tool(
       "/usr/bin/hdiutil",
       [
@@ -650,6 +664,14 @@ final class LinuxTemplateBuilder {
     printf '%s\n' ':rosetta:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00:\xff\xff\xff\xff\xff\xfe\xfe\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/media/rosetta/rosetta:CF' > "$T/usr/lib/binfmt.d/rosetta.conf"
     mkdir -p "$T/etc/systemd/system/systemd-binfmt.service.d"
     printf '[Unit]\nAfter=media-rosetta.mount\n' > "$T/etc/systemd/system/systemd-binfmt.service.d/rosetta.conf"
+    # Rosetta ignores MAP_32BIT, which Mono's JIT — Unity's editor — depends on: a library in every
+    # x86_64 process puts those mappings below 2GB. `$LIB` is spelt per architecture by the loader,
+    # so arm64 processes find the empty one under the same name and say nothing.
+    install -D -m 644 /run/hukan/hukan-rosetta-low32-x86_64.so \
+      "$T/usr/local/lib/x86_64-linux-gnu/libhukan-rosetta-low32.so"
+    install -D -m 644 /run/hukan/hukan-rosetta-low32-arm64.so \
+      "$T/usr/local/lib/aarch64-linux-gnu/libhukan-rosetta-low32.so"
+    echo '/usr/local/$LIB/libhukan-rosetta-low32.so' >> "$T/etc/ld.so.preload"
     # amd64 packages, for what Rosetta runs: Ubuntu keeps arm64 on its ports mirror and amd64 on
     # the main one, so each source is told which architecture it serves. Nothing is fetched now.
     sed -i '/^Types:/a Architectures: arm64' "$T/etc/apt/sources.list.d/ubuntu.sources"
