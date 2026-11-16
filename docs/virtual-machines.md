@@ -124,10 +124,10 @@ and the reasoning behind it; read the file before changing the area it covers.
   killed by SIGILL, the installer aborting — and the same install cached went through clean.
   **GNOME, on X11 where the release has it**, because that is what Unity's editor is supported on
   and what the agent's screen tools speak; 26.04 has no X11 session and is offered knowing those
-  tools fail there. **The agent is Go**, a static binary cross-compiled here that drives the
-  screen over the X11 protocol itself, so the guest needs nothing installed for it; the protocol
-  is a package of its own, which the macOS and Windows agents are to move onto in turn — Go
-  rather than Swift because Go builds the Windows one from this Mac, which Swift cannot. **The
+  tools fail there. **The agent is Zig**, a static binary with no libc, cross-compiled here, that
+  drives the screen over the X11 protocol itself, so the guest needs nothing installed for it;
+  the protocol is shared with the macOS and Windows agents, one program for all three — not
+  Swift, which cannot build the Windows one from this Mac (see docs/build.md). **The
   framework gives a Linux guest a screen and nothing to render with**, so without the GPU below
   drawing is llvmpipe on the CPU. The account takes this Mac's user id,
   so what either side writes in the shared worktree is the same user's.

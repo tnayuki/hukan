@@ -577,7 +577,8 @@ to restart hukan afterwards. **hukan ▸ Check for Updates** asks now rather tha
 hour; the answer still lands in the toolbar and nowhere else. Claude Code is not watched the same
 way, because it updates itself.
 
-Building from source instead is one `xcodebuild` — see [CLAUDE.md](CLAUDE.md).
+Building from source instead is one `xcodebuild`, with Zig installed for the guest agents (`brew
+install zig`) — see [CLAUDE.md](CLAUDE.md).
 
 ---
 

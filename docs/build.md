@@ -32,13 +32,33 @@ file-system-synchronized, so a new file under `Sources/` just appears. `Resource
 `Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework`,
 `Vendor/Cvirglrenderer.xcframework` and the
 query files under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
-step, not part of the build. `Resources/hukan-guest-agent` is the guest agent, built by
-`Vendor/build-guest-agent.sh`, `Resources/hukan-guest-agent.exe` its Windows counterpart, built
-on the Mac by `Vendor/build-windows-agent.sh`, and `Resources/hukan-guest-agent-linux` the Linux
-one, cross-compiled from Go by `Vendor/build-linux-agent.sh`; `Resources/hukan-rosetta-low32-*.so`
+step, not part of the build. `Resources/hukan-rosetta-low32-*.so`
 are the library a Linux template preloads for Rosetta and its empty arm64 stand-in,
 cross-compiled with zig by `Vendor/build-rosetta-low32.sh`; `Resources/Hukan.entitlements` carries the one entitlement
 Virtualization.framework requires, which ad-hoc signing can hold.
+
+**The guest agents are the exception: they are built, not committed.** They are one Zig program
+under `GuestAgent/src`, and the app target's last build phase runs `Vendor/build-guest-agents.sh`
+into the bundle's Resources — all three cross-compiled from this Mac, macOS's Objective-C half
+compiled by Xcode's clang and linked in, since Zig's own clang carries libc headers the SDK's
+frameworks do not build against. They were committed while one was Swift and one C#, and every
+rebuild then added megabytes to the history. What makes building them safe is that the build is
+reproducible — the same source and Zig give the same bytes, measured from two checkouts at
+different paths with separate caches — and that matters, because a guest's agent is replaced at
+boot whenever it differs from the one the app ships: a build that drifted would replace every
+guest's agent on every rebuild. So **Zig is a build dependency**, its version pinned in
+`GuestAgent/zig-version`, which CI installs and the script warns against a mismatch with, and a
+Zig upgrade is a new agent in every guest at its next boot — and, Zig being before 1.0, it may
+be source changes too. **Zig rather than Go, which they were briefly**: Go links its runtime into
+every binary, and the same agent measured 2.9 MB in Go against 0.2 MB in Zig; and Zig is already
+what builds the Rosetta library, so it is one toolchain rather than two. ReleaseSafe, because a
+mistake in an agent should end it — launchd, systemd or the service manager brings it back — where
+the faster modes would carry on past it with whatever memory it left. Windows' user half is the one
+nothing would bring back, the Task Scheduler running a task once a logon, so what it starts keeps a
+copy of itself running instead (windows/main.zig): Zig has no way back from a panic, which Go,
+before it, did. `zig build-exe` keeps no
+account of what is up to date, so the script keeps its own — a hash of the source, the script, Zig
+and the SDK — and a build with nothing changed costs a tenth of a second rather than eleven.
 
 ripgrep is the one program hukan runs. The files panel's filter and its
 content search are a process each, per gesture, started by someone typing and killed by the next

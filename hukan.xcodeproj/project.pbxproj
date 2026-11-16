@@ -9,9 +9,6 @@
 /* Begin PBXBuildFile section */
 		AC000000000000000000000E /* hukan.sdef in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000000D /* hukan.sdef */; };
 		AC0000000000000000000021 /* hukan in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000020 /* hukan */; };
-		AC0000000000000000000027 /* hukan-guest-agent.exe in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000026 /* hukan-guest-agent.exe */; };
-		AC0000000000000000000025 /* hukan-guest-agent in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000024 /* hukan-guest-agent */; };
-		AC0000000000000000000029 /* hukan-guest-agent-linux in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000028 /* hukan-guest-agent-linux */; };
 		AC000000000000000000002D /* hukan-rosetta-low32-arm64.so in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000002C /* hukan-rosetta-low32-arm64.so */; };
 		AC000000000000000000002B /* hukan-rosetta-low32-x86_64.so in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000002A /* hukan-rosetta-low32-x86_64.so */; };
 		AC000000000000000000001B /* hukan.icns in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000001A /* hukan.icns */; };
@@ -40,9 +37,6 @@
 		AC0000000000000000000003 /* Hukan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hukan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AC000000000000000000000D /* hukan.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = hukan.sdef; sourceTree = "<group>"; };
 		AC0000000000000000000020 /* hukan */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = hukan; sourceTree = "<group>"; };
-		AC0000000000000000000026 /* hukan-guest-agent.exe */ = {isa = PBXFileReference; lastKnownFileType = file; path = "hukan-guest-agent.exe"; sourceTree = "<group>"; };
-		AC0000000000000000000024 /* hukan-guest-agent */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = "hukan-guest-agent"; sourceTree = "<group>"; };
-		AC0000000000000000000028 /* hukan-guest-agent-linux */ = {isa = PBXFileReference; lastKnownFileType = file; path = "hukan-guest-agent-linux"; sourceTree = "<group>"; };
 		AC000000000000000000002C /* hukan-rosetta-low32-arm64.so */ = {isa = PBXFileReference; lastKnownFileType = file; path = "hukan-rosetta-low32-arm64.so"; sourceTree = "<group>"; };
 		AC000000000000000000002A /* hukan-rosetta-low32-x86_64.so */ = {isa = PBXFileReference; lastKnownFileType = file; path = "hukan-rosetta-low32-x86_64.so"; sourceTree = "<group>"; };
 		AC000000000000000000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -125,9 +119,6 @@
 				AC000000000000000000000F /* Info.plist */,
 				AC000000000000000000000D /* hukan.sdef */,
 				AC0000000000000000000020 /* hukan */,
-				AC0000000000000000000024 /* hukan-guest-agent */,
-				AC0000000000000000000026 /* hukan-guest-agent.exe */,
-				AC0000000000000000000028 /* hukan-guest-agent-linux */,
 				AC000000000000000000002C /* hukan-rosetta-low32-arm64.so */,
 				AC000000000000000000002A /* hukan-rosetta-low32-x86_64.so */,
 				AC000000000000000000001A /* hukan.icns */,
@@ -147,6 +138,7 @@
 				AC0000000000000000000007 /* Sources */,
 				AC0000000000000000000008 /* Frameworks */,
 				AC0000000000000000000009 /* Resources */,
+				AC0000000000000000000030 /* Build Guest Agents */,
 			);
 			buildRules = (
 			);
@@ -240,9 +232,6 @@
 			files = (
 				AC000000000000000000000E /* hukan.sdef in Resources */,
 				AC0000000000000000000021 /* hukan in Resources */,
-				AC0000000000000000000025 /* hukan-guest-agent in Resources */,
-				AC0000000000000000000027 /* hukan-guest-agent.exe in Resources */,
-				AC0000000000000000000029 /* hukan-guest-agent-linux in Resources */,
 				AC000000000000000000002D /* hukan-rosetta-low32-arm64.so in Resources */,
 				AC000000000000000000002B /* hukan-rosetta-low32-x86_64.so in Resources */,
 				AC000000000000000000001B /* hukan.icns in Resources */,
@@ -259,6 +248,32 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AC0000000000000000000030 /* Build Guest Agents */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Guest Agents";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/hukan-guest-agent",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/hukan-guest-agent.exe",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/hukan-guest-agent-linux",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Go keeps its own account of what is up to date, so this runs every build and costs a\n# cache lookup when nothing has changed. See the script.\n\"$SRCROOT/Vendor/build-guest-agents.sh\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		AC0000000000000000000007 /* Sources */ = {

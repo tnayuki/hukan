@@ -65,6 +65,24 @@ jobs:
         # The files panel runs Homebrew's ripgrep, which the cask depends on, and its tests run it.
         run: brew list ripgrep >/dev/null 2>&1 || brew install ripgrep
 
+      - name: Zig version
+        id: zig
+        run: echo "version=$(cat GuestAgent/zig-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Zig
+        # The guest agents are one Zig program (GuestAgent/src), built by the app's own build
+        # phase rather than committed; the version is GuestAgent/zig-version, so the runner builds
+        # the same bytes the desk does.
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zig.outputs.version }}
+
+      - name: Guest agent tests
+        # Here, where the agents' shared half and the macOS screen run; the Linux and Windows
+        # halves cannot run on a Mac, so their pure logic is tested and the rest is built, which
+        # is also what holds the Windows structures to their sizes.
+        run: sh GuestAgent/test.sh
+
       - name: Test
         # Most of the pixel-pinned tests run here now: they render through `SnapshotSurface`,
         # which pins the backing scale, the colour space and the completion panel's material, so
