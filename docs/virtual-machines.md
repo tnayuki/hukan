@@ -137,6 +137,13 @@ and the reasoning behind it; read the file before changing the area it covers.
   so it is kept, left alone by the guest — Xorg is pinned to the GPU by PCI address at each boot,
   by address because a path Xorg opens itself bypasses logind and gets no DRM master — and the
   GPU follows its size, which keeps fit, fixed and agent-set resolutions working unchanged.
+  Socket writes are queued and nonblocking on both ends: a full socket must leave the queue free
+  to read replies and handle a reset or stop. Guest fence ids stay opaque 64-bit values in replies;
+  vrend gets a separate 32-bit sequence, and only one fence poll is scheduled at a time. A reset
+  replaces the renderer; releasing the VM owner also shuts its GPU down permanently, so a late
+  DRIVER_OK cannot start it again. The renderer watches its parent's exit independently of GL and
+  socket handling. GPU lifecycle logs include a device identity to distinguish a reboot's renderer
+  replacements from separate devices; fences pending for five seconds are logged by the renderer.
   **Chosen when the template is made**, and kept by its copies, since the guest is set up then.
   **Such a machine cannot be suspended**: its state lives in this Mac's GL and is not saved, so
   a resumed guest would wake with every context gone. Its Suspend is off rather than renamed —

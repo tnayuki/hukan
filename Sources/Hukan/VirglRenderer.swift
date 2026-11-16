@@ -10,8 +10,19 @@ import OpenGL.GL3
 /// OpenGL — 4.1 core over Metal — through CGL contexts it hands vrend, since vrend has no CGL winsys
 /// of its own. What the guest scans out is blitted into IOSurfaces the device's process shows.
 enum VirglRendererProcess {
+  private static var parentExit: DispatchSourceProcess?
+
   /// `--virgl-renderer <bootstrap name> <RAM base> <RAM size> <width> <height>`, the socket on fd 3.
   static func run() -> Never {
+    // Socket EOF alone cannot stop a renderer stuck inside GL or a Mach handshake.
+    let parent = getppid()
+    guard parent != 1 else { exit(0) }
+    let source = DispatchSource.makeProcessSource(
+      identifier: parent, eventMask: .exit, queue: DispatchQueue.global())
+    source.setEventHandler { exit(0) }
+    parentExit = source
+    source.resume()
+    guard getppid() == parent else { exit(0) }
     let arguments = CommandLine.arguments
     guard arguments.count >= 7, let base = UInt64(arguments[3]), let size = UInt64(arguments[4]),
       let width = UInt32(arguments[5]), let height = UInt32(arguments[6])
@@ -74,6 +85,9 @@ final class VirglRenderer {
   private let socket = VirglLink.socketDescriptor
   private let reader = VirglLink.Reader()
   private var readSource: DispatchSourceRead?
+  private var writer: VirglLink.Writer?
+  private var pollScheduled = false
+  private var nextFence: UInt32 = 0
   private let ram: UnsafeMutableRawPointer
   private let base: UInt64
   private let size: UInt64
@@ -85,7 +99,9 @@ final class VirglRenderer {
     let tag: UInt64
     let response: Data
     let fence: UInt64
+    let submitted = Date()
   }
+  private var lastFenceWarning = Date.distantPast
   private var pending: [Pending] = []
   /// The iovec arrays handed to vrend, which keeps them rather than copying: one per resource,
   /// freed once detached. Their pages are guest RAM, in this process's mapping of it.
@@ -111,11 +127,12 @@ final class VirglRenderer {
       setenv("VIRGL_USE_INTEGER", "1", 1)
       guard virgl_renderer_init(Unmanaged.passUnretained(self).toOpaque(), 0, &Self.callbacks) == 0
       else { VirglRendererProcess.fail(72, "virglrenderer did not start") }
-      fcntl(socket, F_SETFL, fcntl(socket, F_GETFL) | O_NONBLOCK)
+      writer = VirglLink.Writer(descriptor: socket, queue: queue) { exit(0) }
       let source = DispatchSource.makeReadSource(fileDescriptor: socket, queue: queue)
       source.setEventHandler { [weak self] in self?.readSocket() }
       source.resume()
       readSource = source
+      VirglLink.note("renderer: ready")
     }
   }
 
@@ -137,11 +154,7 @@ final class VirglRenderer {
   private func send(
     _ kind: VirglLink.Kind, value: UInt32 = 0, tag: UInt64 = 0, payload: Data = Data()
   ) {
-    if !VirglLink.write(
-      VirglLink.encode(kind, value: value, tag: tag, payload: payload), to: socket)
-    {
-      exit(0)
-    }
+    writer?.send(VirglLink.encode(kind, value: value, tag: tag, payload: payload))
   }
 
   // MARK: CGL, for vrend
@@ -213,16 +226,29 @@ final class VirglRenderer {
 
   /// Without its sync thread (it needs eventfd) vrend signals fences only when polled.
   private func poll() {
-    guard !pending.isEmpty else { return }
+    guard !pending.isEmpty, !pollScheduled else { return }
+    if let first = pending.first, Date().timeIntervalSince(first.submitted) >= 5,
+      Date().timeIntervalSince(lastFenceWarning) >= 5
+    {
+      lastFenceWarning = Date()
+      VirglLink.note("renderer: waiting for fence \(first.fence), \(pending.count) pending")
+    }
     makeCurrent()
     virgl_renderer_poll()
     guard !pending.isEmpty else { return }
-    queue.asyncAfter(deadline: .now() + .microseconds(500)) { [weak self] in self?.poll() }
+    pollScheduled = true
+    queue.asyncAfter(deadline: .now() + .microseconds(500)) { [weak self] in
+      guard let self else { return }
+      self.pollScheduled = false
+      self.poll()
+    }
   }
 
   private func signalled(_ fence: UInt64) {
-    while let first = pending.first, first.fence <= fence {
-      pending.removeFirst()
+    guard let index = pending.firstIndex(where: { $0.fence == fence }) else { return }
+    let completed = Array(pending[...index])
+    pending.removeFirst(index + 1)
+    for first in completed {
       send(.response, tag: first.tag, payload: first.response)
     }
   }
@@ -424,9 +450,15 @@ final class VirglRenderer {
     response.append(body)
 
     if flags & Self.flagFence != 0, status < Self.errUnspecified {
-      pending.append(Pending(tag: tag, response: response, fence: fence))
-      if virgl_renderer_create_fence(Int32(truncatingIfNeeded: fence), context) != 0 {
-        signalled(fence)
+      // The wire fence is a guest's opaque 64-bit id; vrend's legacy callback returns 32 bits.
+      // Use our own sequence, preserving the guest's id only in the response.
+      nextFence &+= 1
+      let rendererFence = UInt64(nextFence)
+      pending.append(Pending(tag: tag, response: response, fence: rendererFence))
+      if virgl_renderer_create_fence(Int32(bitPattern: nextFence), context) != 0 {
+        // A failed fence says nothing about earlier GPU work.
+        let failed = pending.removeLast()
+        send(.response, tag: failed.tag, payload: failed.response)
       }
     } else {
       send(.response, tag: tag, payload: response)

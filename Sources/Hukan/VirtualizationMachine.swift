@@ -62,6 +62,8 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
     self.installing = installing
   }
 
+  deinit { releaseGPU() }
+
   var isRunning: Bool {
     guard let vm else { return false }
     return vm.state == .running || vm.state == .paused || vm.state == .starting
@@ -78,6 +80,10 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
   func start(
     provisioning: Any? = nil, recovery: Bool = false, completion: @escaping (Error?) -> Void
   ) {
+    guard vm == nil else {
+      completion(MachineError("This machine has already been started."))
+      return
+    }
     let vm: VZVirtualMachine
     do {
       let configuration =
@@ -110,10 +116,14 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
     (vm.socketDevices.first as? VZVirtioSocketDevice)?.setSocketListener(
       helloListener, forPort: Self.helloPort)
     self.vm = vm
+    let finished: (Error?) -> Void = { [weak self] error in
+      if error != nil, self?.vm === vm { self?.vm = nil }
+      completion(error)
+    }
     let state = machine.stateURL
     guard provisioning == nil, !recovery, FileManager.default.fileExists(atPath: state.path)
     else {
-      coldStart(vm, provisioning: provisioning, recovery: recovery, completion: completion)
+      coldStart(vm, provisioning: provisioning, recovery: recovery, completion: finished)
       return
     }
     vm.restoreMachineStateFrom(url: state) { [weak self] error in
@@ -121,12 +131,12 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
       // moment onto a disk that has moved on.
       try? FileManager.default.removeItem(at: state)
       guard error == nil else {
-        self?.coldStart(vm, provisioning: nil, recovery: false, completion: completion)
+        self?.coldStart(vm, provisioning: nil, recovery: false, completion: finished)
         return
       }
       vm.resume { result in
         if case .success = result { self?.resumedFromSave = true }
-        if case .failure(let error) = result { completion(error) } else { completion(nil) }
+        if case .failure(let error) = result { finished(error) } else { finished(nil) }
       }
     }
   }
@@ -228,6 +238,7 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
   /// Stop at once, no questions asked — what deleting the machine is about to make moot.
   func forceStop(completion: @escaping () -> Void) {
     guard let vm, vm.state != .stopped else {
+      self.vm = nil
       completion()
       return
     }
@@ -270,12 +281,14 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
   }
 
   func guestDidStop(_ virtualMachine: VZVirtualMachine) {
+    guard vm === virtualMachine else { return }
     agentsHeard = []
     vm = nil
     onStop?(nil)
   }
 
   func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
+    guard vm === virtualMachine else { return }
     agentsHeard = []
     vm = nil
     onStop?(error)

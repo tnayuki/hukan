@@ -97,19 +97,64 @@ enum VirglLink {
     }
   }
 
-  /// Write all of it, waiting out a full socket.
-  static func write(_ data: Data, to descriptor: Int32) -> Bool {
-    data.withUnsafeBytes { raw in
-      var offset = 0
-      while offset < raw.count {
-        let written = Darwin.write(descriptor, raw.baseAddress! + offset, raw.count - offset)
-        if written < 0 {
-          if errno == EINTR || errno == EAGAIN { continue }
-          return false
+  /// A nonblocking, ordered writer. Reading and lifecycle callbacks must keep running when the
+  /// peer's socket is full; waiting here can deadlock two peers that are both sending.
+  /// All methods run on the socket's serial queue. The owner closes the descriptor after cancel.
+  final class Writer {
+    private let descriptor: Int32
+    private let queue: DispatchQueue
+    private let onFailure: () -> Void
+    private var source: DispatchSourceWrite?
+    private var buffers: [Data] = []
+    private var offset = 0
+
+    init(descriptor: Int32, queue: DispatchQueue, onFailure: @escaping () -> Void) {
+      self.descriptor = descriptor
+      self.queue = queue
+      self.onFailure = onFailure
+      _ = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK)
+    }
+
+    func send(_ data: Data) {
+      buffers.append(data)
+      flush()
+    }
+
+    private func flush() {
+      while let data = buffers.first {
+        let count = data.withUnsafeBytes {
+          Darwin.send(descriptor, $0.baseAddress! + offset, $0.count - offset, MSG_NOSIGNAL)
         }
-        offset += written
+        if count < 0, errno == EINTR { continue }
+        if count < 0, errno == EAGAIN {
+          if source == nil {
+            let source = DispatchSource.makeWriteSource(fileDescriptor: descriptor, queue: queue)
+            source.setEventHandler { [weak self] in self?.flush() }
+            self.source = source
+            source.resume()
+          }
+          return
+        }
+        guard count > 0 else {
+          cancel()
+          onFailure()
+          return
+        }
+        offset += count
+        if offset == data.count {
+          buffers.removeFirst()
+          offset = 0
+        }
       }
-      return true
+      source?.cancel()
+      source = nil
+    }
+
+    func cancel() {
+      source?.cancel()
+      source = nil
+      buffers.removeAll()
+      offset = 0
     }
   }
 

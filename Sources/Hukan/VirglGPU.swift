@@ -53,6 +53,7 @@ final class VirglGPU: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
   // MARK: State
 
   private let queue = DispatchQueue(label: "hukan.virgl")
+  private let identity = UUID().uuidString
   private var device: VZCustomVirtioDevice?
   private var width: UInt32
   private var height: UInt32
@@ -64,6 +65,8 @@ final class VirglGPU: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
 
   // The renderer: its process, the socket to it, and the Mach service it finds this process by.
   private var renderer: pid_t = 0
+  private var shutDownPermanently = false
+  private var writer: VirglLink.Writer?
   private var socket: Int32 = -1
   private var readSource: DispatchSourceRead?
   private var reader = VirglLink.Reader()
@@ -97,7 +100,8 @@ final class VirglGPU: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
 
   /// Start the renderer: guest RAM to it as a memory entry, through a bootstrap name only it is told.
   private func startRenderer(on device: VZCustomVirtioDevice) {
-    guard renderer == 0,
+    guard !shutDownPermanently, renderer == 0 else { return }
+    guard
       let ram = device.guestMemoryMapping(
         atPhysicalAddress: Self.ramBase, length: Int(memorySize))
     else {
@@ -114,12 +118,16 @@ final class VirglGPU: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
       VirglLink.note("could not share guest RAM")
       return
     }
+    defer { mach_port_deallocate(mach_task_self_, entry) }
     let name = "com.tnayuki.hukan.virgl.\(getpid()).\(UUID().uuidString)"
     var service: mach_port_t = 0
     guard VirglLink.bootstrapCheckIn(bootstrap_port, name, &service) == KERN_SUCCESS else {
-      mach_port_deallocate(mach_task_self_, entry)
       VirglLink.note("could not register the renderer's name")
       return
+    }
+    var ownsService = true
+    defer {
+      if ownsService { mach_port_mod_refs(mach_task_self_, service, MACH_PORT_RIGHT_RECEIVE, -1) }
     }
     var pair: [Int32] = [-1, -1]
     guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else { return }
@@ -152,35 +160,50 @@ final class VirglGPU: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
       VirglLink.note("the renderer did not start (\(spawned))")
       return
     }
-    VirglLink.note("renderer \(pid) started for \(memorySize >> 30) GB of guest RAM")
+    VirglLink.note(
+      "renderer \(pid) started for \(memorySize >> 30) GB of guest RAM, GPU \(identity)")
     self.ram = ram
     self.renderer = pid
     self.socket = pair[0]
     self.service = service
     self.reader = VirglLink.Reader()
+    ownsService = false
+    writer = VirglLink.Writer(descriptor: pair[0], queue: queue) { [weak self] in
+      self?.stopRenderer()
+    }
 
     let source = DispatchSource.makeReadSource(fileDescriptor: pair[0], queue: queue)
-    source.setEventHandler { [weak self] in self?.readSocket() }
+    source.setEventHandler { [weak self] in
+      guard let self, self.renderer == pid else { return }
+      self.readSocket()
+    }
+    let descriptor = pair[0]
+    source.setCancelHandler { close(descriptor) }
     source.resume()
     readSource = source
 
     // Mach on a thread of its own: the hello and RAM first, then the surfaces as they are made. It
     // ends when the service's right is destroyed.
+    // Keep one send right to the entry until the handshake thread has finished with it.
+    mach_port_mod_refs(mach_task_self_, entry, MACH_PORT_RIGHT_SEND, 1)
     Thread.detachNewThread { [weak self] in
+      defer { mach_port_deallocate(mach_task_self_, entry) }
       guard let hello = VirglLink.receive(on: service), hello.id == VirglLink.helloID else {
         return
       }
       VirglLink.send([entry], id: VirglLink.memoryID, to: hello.reply)
-      mach_port_deallocate(mach_task_self_, entry)
+      mach_port_deallocate(mach_task_self_, hello.reply)
       while let message = VirglLink.receive(on: service) {
         guard message.id == VirglLink.surfacesID else { continue }
         let made = message.ports.compactMap { port -> IOSurfaceRef? in
           defer { mach_port_deallocate(mach_task_self_, port) }
           return IOSurfaceLookupFromMachPort(port)
         }
-        DispatchQueue.main.async {
-          guard let self else { return }
-          self.surfaces = Dictionary(uniqueKeysWithValues: made.map { (IOSurfaceGetID($0), $0) })
+        self?.queue.async { [weak self] in
+          guard let self, self.renderer == pid else { return }
+          DispatchQueue.main.async { [weak self] in
+            self?.surfaces = Dictionary(uniqueKeysWithValues: made.map { (IOSurfaceGetID($0), $0) })
+          }
         }
       }
     }
@@ -191,19 +214,21 @@ final class VirglGPU: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
     guard renderer != 0 else { return }
     readSource?.cancel()
     readSource = nil
-    close(socket)
+    writer?.cancel()
+    writer = nil
     socket = -1
     let pid = renderer
     renderer = 0
     kill(pid, SIGTERM)
     DispatchQueue.global().async {
       var status: Int32 = 0
-      waitpid(pid, &status, 0)
+      while waitpid(pid, &status, 0) < 0, errno == EINTR {}
       VirglLink.note("renderer \(pid) ended, status \(status)")
     }
     mach_port_mod_refs(mach_task_self_, service, MACH_PORT_RIGHT_RECEIVE, -1)
     service = 0
     ram = nil
+    DispatchQueue.main.async { [weak self] in self?.surfaces = [:] }
     // An element has to go back to its queue before it is let go, or the framework aborts; these
     // go back unanswered.
     for element in elements.values { element.returnToQueue() }
@@ -212,7 +237,12 @@ final class VirglGPU: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
 
   /// The machine has stopped for good.
   func shutDown() {
-    queue.sync { stopRenderer() }
+    queue.sync {
+      VirglLink.note("GPU \(identity): shut down")
+      shutDownPermanently = true
+      stopRenderer()
+      device = nil
+    }
   }
 
   private func readSocket() {
@@ -287,8 +317,7 @@ final class VirglGPU: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
       self.width = UInt32(width)
       self.height = UInt32(height)
       if socket >= 0 {
-        _ = VirglLink.write(
-          VirglLink.encode(.display, value: self.width << 16 | self.height), to: socket)
+        writer?.send(VirglLink.encode(.display, value: self.width << 16 | self.height))
       }
       device?.update(
         VZVirtioDeviceSpecificConfiguration(configurationData: config(events: Self.eventDisplay))
@@ -306,15 +335,18 @@ final class VirglGPU: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
   }
 
   func customVirtioDeviceDidAcceptDriverOk(_ device: VZCustomVirtioDevice) {
+    VirglLink.note("GPU \(identity): driver ok")
     startRenderer(on: device)
   }
 
   func customVirtioDeviceWillReset(_ device: VZCustomVirtioDevice) {
+    VirglLink.note("GPU \(identity): reset")
     // A reboot resets the device; what the old driver made goes with its renderer.
     stopRenderer()
   }
 
   func customVirtioDeviceWillStop(_ device: VZCustomVirtioDevice) {
+    VirglLink.note("GPU \(identity): stop")
     stopRenderer()
   }
 
@@ -331,12 +363,8 @@ final class VirglGPU: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
       let tag = nextTag
       nextTag += 1
       elements[tag] = element
-      if !VirglLink.write(
-        VirglLink.encode(.request, value: UInt32(queue.queueIndex), tag: tag, payload: request),
-        to: socket)
-      {
-        elements.removeValue(forKey: tag)?.returnToQueue()
-      }
+      writer?.send(
+        VirglLink.encode(.request, value: UInt32(queue.queueIndex), tag: tag, payload: request))
     }
   }
 }
