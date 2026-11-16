@@ -322,6 +322,7 @@ final class LinuxTemplateBuilder {
   // MARK: Before it boots
 
   private func prepare() throws -> Machine {
+    let packages = try UbuntuPackages.cached(iso: request.image)
     MachineStore.prepare()
     let id = UUID()
     let url = MachineStore.templatesURL.appendingPathComponent(".building-\(id.uuidString)")
@@ -347,7 +348,6 @@ final class LinuxTemplateBuilder {
       _ = try VZEFIVariableStore(creatingVariableStoreAt: machine.auxiliaryURL)
       let grub = try Self.readFromISO(request.image, path: "efi/boot/grubaa64.efi")
       try Self.makeBootDisk(at: url.appendingPathComponent(Self.bootDiskName), grub: grub)
-      let packages = try UbuntuPackages.prepare(iso: request.image)
       try makeAnswers(for: machine, packages: packages)
       return machine
     } catch {
@@ -466,12 +466,32 @@ final class LinuxTemplateBuilder {
       to: directory.appendingPathComponent("hukan-offline"), atomically: true, encoding: .utf8)
     let repository = directory.appendingPathComponent("repository")
     try manager.createDirectory(at: repository, withIntermediateDirectories: true)
-    // Linux's ISO9660 view folds these names to lowercase; do not depend on Joliet selection.
-    for name in ["Packages", "InstallPackages", "pool"] {
+    // ISO9660 mangles long names and embedded dots even when Joliet is also present.
+    // Use short, portable names on the disc, including for snapshots made by older builds.
+    let local = UbuntuPackages.stanzas(
+      try String(contentsOf: packages.directory.appendingPathComponent("Packages"), encoding: .utf8)
+    ).map(UbuntuPackages.Package.init)
+    var installIndex = try String(
+      contentsOf: packages.directory.appendingPathComponent("InstallPackages"), encoding: .utf8)
+    try manager.createDirectory(
+      at: repository.appendingPathComponent("pool"), withIntermediateDirectories: true)
+    var renamed: [UbuntuPackages.Package] = []
+    for (index, package) in local.enumerated() {
+      let filename = "pool/p\(index).deb"
       try manager.copyItem(
-        at: packages.directory.appendingPathComponent(name),
-        to: repository.appendingPathComponent(name.lowercased()))
+        at: packages.directory.appendingPathComponent(package.filename),
+        to: repository.appendingPathComponent(filename))
+      installIndex = installIndex.replacingOccurrences(
+        of: "Filename: repository/" + package.filename + "\n",
+        with: "Filename: repository/" + filename + "\n")
+      var fields = package.fields
+      fields["Filename"] = filename
+      renamed.append(.init(fields: fields))
     }
+    try UbuntuPackages.indexText(renamed).write(
+      to: repository.appendingPathComponent("packages"), atomically: true, encoding: .utf8)
+    try installIndex.write(
+      to: repository.appendingPathComponent("installpackages"), atomically: true, encoding: .utf8)
     try packages.codename.write(
       to: repository.appendingPathComponent("codename"), atomically: true, encoding: .utf8)
     guard let agent = GuestAgent.bundledBinary(for: .linux) else {
@@ -593,6 +613,12 @@ final class LinuxTemplateBuilder {
     mount --bind /run/hukan-cdrom/view /cdrom
     python3 - <<'PY'
     import gzip, hashlib, pathlib
+    repository = pathlib.Path('/cdrom/repository')
+    for stanza in (repository / 'Packages').read_text().strip().split('\n\n'):
+        fields = dict(line.split(': ', 1) for line in stanza.splitlines() if line and not line[0].isspace())
+        package = repository / fields['Filename']
+        if package.stat().st_size != int(fields['Size']) or hashlib.sha256(package.read_bytes()).hexdigest() != fields['SHA256']:
+            raise RuntimeError('Offline package verification failed: ' + str(package))
     root = pathlib.Path('/cdrom/dists')
     code = pathlib.Path('/run/hukan/repository/codename').read_text().strip()
     if not code or not code.isascii() or not code.isalpha():

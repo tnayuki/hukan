@@ -215,9 +215,52 @@ enum UbuntuPackages {
     RestoreImageDownload.sha256(of: iso).map { snapshot(identity: $0) }
   }
 
+  static let missingPackagesMessage =
+    "This ISO's packages are missing or incomplete. Remove the ISO with − and download or add it again."
+
+  /// Read and authenticate the saved packages without ever contacting the archive.
+  /// Hashing the ISO and checking packages must run off the main thread.
+  static func cached(iso: URL) throws -> Snapshot {
+    do {
+      return try prepare(iso: iso, cachedOnly: true)
+    } catch {
+      throw MachineError(missingPackagesMessage + " " + error.localizedDescription)
+    }
+  }
+
+  /// Follow only the HWE image selectors, leaving headers and firmware out of the roots.
+  /// The concrete image's complete dependency closure is still required, including ZFS when
+  /// Ubuntu makes it a hard dependency of linux-modules (as noble's 7.0 kernel does).
+  static func kernelImage(meta: String, available: [Package]) throws
+    -> String
+  {
+    let byName = Dictionary(grouping: available, by: \.name)
+    var visited: Set<String> = []
+    func image(_ requirement: Requirement) throws -> String {
+      guard visited.insert(requirement.name).inserted,
+        let package = byName[requirement.name]?.first(where: { requirement.accepts($0.version) })
+      else { throw MachineError("The Ubuntu HWE selector has no concrete kernel image.") }
+      if isKernelImage(package.name) { return package.name }
+      for expression in package.dependencies.split(separator: ",") {
+        for alternative in expression.split(separator: "|") {
+          let dependency = try Requirement(String(alternative))
+          if dependency.name.hasPrefix("linux-image-") { return try image(dependency) }
+        }
+      }
+      throw MachineError("The Ubuntu HWE selector has no concrete kernel image.")
+    }
+    return try image(Requirement(meta))
+  }
+
+  static func isKernelImage(_ name: String) -> Bool {
+    name.hasPrefix("linux-image-") && name.hasSuffix("-generic")
+      && name.dropFirst("linux-image-".count).first?.isNumber == true
+  }
+
   static func prepare(
     iso: URL, cancellation: Progress = Progress(totalUnitCount: 1),
-    progress: (String) -> Void = { _ in }, download: ((URL) throws -> Data)? = nil
+    progress: (String) -> Void = { _ in }, download: ((URL) throws -> Data)? = nil,
+    cachedOnly: Bool = false
   ) throws -> Snapshot {
     try checkCancellation(cancellation)
     let download = download ?? { try fetch($0, cancellation: cancellation) }
@@ -236,11 +279,8 @@ enum UbuntuPackages {
       try (try? isoFile(iso, "casper/minimal.manifest.full"))
       ?? (try isoFile(iso, "casper/minimal.manifest"))
     let baseline = manifest(String(decoding: manifestData, as: UTF8.self))
-    let kernel = baseline.keys.filter {
-      $0.hasPrefix("linux-image-") && $0.hasSuffix("-generic")
-        && $0.dropFirst("linux-image-".count).first?.isNumber == true
-    }.sorted().first
-    let kernelPackage = kernel ?? "linux-generic-hwe-\(series(release))"
+    let kernel = baseline.keys.filter(isKernelImage).sorted().first
+    let meta = "linux-generic-hwe-\(series(release))"
     // Hash the actual ISO, not its filename: a rebuilt point release must never share a snapshot.
     guard let identity = RestoreImageDownload.sha256(of: iso) else {
       throw MachineError("The Ubuntu ISO could not be hashed.")
@@ -248,8 +288,17 @@ enum UbuntuPackages {
     let destination = snapshot(identity: identity)
     if FileManager.default.fileExists(atPath: destination.path) {
       try validateSnapshot(destination, iso: iso, codename: code)
-      return Snapshot(directory: destination, codename: code, kernel: kernelPackage)
+      let saved = stanzas(
+        try String(contentsOf: destination.appendingPathComponent("Packages"), encoding: .utf8)
+      ).map(Package.init)
+      guard let image = kernel ?? saved.first(where: { isKernelImage($0.name) })?.name else {
+        throw MachineError("The saved packages have no kernel image.")
+      }
+      // Verify that the snapshot also contains the closure needed by the new installer.
+      _ = try resolve(roots: [image, "ibus-mozc"], installed: baseline, available: saved)
+      return Snapshot(directory: destination, codename: code, kernel: image)
     }
+    guard !cachedOnly else { throw MachineError("No saved package snapshot exists.") }
     let manager = FileManager.default
     let partial = MachineStore.driversURL.appendingPathComponent(
       ".ubuntu-\(UUID().uuidString).download")
@@ -297,6 +346,10 @@ enum UbuntuPackages {
       $0.name == $1.name
         ? compareVersions($0.version, $1.version) == .orderedDescending : $0.name < $1.name
     }
+    let kernelPackage =
+      try kernel
+      ?? kernelImage(
+        meta: meta, available: pool + remote)
     let chosen = try resolve(
       roots: (kernel == nil ? [kernelPackage] : []) + ["ibus-mozc"], installed: baseline,
       available: pool + remote)

@@ -1427,6 +1427,9 @@ private final class NewMacTemplateSheet: NSWindowController {
   private let systemControl = NSSegmentedControl()
   private let titleField = NSTextField(string: "")
   private let imagePopUp = NSPopUpButton()
+  private let createButton = NSButton(title: "Create", target: nil, action: nil)
+  private var packageCheck = UUID()
+  private var readyLinuxImage: URL?
   private let note = NSTextField(wrappingLabelWithString: "")
   private let diskField = NSTextField(string: "80")
   private let processorsPopUp = NSPopUpButton()
@@ -1523,9 +1526,10 @@ private final class NewMacTemplateSheet: NSWindowController {
     note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
     cancel.keyEquivalent = "\u{1b}"
-    let create = NSButton(title: "Create", target: self, action: #selector(create))
-    create.keyEquivalent = "\r"
-    let buttons = NSStackView(views: [NSView(), cancel, create])
+    createButton.target = self
+    createButton.action = #selector(create)
+    createButton.keyEquivalent = "\r"
+    let buttons = NSStackView(views: [NSView(), cancel, createButton])
     let stack = NSStackView(views: [grid, note, buttons])
     stack.orientation = .vertical
     stack.alignment = .leading
@@ -1536,6 +1540,7 @@ private final class NewMacTemplateSheet: NSWindowController {
     content.addSubview(stack)
     stack.pin(to: content)
     showGPUChoice()
+    checkPackages()
   }
 
   private static let systems: [MachineKind] = [.macOS, .windows, .linux]
@@ -1560,6 +1565,7 @@ private final class NewMacTemplateSheet: NSWindowController {
     suggestTitle()
     describeAccount()
     showGPUChoice()
+    checkPackages()
   }
 
   private func showGPUChoice() {
@@ -1572,7 +1578,7 @@ private final class NewMacTemplateSheet: NSWindowController {
   private func describeAccount() {
     if system == .linux {
       note.stringValue =
-        "Ubuntu's installer runs by itself; any missing packages are fetched first. The"
+        "Ubuntu's installer runs offline using the packages saved with this ISO. The"
         + " account “\(NSUserName())” logs in by itself, and x86_64 programs run through Rosetta."
         + " Its password is made up for you; copy it from the template when the guest asks for it."
       return
@@ -1603,6 +1609,38 @@ private final class NewMacTemplateSheet: NSWindowController {
 
   @objc private func imageChosen() {
     suggestTitle()
+    checkPackages()
+  }
+
+  private func checkPackages() {
+    let check = UUID()
+    packageCheck = check
+    readyLinuxImage = nil
+    describeAccount()
+    guard let image = imagePopUp.selectedItem?.representedObject as? URL else {
+      createButton.isEnabled = false
+      return
+    }
+    guard Self.kind(of: image) == .linux else {
+      createButton.isEnabled = true
+      return
+    }
+    createButton.isEnabled = false
+    note.stringValue = "Checking this ISO and its saved packages…"
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let result = Result { try UbuntuPackages.cached(iso: image) }
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.packageCheck == check else { return }
+        switch result {
+        case .success:
+          self.readyLinuxImage = image
+          self.createButton.isEnabled = true
+          self.describeAccount()
+        case .failure:
+          self.note.stringValue = UbuntuPackages.missingPackagesMessage
+        }
+      }
+    }
   }
 
   /// The image's own name — `macOS 27.2` — as the template's, until someone types one.
@@ -1647,6 +1685,7 @@ private final class NewMacTemplateSheet: NSWindowController {
     let title = titleField.stringValue.isEmpty ? Self.versionTitle(ipsw) : titleField.stringValue
     let gigabytes = UInt64(diskField.integerValue)
     if Self.kind(of: ipsw) == .linux {
+      guard readyLinuxImage == ipsw else { return }
       window.sheetParent?.endSheet(window)
       onCreateLinux?(
         LinuxTemplateBuilder.Request(

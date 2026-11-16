@@ -482,8 +482,10 @@ is turned off, which leaves all of it out.
 The install itself needs no network: what the ISO lacks — 24.04.5's kernel, and Japanese input —
 is fetched from Ubuntu's archive and checked as the last part of the ISO's download, so making a
 template later needs no connection; if that part fails, the ISO is not kept either. An ISO added
-from a file is completed the same way. It runs inside hukan like a macOS machine and is saved and
-resumed the same way, with no limit on how many run at once; the
+from a file is completed the same way, and only the kernel and its modules are fetched, not the
+firmware for real hardware. Making a template never downloads: an ISO without its packages — one
+kept by an older hukan — has to be removed with `−` and added again. It runs inside hukan like a
+macOS machine and is saved and resumed the same way, with no limit on how many run at once; the
 worktree is `/worktree`, and moves with the session. The agent's commands run in a login bash, and
 its screenshots, clicks, typing and keys go through X11; there is no accessibility tree to read. A
 Linux guest that reboots stops, and Start brings it up again.

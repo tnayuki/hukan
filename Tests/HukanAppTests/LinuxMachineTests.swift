@@ -100,6 +100,37 @@ final class LinuxMachineTests: XCTestCase {
     XCTAssertTrue(script.contains("\nEOF\n"))
   }
 
+  private func primaryISOFilenames(_ iso: URL) throws -> [String] {
+    let data = try Data(contentsOf: iso)
+    func number(_ offset: Int) -> Int {
+      (0..<4).reduce(0) { $0 | (Int(data[offset + $1]) << ($1 * 8)) }
+    }
+    func directory(_ record: Int, prefix: String) -> [String] {
+      var names: [String] = []
+      var offset = number(record + 2) * 2048
+      let end = offset + number(record + 10)
+      while offset < end {
+        let length = Int(data[offset])
+        if length == 0 {
+          offset = (offset / 2048 + 1) * 2048
+          continue
+        }
+        let nameLength = Int(data[offset + 32])
+        let bytes = data[(offset + 33)..<(offset + 33 + nameLength)]
+        if bytes.first != 0 && bytes.first != 1 {
+          let name = prefix + String(decoding: bytes, as: UTF8.self)
+          names.append(name)
+          if data[offset + 25] & 2 != 0 {
+            names += directory(offset, prefix: name + "/")
+          }
+        }
+        offset += length
+      }
+      return names
+    }
+    return directory(16 * 2048 + 156, prefix: "")
+  }
+
   func testOfflineAnswersDiscCarriesPackagesAndBothSetupStages() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -108,10 +139,12 @@ final class LinuxMachineTests: XCTestCase {
     try FileManager.default.createDirectory(
       at: repository.appendingPathComponent("pool"), withIntermediateDirectories: true)
     let deb = Data("verified package fixture".utf8)
-    try deb.write(to: repository.appendingPathComponent("pool/mozc.deb"))
+    try deb.write(to: repository.appendingPathComponent("pool/linux-image-7.0.0-43-generic_24.deb"))
     for name in ["Packages", "InstallPackages"] {
-      try "Package: ibus-mozc\nFilename: pool/mozc.deb\n\n".write(
-        to: repository.appendingPathComponent(name), atomically: true, encoding: .utf8)
+      let prefix = name == "InstallPackages" ? "repository/" : ""
+      try "Package: ibus-mozc\nFilename: \(prefix)pool/linux-image-7.0.0-43-generic_24.deb\n\n"
+        .write(
+          to: repository.appendingPathComponent(name), atomically: true, encoding: .utf8)
     }
     let builder = LinuxTemplateBuilder(
       request: .init(
@@ -128,7 +161,13 @@ final class LinuxMachineTests: XCTestCase {
       packages: .init(
         directory: repository, codename: "resolute", kernel: "linux-image-7.0.0-30-generic"))
     let iso = directory.appendingPathComponent("answers.iso")
-    XCTAssertEqual(try UbuntuPackages.isoFile(iso, "repository/pool/mozc.deb"), deb)
+    XCTAssertEqual(try UbuntuPackages.isoFile(iso, "repository/pool/p0.deb"), deb)
+    // Check the primary ISO9660 directory, not tar's preferred Joliet namespace.
+    let primary = try primaryISOFilenames(iso)
+    XCTAssertTrue(primary.contains("REPOSITORY/POOL/P0.DEB"), "\(primary)")
+    XCTAssertTrue(
+      String(decoding: try UbuntuPackages.isoFile(iso, "repository/installpackages"), as: UTF8.self)
+        .contains("Filename: repository/pool/p0.deb\n"))
     for name in ["packages", "installpackages"] {
       XCTAssertFalse(try UbuntuPackages.isoFile(iso, "repository/" + name).isEmpty)
     }
@@ -197,8 +236,14 @@ final class LinuxMachineTests: XCTestCase {
       "Package": "iso", "Version": "1", "Filename": "pool/iso.deb",
     ])
     let local = UbuntuPackages.Package(fields: [
-      "Package": "mozc", "Version": "1", "Filename": "pool/mozc.deb",
+      "Package": "mozc", "Version": "1", "Filename": "pool/mozc.deb", "Size": "3",
+      "SHA256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
     ])
+    try FileManager.default.createDirectory(
+      at: repository.appendingPathComponent("pool"), withIntermediateDirectories: true)
+    try Data("abc".utf8).write(to: repository.appendingPathComponent("pool/mozc.deb"))
+    try UbuntuPackages.indexText([local]).write(
+      to: repository.appendingPathComponent("Packages"), atomically: true, encoding: .utf8)
     let index = UbuntuPackages.installIndex(pool: [pool], local: [local])
     try index.write(
       to: repository.appendingPathComponent("installpackages"), atomically: true, encoding: .utf8)
@@ -232,6 +277,11 @@ final class LinuxMachineTests: XCTestCase {
       FileManager.default.fileExists(atPath: suite.appendingPathComponent("Release.gpg").path))
     XCTAssertFalse(
       FileManager.default.fileExists(atPath: suite.appendingPathComponent("InRelease").path))
+    // A missing or damaged package must fail early, before curtin starts installing.
+    try Data("abd".utf8).write(to: repository.appendingPathComponent("pool/mozc.deb"))
+    XCTAssertThrowsError(try LinuxTemplateBuilder.tool("/usr/bin/python3", [python.path]))
+    try FileManager.default.removeItem(at: repository.appendingPathComponent("pool/mozc.deb"))
+    XCTAssertThrowsError(try LinuxTemplateBuilder.tool("/usr/bin/python3", [python.path]))
     XCTAssertTrue(LinuxTemplateBuilder.offlineScript.contains("index=off,xino=off"))
     XCTAssertTrue(
       LinuxTemplateBuilder.offlineScript.contains("mount --bind /run/hukan-cdrom/view /cdrom"))

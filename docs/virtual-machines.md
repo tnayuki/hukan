@@ -71,10 +71,32 @@ and the reasoning behind it; read the file before changing the area it covers.
   ISO is put in place only once they are all there: a fetch that fails or is cancelled takes the
   ISO with it, so no ISO is offered that would have to go back to the network for a template. An
   ISO added from a file is held to the same rule, its copy finished only once they are fetched;
-  making a template still fetches them should they be missing all the same. Deleting an ISO
+  template creation never fetches packages. New Template checks the selected ISO and authenticates
+  its saved packages in the background, with Create disabled while checking or when they are
+  missing or damaged. Such an ISO must be removed with − and downloaded or added again; the
+  builder repeats the offline validation before creating a template. Deleting an ISO
   deletes its packages, which were fetched for it alone. It reaches the installer as a repository
   on the answers disc, and the installer is given no network, so nothing it would refresh, update
   or look up can make a template depend on the connection again.
+  **Select the concrete HWE image, not its meta package, when the install layer lacks a kernel.**
+  The meta package's image selector identifies the version; only that concrete image's required
+  dependency closure is fetched. This drops headers and physical-device firmware. Hard dependencies
+  remain: noble's 7.0 `linux-modules` requires `linux-main-modules-zfs`, so that package stays.
+  With the authenticated archive snapshot of 2026-11-16, 24.04.5 needs six debs totalling
+  316,816,180 bytes (formerly 30 / 990,948,948): `linux-image-7.0.0-43-generic`,
+  `linux-modules-7.0.0-43-generic`, `linux-main-modules-zfs-7.0.0-43-generic`, `ibus-mozc`,
+  `mozc-data`, and `mozc-server`. Later archive snapshots may select a newer kernel.
+  An ISO whose install layer already includes a kernel (26.04.1) keeps that kernel as before.
+  **Answers-disc debs use short names (`p0.deb`, …), and both indexes use those names.**
+  `hdiutil makehybrid -iso -joliet` changes long names and embedded dots in its primary ISO9660
+  namespace, which Linux uses here; Joliet or the host's `tar` view can hide that difference.
+  A successful recursive copy merely copied those changed names, leaving APT's original filenames
+  unresolved. Subiquity's [`AptConfigurer.setup_target`](https://github.com/canonical/subiquity/blob/main/subiquity/server/apt.py)
+  binds `/cdrom` to `/target/cdrom`, and curtin's
+  [`install_kernel`](https://github.com/canonical/curtin/blob/main/curtin/commands/curthooks.py)
+  runs APT in that target: the missing files were already missing by
+  their indexed names before either step. Existing snapshots are renamed when making the answers
+  disc too. The early command checks every local deb's indexed path, size and SHA256 before success.
   **`autoinstall` reaches the kernel's command line through a boot disk of hukan's**
   carrying the ISO's own GRUB and a menu of its own, since the ISO's menu cannot be edited but by
   keys typed against a timeout. **Its disks are `.cached`, never `.automatic`**: on the automatic

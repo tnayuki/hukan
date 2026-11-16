@@ -66,6 +66,65 @@ final class UbuntuPackagesTests: XCTestCase {
     XCTAssertEqual(chosen.first(where: { $0.name == "image" })?.version, "7")
   }
 
+  func testHWESelectionDropsHardwareMetaDependencies() throws {
+    let available = [
+      package("linux-generic-hwe-24.04", depends: "linux-image-generic-hwe-24.04 (= 7), headers"),
+      package(
+        "linux-image-generic-hwe-24.04", "7",
+        depends: "linux-image-7.0.0-43-generic (= 7), firmware, zfs"),
+      package("linux-image-7.0.0-43-generic", "7", depends: "linux-modules-7.0.0-43-generic (= 7)"),
+      package("linux-modules-7.0.0-43-generic", "7", depends: "zfs"), package("zfs"),
+      // Headers and firmware need not even be resolvable to select an image.
+      package("ibus-mozc"),
+    ]
+    let image = try UbuntuPackages.kernelImage(
+      meta: "linux-generic-hwe-24.04", available: available)
+    XCTAssertEqual(image, "linux-image-7.0.0-43-generic")
+    XCTAssertEqual(
+      try UbuntuPackages.resolve(roots: [image, "ibus-mozc"], installed: [:], available: available)
+        .map(\.name),
+      ["ibus-mozc", "linux-image-7.0.0-43-generic", "linux-modules-7.0.0-43-generic", "zfs"])
+  }
+
+  func testKernelAlreadyInstalledNeedsNoArchiveKernel() throws {
+    let chosen = try UbuntuPackages.resolve(
+      roots: ["linux-image-7.0.0-30-generic", "ibus-mozc"],
+      installed: ["linux-image-7.0.0-30-generic": "7"],
+      available: [
+        package("ibus-mozc", depends: "mozc-server, mozc-data"),
+        package("mozc-server"), package("mozc-data"),
+      ])
+    XCTAssertEqual(chosen.map(\.name), ["ibus-mozc", "mozc-data", "mozc-server"])
+  }
+
+  func testCacheOnlyPreparationNeverDownloads() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appendingPathComponent("source")
+    let suite = source.appendingPathComponent("dists/noble")
+    try FileManager.default.createDirectory(at: suite, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: source.appendingPathComponent("casper"), withIntermediateDirectories: true)
+    try "Codename: noble\nVersion: 24.04\n".write(
+      to: suite.appendingPathComponent("Release"), atomically: true, encoding: .utf8)
+    try "libc6 2\n".write(
+      to: source.appendingPathComponent("casper/minimal.manifest"), atomically: true,
+      encoding: .utf8)
+    let iso = root.appendingPathComponent("fixture.iso")
+    _ = try LinuxTemplateBuilder.tool(
+      "/usr/bin/hdiutil", ["makehybrid", "-iso", "-joliet", "-o", iso.path, source.path])
+    XCTAssertThrowsError(
+      try UbuntuPackages.prepare(
+        iso: iso,
+        download: { _ in
+          XCTFail("Template preparation must never contact the archive")
+          return Data()
+        }, cachedOnly: true))
+    XCTAssertThrowsError(try UbuntuPackages.cached(iso: iso)) { error in
+      XCTAssertTrue(error.localizedDescription.contains(UbuntuPackages.missingPackagesMessage))
+    }
+  }
+
   func testUnresolvableVersionFailsInsteadOfKeepingPartialClosure() {
     XCTAssertThrowsError(try UbuntuPackages.Requirement(":"))
     XCTAssertThrowsError(try UbuntuPackages.Requirement("libc6 (~ 2)"))
