@@ -396,8 +396,8 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     ]
     if let user = manifest.username { facts.append(("Account", user)) }
     if manifest.kind == .linux {
-      facts.append(("GPU", manifest.gpu == true ? "On — OpenGL on this Mac's GPU" : "Off"))
-      facts.append(("Rosetta", manifest.rosetta == false ? "Off" : "On — x86_64 programs run"))
+      facts.append(("GPU", manifest.gpu == true ? "On" : "Off"))
+      facts.append(("Rosetta", manifest.rosetta == false ? "Off" : "On"))
     }
     return facts
   }
@@ -533,8 +533,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
         let alert = NSAlert()
         alert.messageText = "Download Ubuntu"
         alert.informativeText =
-          "Downloads the desktop ISO for Apple silicon, checks Ubuntu's checksum, then fetches"
-          + " the packages needed to make a template offline."
+          "The desktop ISO for Apple silicon, and the packages to install it offline."
         let popUp = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 240, height: 26))
         for release in releases { popUp.addItem(withTitle: release.title) }
         alert.accessoryView = popUp
@@ -1006,10 +1005,10 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     case .preparing, nil: return "Preparing…"
     case .installing(let fraction):
       return fraction < 0
-        ? "Installing Windows… this takes about half an hour"
+        ? "Installing Windows… about 30 minutes"
         : "Installing macOS… \(Int(fraction * 100))%"
     case .firstBoot: return "Setting up the account and the agent…"
-    case .provisioning: return "Installing Ubuntu… about ten minutes"
+    case .provisioning: return "Installing Ubuntu… about 10 minutes"
 
     case .disablingSIP: return "Turning SIP off in Recovery…"
     case .granting: return "Giving the agent its permissions…"
@@ -1517,11 +1516,9 @@ private final class NewMacTemplateSheet: NSWindowController {
     rosettaRow = grid.row(at: grid.numberOfRows - 1)
     rosettaCheckbox.state = .on
     rosettaCheckbox.toolTip =
-      "x86_64 programs run through Rosetta, with amd64 packages installable by apt. Off, the"
-      + " template has neither, and apt fetches arm64 only."
+      "Also lets apt install amd64 packages."
     gpuCheckbox.toolTip =
-      "The guest's OpenGL (4.1 core) runs on this Mac's GPU and its desktop is drawn by it. Such a"
-      + " machine is shut down where another is suspended, and only one runs at a time."
+      "OpenGL 4.1. Shut down instead of suspended, and only one runs at a time."
     note.textColor = .secondaryLabelColor
     note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
@@ -1576,20 +1573,9 @@ private final class NewMacTemplateSheet: NSWindowController {
   }
 
   private func describeAccount() {
-    if system == .linux {
-      note.stringValue =
-        "Ubuntu's installer runs offline using the packages saved with this ISO. The"
-        + " account “\(NSUserName())” logs in by itself, and x86_64 programs run through Rosetta."
-        + " Its password is made up for you; copy it from the template when the guest asks for it."
-      return
-    }
     note.stringValue =
-      system == .windows
-      ? "The account “\(NSUserName())” is made during setup and logs in by itself. Its password is"
-        + " made up for you; copy it from the template when a prompt in the guest asks for it."
-      : "The account “\(NSUserName())” is created on the first boot, logs in by itself and is"
-        + " reached over SSH with hukan's key. Its password is made up for you; copy it from the"
-        + " template when a prompt in the guest asks for it."
+      "“\(NSUserName())” logs in by itself. Its password is made up for you — copy it from the"
+      + " template."
   }
 
   private func reloadImages() {

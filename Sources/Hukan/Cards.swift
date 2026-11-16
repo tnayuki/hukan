@@ -226,17 +226,14 @@ final class GrantCard: LayerSurface {
     // the title says which page, the address says which site the answer is about.
     let body = NSTextField(
       labelWithString: grant.machine && grant.saving
-        ? "The machine shuts down, is copied and starts again. What is in it, sign-ins included,"
-          + " is what every copy starts from."
+        ? "Shuts down, is copied, restarts. Every copy starts with what is in it, sign-ins"
+          + " included."
         : grant.machine && grant.closing
-          ? "This session's copy is stopped and deleted, with everything done inside it. The"
-            + " template is not touched."
+          ? "Everything done in this copy is lost. The template stays."
           : grant.machine && grant.stopping
-            ? "It is saved where it is, and starts again from there; anything being done in it"
-              + " waits until then."
+            ? "Saved as it is, and resumes from there."
             : grant.machine && grant.opening
-              ? "A copy of the template on this session's desk, which the agent then uses —"
-                + " commands, files and the screen."
+              ? "A copy of the template for the agent: commands, files and the screen."
               : grant.machine
                 ? "Commands, files and the screen — as the guest's user, and as its administrator"
                   + " when asked."

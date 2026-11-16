@@ -210,9 +210,7 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
         guard actual == expected else {
           try? FileManager.default.removeItem(at: partial)
           release()
-          self?.finish(
-            .failed(
-              "The download does not match the checksum its publisher gives, so it was not kept."))
+          self?.finish(.failed("The download failed its checksum and was not kept."))
           return
         }
         guard let self else { return release() }

@@ -1186,8 +1186,7 @@ final class MachinePaneViewController: NSViewController {
         completion(
           .failure(
             MachineError(
-              "\(self.machineTitle) did not shut down within three minutes. Something in it may"
-                + " be waiting for an answer; its screen is in the tab.")))
+              "\(self.machineTitle) did not shut down within three minutes — see its screen.")))
         self.hideShuttingDown()
       }
     }
