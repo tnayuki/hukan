@@ -6,7 +6,7 @@
 // administrator. Neither listens on the network: vsock is a channel between the guest and the host
 // running it, and a connection from anywhere but the host (CID 2) is closed unanswered, so nothing
 // inside the guest can borrow the root half. The user half also answers for the screen, over
-// X11 (screen_linux.go).
+// X11 (screen_linux.go), and the root half for the JIS keys VZ drops (keyboard_linux.go).
 //
 // Built by Vendor/build-linux-agent.sh into Resources/hukan-guest-agent-linux; hukan puts it into
 // a template while making it, and replaces it at boot when it differs from the one it ships.
@@ -61,7 +61,7 @@ func main() {
 		}
 	}()
 
-	served := &agent.Agent{Mode: mode, Extra: screen}
+	served := &agent.Agent{Mode: mode, Extra: extras}
 	for {
 		client, peer, err := unix.Accept4(listener, unix.SOCK_CLOEXEC)
 		if err != nil {

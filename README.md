@@ -440,8 +440,9 @@ first with its screen left in the tab, so an app that stops to ask about unsaved
 answered there.
 
 On a Mac with a JIS keyboard the guest types what the keys say — its symbols, and 英数 and かな
-switching between ABC and Japanese input — though the guest itself only ever sees an ANSI
-keyboard. The guest is kept in this Mac's time zone, and a Linux guest scrolls the way this Mac
+switching between ABC and Japanese input — though a macOS guest only ever sees an ANSI keyboard.
+A Linux guest is set to the Japanese layout and gets ¥ and ろ from a keyboard its agent adds, so it
+reads the keys as a PC's JIS keyboard does: ろ types a backslash. The guest is kept in this Mac's time zone, and a Linux guest scrolls the way this Mac
 does and, while it follows its tab, draws at this Mac's scale.
 
 The session's agent can do all of this through tools hukan hosts: open a machine, stop it, run

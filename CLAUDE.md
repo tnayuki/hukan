@@ -402,7 +402,13 @@ Workspace (one window)
   instead was tried and fared no better, and every tool built on the framework has the same wall.
   So on a JIS Mac the screen sends what a key prints rather than where it is — a symbol as the
   ANSI keys that type it — and 英数 and かな, which macOS ignores from an ANSI keyboard, are not
-  sent at all but turned into the guest's agent selecting the input source. What a boot tells the
+  sent at all but turned into the guest's agent selecting the input source. **A Linux guest gets
+  a keyboard of its own instead**, which macOS cannot have: its agent makes one through uinput,
+  so the guest is put on the jp layout, every key goes by position, and ¥ and ろ — the two keys
+  VZ drops — are typed on that keyboard. The guest reads them as a PC's JIS keyboard does, which
+  puts a backslash on ろ where a Mac puts an underscore. 英数 and かな still choose the input
+  source, by typing GNOME's own Super+Space on it, which reaches Wayland as well as X11; Mozc's
+  own on and off keys were the other road, and refused because 24.04's Mozc predates them. What a boot tells the
   guest — that Japanese input, and this Mac's time zone — is told every boot rather than once in
   the template, so a template outlives a change of keyboard or of place.
 - **A Linux machine runs in this process, like a macOS one, with Rosetta.** Virtualization.framework

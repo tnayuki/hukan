@@ -316,6 +316,9 @@ final class MachinePaneViewController: NSViewController {
     screen.automaticallyReconfiguresDisplay = fixedResolution == nil
     screen.isHidden = true
     screen.onInputSourceKey = { [weak self] japanese in self?.selectInputSource(japanese) }
+    if kind == .linux {
+      screen.onJISKey = { [weak self] key, down in self?.typeJISKey(key, down: down) }
+    }
     screen.onBackingChange = { [weak self] in self?.matchGuestScale() }
     root.addSubview(screen)
     screen.pin(to: root)
@@ -851,9 +854,12 @@ final class MachinePaneViewController: NSViewController {
           Self.hostScrollsNaturally ? "true" : "false",
         ], on: vm
       ) { _ in }
-      if MachineScreenView.hostIsJIS {
-        GuestAgent.exec(["/bin/sh", "-c", Self.linuxJapaneseInput], on: vm) { _ in }
-      }
+      GuestAgent.exec(
+        [
+          "/bin/sh", "-c",
+          MachineScreenView.hostIsJIS ? Self.linuxJapaneseInput : Self.linuxANSIInput,
+        ], on: vm
+      ) { _ in }
       matchGuestScale()
       return
     }
@@ -962,12 +968,16 @@ final class MachinePaneViewController: NSViewController {
     GLib.MainLoop().run()
     """#
 
-  /// A Linux guest's Japanese input, put to it each boot as a macOS guest's is: Mozc beside the US
-  /// layout in GNOME's input sources, starting in hiragana — it starts in direct input otherwise,
-  /// and かな would bring up Mozc only to type romaji. Nothing where the template has no Mozc.
+  /// A Linux guest's Japanese input, put to it each boot as a macOS guest's is: the jp layout, since
+  /// every key reaches the guest by position, and Mozc beside it in GNOME's input sources, starting
+  /// in hiragana — it starts in direct input otherwise, and かな would bring up Mozc only to type
+  /// romaji. The layout is set even where the template has no Mozc, a ¥ being a key either way.
   static let linuxJapaneseInput = #"""
-    dpkg -s ibus-mozc >/dev/null 2>&1 || exit 0
-    gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 'mozc-jp')]"
+    if ! dpkg -s ibus-mozc >/dev/null 2>&1; then
+      gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'jp')]"
+      exit 0
+    fi
+    gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'jp'), ('ibus', 'mozc-jp')]"
     f="$HOME/.config/mozc/ibus_config.textproto"
     grep -q 'active_on_launch: True' "$f" 2>/dev/null && exit 0
     mkdir -p "$(dirname "$f")"
@@ -976,20 +986,66 @@ final class MachinePaneViewController: NSViewController {
     ibus restart
     """#
 
+  /// The JIS keys waiting to be typed on a Linux guest's own keyboard, and whether one is out.
+  /// One at a time, in order: each is a connection of its own, and a release overtaking its press
+  /// would leave the key held.
+  private var jisKeys: [(String, Bool)] = []
+  private var jisKeyInFlight = false
+
+  /// ¥ or ろ, down or up, or the step to the next input source, on a Linux guest's screen — typed
+  /// by its agent's root half, on a keyboard of its own beside VZ's.
+  private func typeJISKey(_ key: String, down: Bool) {
+    jisKeys.append((key, down))
+    sendJISKey()
+  }
+
+  private func sendJISKey() {
+    guard !jisKeyInFlight, !jisKeys.isEmpty else { return }
+    guard let vm = runner?.vm, agentsHeard.contains("root") else {
+      jisKeys.removeAll()
+      return
+    }
+    let (key, down) = jisKeys.removeFirst()
+    jisKeyInFlight = true
+    GuestAgent.request(["op": "jis_key", "key": key, "down": down], to: vm, admin: true) {
+      [weak self] _ in
+      DispatchQueue.main.async {
+        self?.jisKeyInFlight = false
+        self?.sendJISKey()
+      }
+    }
+  }
+
+  /// What a guest last put on the jp layout is taken back to the US one, should the Mac's keyboard
+  /// no longer be JIS: the keys go by position, so a jp layout on an ANSI keyboard types the wrong
+  /// symbols. Only the layout hukan set, so input sources set up by hand stay as they are.
+  static let linuxANSIInput = #"""
+    case "$(gsettings get org.gnome.desktop.input-sources sources)" in
+      *"('xkb', 'jp')"*) ;;
+      *) exit 0 ;;
+    esac
+    if dpkg -s ibus-mozc >/dev/null 2>&1; then
+      gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 'mozc-jp')]"
+    else
+      gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us')]"
+    fi
+    """#
+
   /// かな or 英数, pressed on the guest's screen.
   private func selectInputSource(_ japanese: Bool) {
     guard let vm = runner?.vm, agentsHeard.contains("user") else { return }
     if kind == .linux {
       // GNOME owns the input sources and has only a key to step through them, so the key is sent
       // when the engine is not the one asked for — sent regardless, it would step away from it.
-      let wanted = japanese ? "mozc-jp" : "xkb:us::eng"
-      GuestAgent.exec(["ibus", "engine"], on: vm) { result in
+      // Typed on the agent's own keyboard, which reaches a session on Wayland as well as X11.
+      let wanted = japanese ? "mozc-jp" : "xkb:jp::jpn"
+      GuestAgent.exec(["ibus", "engine"], on: vm) { [weak self] result in
         guard case .success(let run) = result,
           String(decoding: run.stdout, as: UTF8.self).trimmingCharacters(
             in: .whitespacesAndNewlines)
             != wanted
         else { return }
-        GuestAgent.request(["op": "key", "key": "space", "modifiers": ["command"]], to: vm) { _ in }
+        DispatchQueue.main.async { self?.typeJISKey("next_source", down: true) }
       }
       return
     }
@@ -1335,9 +1391,18 @@ final class VirtualMachinesMenu: NSMenu, NSMenuDelegate {
 /// the one stroke and put back — and 英数 and かな are not sent at all but handed to the window,
 /// which asks the guest's agent for the input source. Letters and digits keep their places, which
 /// is all romaji input reads, and a shortcut held with ⌘ or ⌃ goes by position as it always has.
+///
+/// A Linux guest is the exception, because its agent can make a keyboard of its own: the guest is
+/// put on the jp layout, every key goes by position with nothing translated, and the two keys VZ
+/// drops that type something — ¥ and ろ — are handed to the window to be typed on that keyboard
+/// instead. 英数 and かな still choose the input source.
 final class MachineScreenView: VZVirtualMachineView {
   /// 英数 (false) or かな (true) was pressed.
   var onInputSourceKey: ((Bool) -> Void)?
+  /// Set for a guest that types the dropped keys itself: one of them went down or up, by the name
+  /// its agent knows it by. Nothing is translated while it is set.
+  var onJISKey: ((String, Bool) -> Void)?
+  private static let droppedKeys: [UInt16: String] = [93: "yen", 94: "ro"]
   /// The view's window moved to a display of another scale, or the view to another window.
   var onBackingChange: (() -> Void)?
 
@@ -1388,6 +1453,14 @@ final class MachineScreenView: VZVirtualMachineView {
       if !event.isARepeat { onInputSourceKey?(event.keyCode == 104) }
       return
     }
+    if let onJISKey, Self.hostIsJIS {
+      if let name = Self.droppedKeys[event.keyCode] {
+        if !event.isARepeat { onJISKey(name, true) }
+        return
+      }
+      super.keyDown(with: event)
+      return
+    }
     if let target = Self.translation(of: event) {
       translated.insert(event.keyCode)
       type(target.code, shift: target.shift, option: target.option, over: event)
@@ -1398,6 +1471,14 @@ final class MachineScreenView: VZVirtualMachineView {
 
   override func keyUp(with event: NSEvent) {
     if event.keyCode == 102 || event.keyCode == 104 { return }
+    if let onJISKey, Self.hostIsJIS {
+      if let name = Self.droppedKeys[event.keyCode] {
+        onJISKey(name, false)
+        return
+      }
+      super.keyUp(with: event)
+      return
+    }
     if translated.remove(event.keyCode) != nil { return }
     super.keyUp(with: event)
   }
