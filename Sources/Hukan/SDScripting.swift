@@ -321,7 +321,7 @@ final class SDWorktree: NSObject {
   /// What the panel's History section lists, as text — one line per commit, `●` marking one the
   /// upstream does not carry yet and `[v1.0]` the tags naming it. Read live rather than off the worktree's cache: a script may
   /// ask about a worktree this window has never drawn, and this is the surface that stands in for
-  /// looking at the section (see the GUI-verification note in CLAUDE.md).
+  /// looking at the section (see the GUI-verification note in docs/testing.md).
   @objc var history: String {
     guard let url = worktreeModel?.url else { return "" }
     let history = Git.history(at: url)

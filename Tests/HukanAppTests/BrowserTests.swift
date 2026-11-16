@@ -13,7 +13,7 @@ import XCTest
 /// 0.36s → 2.65s and `GitHistoryTests` 2.30s → 16.08s behind it, while pure-CPU work and the
 /// terminal's `forkpty` are untouched. Nothing here leaks: the panes are locals and are long gone
 /// by then, so what does the damage is WebKit being loaded at all. Parallel testing is what
-/// contains it (see the CLAUDE.md note) — it confines the slow host to one worker.
+/// contains it (see docs/testing.md) — it confines the slow host to one worker.
 final class BrowserTests: XCTestCase {
   private func userAgent(of pane: BrowserPaneViewController) -> String {
     let loaded = expectation(description: "load")

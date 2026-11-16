@@ -607,7 +607,7 @@ final class ClaudeSession {
   /// engine's own control dispatch.
   ///
   /// The engine does the bridging; hukan only says when. That is what keeps this inside the one
-  /// outbound line hukan draws for itself (see the update check in CLAUDE.md): no socket of
+  /// outbound line hukan draws for itself (see docs/updates.md): no socket of
   /// hukan's opens, no credential of hukan's is sent. What it does mean is that the conversation
   /// travels to Anthropic's servers so another device can read it, which is why nothing here is
   /// implicit — every call is a person's decision or their standing user-scope setting.
@@ -645,7 +645,7 @@ final class ClaudeSession {
   /// A success carries `prefillText` — the original prompt, ready to go back in the composer —
   /// and `precedingAssistantUuid`, the record the conversation now hangs from. Files are a
   /// separate `rewind_files` subtype that hukan never sends: this cuts the conversation, and the
-  /// worktree is git's (see the model in CLAUDE.md).
+  /// worktree is git's (see docs/model.md).
   func rewindConversation(
     to target: String, lastSeen: String?, completion: @escaping ([String: Any]?) -> Void
   ) {

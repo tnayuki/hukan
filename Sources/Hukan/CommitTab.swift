@@ -458,7 +458,7 @@ final class CommitContentViewController: NSViewController {
   /// "open everything" on a 5000-file commit is the freeze this tab was rebuilt to avoid.
   private static let findRowBudget = 30_000
   /// How many cards are built at all. A card is real views, so ten thousand of them is a freeze
-  /// of its own kind — and a commit that wide is the one CLAUDE.md sends to the PR anyway. What
+  /// of its own kind — and a commit that wide is one to read in its PR anyway. What
   /// is left out says so at the foot of the list rather than being quietly dropped.
   private static let fileCardCap = 300
 

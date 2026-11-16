@@ -72,10 +72,10 @@ jobs:
         # what the runner's *screen* decides rather than the drawing — AppKit rounds a control's
         # intrinsic size to the screen's backing grid and not to the window's, so a browser
         # button is 13.5pt wide here and 14pt there and everything after it sits a device pixel
-        # over. See the snapshot note in CLAUDE.md; a tolerance is the one answer that comparison
+        # over. See the snapshot note in docs/testing.md; a tolerance is the one answer that comparison
         # refuses.
         #
-        # The suite runs parallel (see CLAUDE.md), so a failure's file, line and message are in
+        # The suite runs parallel (see docs/testing.md), so a failure's file, line and message are in
         # the .xcresult and not on stdout; the summary below is what reads them back.
         run: |
           set +e
