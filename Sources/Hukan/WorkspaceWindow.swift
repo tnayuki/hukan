@@ -2009,7 +2009,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
         done(.error("the session is gone"))
         return
       }
-      if call.name.hasPrefix("vm_") || call.name.hasPrefix("guest_") {
+      if call.name == HukanMCP.newSessionTool {
+        done(self.startSession(call, from: session))
+      } else if call.name.hasPrefix("vm_") || call.name.hasPrefix("guest_") {
         self.files.desk.performMachineTool(call, for: session, completion: done)
       } else {
         self.files.desk.performBrowserTool(call, for: session, completion: done)
@@ -2017,6 +2019,28 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     session.onNeedsStart = { [weak self] in self?.startSession(session) }
     session.onInstructed = { [weak self] in self?.unarchiveOnInstruction(session) }
+  }
+
+  /// `new_session`, called by `caller`'s agent: a session in one of the caller's repository's
+  /// worktrees — the caller's own by default — started the way `hukan_new_session` starts one from
+  /// outside, its note naming the session that asked.
+  private func startSession(_ call: HukanMCP.Call, from caller: AgentSession) -> HukanMCP.Outcome {
+    guard let message = call.string("message") else { return .error("a message is required") }
+    guard let home = workspace.worktree(id: caller.worktreeID) else {
+      return .error("this session's worktree is not open in hukan")
+    }
+    let name = call.string("worktree")
+    guard
+      let worktree = name.map({ name in
+        workspace.worktrees.first {
+          $0.repositoryID == home.repositoryID && $0.url.lastPathComponent == name
+        }
+      }) ?? home
+    else { return .error("\(home.repositoryName) has no worktree named \(name ?? "")") }
+    let session = makeSession(in: worktree, selecting: false)
+    session.note("Started from session “\(caller.title ?? "New session")”.")
+    session.send(message)
+    return .text("Started session \(session.id.uuidString) in \(worktree.url.lastPathComponent).")
   }
 
   /// Replace a session's tags by hand — the rail's editor, or a script.

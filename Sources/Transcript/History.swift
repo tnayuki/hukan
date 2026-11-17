@@ -34,20 +34,28 @@ struct HistoryRecord {
   /// The lines a `toolUse` changed, as its result reported them — filled in once the result has
   /// been read, which is a later line of the file than the call.
   var changes: LineChanges?
+  /// Who sent a `userText` nobody typed in this conversation: the name of the Claude session that
+  /// sent it (`SendMessage`). Nil for a message typed here, which is every other one.
+  let from: String?
 
   init(
     kind: Kind, stamp: Date?, forkAnchor: String? = nil, messageUUID: String? = nil,
-    toolUseID: String? = nil
+    toolUseID: String? = nil, from: String? = nil
   ) {
     self.kind = kind
     self.stamp = stamp
     self.forkAnchor = forkAnchor
     self.messageUUID = messageUUID
     self.toolUseID = toolUseID
+    self.from = from
   }
 }
 
 extension Transcript {
+  /// The line over a message another Claude session sent, so it does not read as one somebody
+  /// typed here — the same idiom as the note a message from an outside client carries.
+  static func peerNote(_ from: String) -> String { "Sent from session “\(from)”." }
+
   /// Render a saved conversation into the transcript, a time separator wherever it paused.
   /// Mirrors the live path's block choices (thinking and tool results left out), so a restored
   /// session and a running one look the same.
@@ -76,6 +84,7 @@ extension Transcript {
       }
       switch record.kind {
       case .userText(let body):
+        if let from = record.from { result.append(note(Transcript.peerNote(from))) }
         result.append(userMessage(body, forkAnchor: record.forkAnchor))
       case .assistantText(let body):
         result.append(markdown(body))

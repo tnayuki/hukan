@@ -379,7 +379,10 @@ carrying that session is not the one in front of you — another window's rail i
 Tapping it jumps to that session, and one key does the same from anywhere. A turn merely
 finishing is silent.
 
-**Scripting.** The whole surface is reachable from AppleScript.
+**Scripting.** The whole surface is reachable from AppleScript — from outside hukan. A process
+hukan started, an agent or a shell in one of its terminals, is refused every Apple event, so a
+session's agent cannot drive the window, and neither can a script run in a hukan terminal: run it
+from Terminal or another app instead.
 
 **From an MCP client.** The app's own executable is also an MCP server, so a chat in which you
 keep track of your work as a whole can ask what the sessions here are doing — which are working,
@@ -408,6 +411,12 @@ question is refused, since that answer is yours to give here, and nothing there 
 session. It answers while hukan is running and never launches it, and the first call asks macOS to
 let the client's app reach hukan — allow it, or later under System Settings ▸ Privacy & Security ▸
 Automation.
+
+**Sessions working together.** A session can start another in one of its repository's worktrees,
+with a first message, the way you would with New Session; it joins the rail without taking the
+selection, and its transcript says which session started it. After that they speak through
+Claude Code's own messaging between sessions, and a message one sends another is drawn under the
+sender's name, never as something you typed.
 
 ### Virtual machines
 

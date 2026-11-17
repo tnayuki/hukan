@@ -1198,8 +1198,7 @@ final class FilesPanelViewController: NSViewController, NSOutlineViewDataSource,
 
   // The writes the menu makes, run without the row's naming or the alert that normally stands
   // in front of them — which is exactly why they are guarded (`HUKAN_SCRIPTING_GUARDED=1`, the
-  // same gate `approve` sits behind): each stands in for a human's answer, and a session's own
-  // agent can reach osascript. What they buy is a check of the half that has no text to read
+  // same gate `approve` sits behind): each stands in for a human's answer, which no script is. What they buy is a check of the half that has no text to read
   // back — that a row goes into naming, that an open tab follows a rename and leaves on a delete,
   // and that git is re-read at all, since FSEvents drops hukan's own writes.
 

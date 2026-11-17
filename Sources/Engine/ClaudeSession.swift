@@ -1647,6 +1647,17 @@ enum ClaudeSessionStore {
   }
 
   /// The id of the call a user record answers, when it carries a tool's result.
+  /// The sender and the words of a message another Claude session sent this one (`SendMessage`),
+  /// read off the record's `origin` rather than the content: the content is the engine's wrapper,
+  /// written for the model, with the body inside it. Nil for every other record.
+  static func peerMessage(_ record: [String: Any]) -> (from: String, body: String)? {
+    guard let origin = record["origin"] as? [String: Any], origin["kind"] as? String == "peer",
+      let body = origin["body"] as? String, !body.isEmpty
+    else { return nil }
+    let name = (origin["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    return (name ?? "another session", body)
+  }
+
   static func answeredToolUseID(in content: Any?) -> String? {
     (content as? [[String: Any]])?
       .first { $0["type"] as? String == "tool_result" }?["tool_use_id"] as? String
@@ -1663,6 +1674,16 @@ enum ClaudeSessionStore {
 
     switch record["type"] as? String {
     case "user":
+      // A message from another Claude session is filed as meta — the engine's wrapper around it
+      // is not the person's words — but it is a message the turn below answers, so it is drawn:
+      // its own body, under the name of the session that sent it.
+      if let peer = peerMessage(record) {
+        out.records.append(
+          HistoryRecord(
+            kind: .userText(peer.body), stamp: at, forkAnchor: forkAnchor,
+            messageUUID: record["uuid"] as? String, from: peer.from))
+        return out
+      }
       guard record["isMeta"] as? Bool != true, let message = record["message"] as? [String: Any]
       else { return out }
       // One message is one bubble, however many text blocks it was sent as: a file attached

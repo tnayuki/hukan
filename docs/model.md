@@ -169,11 +169,25 @@ and the reasoning behind it; read the file before changing the area it covers.
   under is the kernel's answer but, for a client in a terminal, only the terminal. A session started
   from there **does not take the selection**: the person may be typing into another one, and the
   composer's focus going with the new row would send what they type next somewhere they never aimed
-  it. **Not offered to Claude Code, nor refused to it**: hukan does not put it
-  in its sessions' config, but a session the person has set up to drive another — a loop of
-  agents — reaches the same tools, and is let through. What stays out of its reach is what stays
-  out of every client's: the decisions put to the person. Its note names the sending session, so
-  the loop can be followed afterwards.
+  it. **Not offered to Claude Code, and closed to every process hukan started**:
+  the automation grant is what decides who may send the Apple event, and macOS asks nothing of
+  an event whose responsible process is the app it goes to — so from inside, the grant would
+  stand in front of nothing. hukan refuses every such event before Cocoa scripting sees it,
+  whatever the verb, which keeps the rule one line rather than a weighing of verbs. *Inside* is
+  the responsible process, the one TCC asks about, not a walk up the parents: a double fork walks
+  out of the tree but not out of hukan's responsibility, and a process that leaves through
+  another app becomes that app's, whose grant is the person's to give. Launch Services' open and
+  AppleScript's fetch of the dictionary still pass, since they show and decide nothing.
+- **Inside, each road is narrowed to what it is for.** Sessions working together is a use — one
+  agent handing work to another — so it has roads of its own rather than the window's.
+  Claude Code already lets sessions list and message each other, and its message waits for the
+  receiving turn to end rather than cutting it, so a decision on a card is not thrown away; hukan
+  adds only what Claude Code cannot do, **starting a session**, as a tool it hosts on the
+  session's stream (`new_session`), where the caller is known without asking the kernel and the
+  new session's transcript names it. What arrives from another session is drawn as the body that
+  was sent, under the sender's name — the engine's wrapper is written for the model, and a
+  message nobody typed here must not read as one somebody did. The terminals' editor has a socket
+  of its own (`docs/desk.md`).
 - **Scope decides where a reading goes.** The toolbar's trailing edge carries the account's plan
   usage and the app's own footprint, because both are true of the whole window; **how full a
   session's context window is goes in that session's header, beside its cost estimate**, because

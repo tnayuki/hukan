@@ -63,64 +63,14 @@ extension NSScriptCommand {
     NSAppleEventManager.shared().currentAppleEvent?
       .attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value
   }
-
-  /// Who inside this app sent the event, in the words a transcript note uses — the session whose
-  /// agent it was, or a shell in one of the terminals; nil for a process hukan did not start.
-  /// Sessions may steer each other: a loop where one agent drives another is a use, not a leak,
-  /// and the note is what lets it be followed afterwards.
-  var insideOrigin: String? {
-    guard let sender = senderPID else { return nil }
-    return originInside(
-      of: sender, among: WorkspaceWindowController.all.flatMap(\.workspace.sessions))
-  }
-
-  /// Refuse a stop, interrupt, restart or roll back from inside this app when the session is
-  /// waiting on the person: landing there would throw their decision away — a deny by another
-  /// name. `send` gets the same refusal from `ExternalMCP.send`, for everyone. A script run from
-  /// anywhere else is the person's, who may mean to stop a session stuck on a card; so is
-  /// everything under `HUKAN_SCRIPTING_GUARDED`, the harness that drives a window on purpose.
-  func refusedWhileWaiting(_ session: AgentSession) -> Bool {
-    guard !guardedScriptingEnabled(), let waiting = ExternalMCP.waitingOn(session),
-      let sender = senderPID, isDescendant(sender, of: ProcessInfo.processInfo.processIdentifier)
-    else { return false }
-    fail(
-      "The session is waiting on the developer for \(waiting). That is theirs to answer in hukan, "
-        + "so nothing was done.")
-    return true
-  }
-}
-
-/// `insideOrigin` worked out for `sender`, against the sessions whose agents could have sent it.
-func originInside(of sender: pid_t, among sessions: [AgentSession]) -> String? {
-  guard isDescendant(sender, of: ProcessInfo.processInfo.processIdentifier) else { return nil }
-  let agent = sessions.first { session in
-    session.enginePID.map { isDescendant(sender, of: $0) } ?? false
-  }
-  return agent.map { "session “\($0.title ?? "New session")”" } ?? "a terminal in hukan"
-}
-
-/// Whether `pid` is `ancestor` or one of its descendants, walking parents through the kernel.
-func isDescendant(_ pid: pid_t, of ancestor: pid_t) -> Bool {
-  var current = pid
-  for _ in 0..<64 {
-    if current == ancestor { return true }
-    guard current > 1 else { return false }
-    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, current]
-    var info = kinfo_proc()
-    var size = MemoryLayout<kinfo_proc>.stride
-    guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0, size > 0 else {
-      return false
-    }
-    current = info.kp_eproc.e_ppid
-  }
-  return false
 }
 
 /// A handful of verbs stand in for a decision the human is meant to make: an approval keeps a human
 /// in the tool-call loop, landing confirms first because it is unrecoverable. Their scripted forms
-/// remove that guard, and a session's own agent can reach osascript — so it could approve its own
-/// calls or discard a worktree unattended. Keep them out of the shipping scripting surface and only
-/// honour them when a test harness opts in through the environment.
+/// remove that guard. A session's own agent was the first worry — it could approve its own calls or
+/// discard a worktree unattended — and `AppleEventGate` now refuses it every event; but a script
+/// from outside is no person answering a card either. Keep them out of the shipping scripting
+/// surface and only honour them when a test harness opts in through the environment.
 func guardedScriptingEnabled() -> Bool {
   ProcessInfo.processInfo.environment["HUKAN_SCRIPTING_GUARDED"] == "1"
 }
@@ -143,7 +93,7 @@ final class SendCommand: NSScriptCommand {
     // refused, and the transcript says where the message came from.
     let client = senderPID.flatMap(ExternalMCP.client(sending:))
     switch ExternalMCP.send(
-      text, to: session, from: insideOrigin ?? client.map { "a script in \($0)" } ?? "a script",
+      text, to: session, from: client.map { "a script in \($0)" } ?? "a script",
       reattaching: proxy.controller?.reattachIfNeeded)
     {
     case .error(let message): return fail(message)
@@ -159,7 +109,6 @@ final class RestartCommand: NSScriptCommand {
     // conversation); a bare `restart` — no session — relaunches the whole app, the dev-loop verb.
     if let proxy = argument("onSession", as: SDSession.self) {
       guard let session = proxy.agentSession else { return fail("no such session") }
-      if refusedWhileWaiting(session) { return nil }
       if session.heldByPID != nil { return fail("session is held by another process") }
       proxy.controller?.reattachIfNeeded(session)
       session.restart()
@@ -169,8 +118,9 @@ final class RestartCommand: NSScriptCommand {
     // (so a fresh `make bundle` is picked up), and AppKit restores the window, its Space and
     // the open repositories. Live sessions reattach from their on-disk transcripts on select.
     //
-    // This is what makes the dev loop bearable from inside the app: build, then
-    // `osascript -e 'tell application "hukan" to restart'` — no manual quit-and-reopen.
+    // This is what makes the dev loop bearable: build, then
+    // `osascript -e 'tell application "Hukan Dev" to restart'` — no manual quit-and-reopen — from
+    // anywhere but the app being restarted, which takes no Apple event from its own processes.
     //
     // The helper polls `kill -0 <our pid>` until we are actually gone, rather than sleeping a
     // fixed guess: `open` on a bundle whose instance is still alive only reactivates the dying
@@ -378,7 +328,7 @@ final class MachinesCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {
     let window = VirtualMachinesWindowController.shared
     if let title = evaluatedArguments?["building"] as? String, !title.isEmpty {
-      // A session's agent reaches osascript, and a build is minutes of a guest and a template
+      // A session's agent could reach osascript, and a build is minutes of a guest and a template
       // nobody asked for — the window's `+` is a person's, so this stands in for one.
       guard guardedScriptingEnabled() else {
         return fail("building is honoured only under HUKAN_SCRIPTING_GUARDED=1")
@@ -445,8 +395,8 @@ final class TransferCommand: NSScriptCommand {
 ///
 /// Opening is guarded, where reporting is not. The web tabs carry the person's own logins — one
 /// cookie store, passing as Safari, through the SSO and device trust a bare fetch cannot — and a
-/// session's agent reaches `osascript` with no prompt in the way (the engine is hukan's child, so
-/// the event is self-addressed). Left open, this verb was a way for an agent to steer a logged-in
+/// session's agent reached `osascript` with no prompt in the way (the engine is hukan's child, so
+/// the event was self-addressed — `AppleEventGate` refuses it now). Left open, this verb was a way for an agent to steer a logged-in
 /// tab that no card had ever asked about; the way an agent is meant to reach a tab is the tools
 /// hukan hosts for it, which ask first.
 @objc(BrowserCommand)
@@ -581,24 +531,54 @@ final class StatusCommand: NSScriptCommand {
   }
 }
 
-/// `edit "<path>"` — the verb behind the CLI helper and the terminals' `$EDITOR`. The resolution
-/// is `openPath`'s, shared with the Finder drop and the command line; what only this verb adds is
-/// `waiting`, which holds the Apple event's reply until the tab closes — the whole of what makes
-/// `git commit` in a hukan terminal work, since git's editor is done when it exits.
+/// `edit "<path>"` — the verb behind the CLI helper outside a hukan terminal, where it waits; inside
+/// one the helper takes `EditSocket`, since this app takes no Apple event from a process it started
+/// (`AppleEventGate`). Both run `EditRequest`. What only the waiting form adds is that the reply is
+/// held until the tab closes — the whole of what makes `git commit` work, since git's editor is
+/// done when it exits.
 ///
 /// Unguarded deliberately: it opens tabs, the same reach `commit` and `browser` already have. The
 /// guarded verbs stand in for human decisions, and showing a file is not one.
 @objc(EditCommand)
 final class EditCommand: NSScriptCommand {
   override func performDefaultImplementation() -> Any? {
-    guard let text = directParameter as? String, text.hasPrefix("/") else {
-      return fail("an absolute path is required")
+    let outcome = EditRequest.open(
+      directParameter as? String ?? "", fromTerminal: argument("fromTerminal", as: String.self),
+      rendered: argument("rendered", as: Bool.self) == true,
+      waiting: argument("waiting", as: Bool.self) == true)
+    switch outcome {
+    case .failed(let message): return fail(message)
+    case .opened: return "opened"
+    case .waiting(let worktreeID, let path):
+      // Held, not blocked: the reply is suspended and the run loop goes on. The desk resumes it
+      // when the tab closes (`onFileTabClosed`); the caller's own timeout is the only clock.
+      suspendExecution()
+      EditWaiters.wait(worktreeID: worktreeID, path: path) { [self] in
+        resumeExecution(withResult: "closed")
+      }
+      return nil
     }
-    // Who asked, when a hukan terminal did: the id is the TERM_SESSION_ID the terminal was
-    // spawned with, and it also names the window — the front one is only the fallback.
+  }
+}
+
+/// Open a path the way the `edit` verb does, for whichever road the helper came by.
+enum EditRequest {
+  enum Outcome {
+    case opened
+    case failed(String)
+    /// Open, and to be answered when this tab closes.
+    case waiting(worktreeID: UUID, path: String)
+  }
+
+  /// `terminal` is the TERM_SESSION_ID the asking terminal was spawned with, when a hukan terminal
+  /// asked: it also names the window — the front one is only the fallback.
+  static func open(_ text: String, fromTerminal key: String?, rendered: Bool, waiting: Bool)
+    -> Outcome
+  {
+    guard text.hasPrefix("/") else { return .failed("an absolute path is required") }
     var terminalID: UUID?
     var controller: WorkspaceWindowController?
-    if let key = argument("fromTerminal", as: String.self), !key.isEmpty {
+    if let key, !key.isEmpty {
       for candidate in WorkspaceWindowController.all {
         guard let terminal = candidate.workspace.terminals.first(where: { $0.sessionID == key })
         else { continue }
@@ -607,52 +587,46 @@ final class EditCommand: NSScriptCommand {
         break
       }
     }
-    guard let controller = controller ?? frontController() else { return fail("no window") }
+    guard let controller = controller ?? frontController() else { return .failed("no window") }
     guard let opened = controller.openPath(URL(fileURLWithPath: text), terminalID: terminalID)
     else {
       // A file opens on a session's desk, so a path that is there can still have nowhere to go.
       guard FileManager.default.fileExists(atPath: text) else {
-        return fail("no such path: \(text)")
+        return .failed("no such path: \(text)")
       }
-      return fail("no session to open it on: \(text)")
+      return .failed("no session to open it on: \(text)")
     }
-    if argument("rendered", as: Bool.self) == true,
-      case .file(let worktreeID, let tabPath) = opened,
+    if rendered, case .file(let worktreeID, let tabPath) = opened,
       WorktreeDeskViewController.isMarkdown(tabPath)
     {
       controller.openPreview(worktreeID: worktreeID, path: tabPath)
     }
-    guard case .file(let worktreeID, let tabPath) = opened,
-      argument("waiting", as: Bool.self) == true
-    else { return "opened" }
-    // Held, not blocked: the reply is suspended and the run loop goes on. The desk resumes it
-    // when the tab closes (`onFileTabClosed`); the caller's own timeout is the only clock.
-    EditWaiters.wait(worktreeID: worktreeID, path: tabPath, command: self)
-    return nil
+    guard case .file(let worktreeID, let tabPath) = opened, waiting else { return .opened }
+    return .waiting(worktreeID: worktreeID, path: tabPath)
   }
 }
 
-/// The suspended `edit … waiting true` replies, keyed by the tab identity the desk closes with.
-/// The command objects are retained here — the one requirement `suspendExecution` documents —
-/// and a rename moves a key with its tab, so a waited-on file that is renamed still resumes.
+/// The edits waiting on a tab to close, keyed by the tab identity the desk closes with — an Apple
+/// event's suspended reply, or a socket's. Each closure keeps what it answers alive (the one
+/// requirement `suspendExecution` documents), and a rename moves a key with its tab, so a
+/// waited-on file that is renamed still resumes.
 enum EditWaiters {
-  private static var pending: [(worktreeID: UUID, path: String, command: NSScriptCommand)] = []
+  private static var pending: [(worktreeID: UUID, path: String, resume: () -> Void)] = []
 
-  static func wait(worktreeID: UUID, path: String, command: NSScriptCommand) {
-    command.suspendExecution()
-    pending.append((worktreeID, path, command))
+  static func wait(worktreeID: UUID, path: String, resume: @escaping () -> Void) {
+    pending.append((worktreeID, path, resume))
   }
 
   static func fileClosed(worktreeID: UUID, path: String) {
     let done = pending.filter { $0.worktreeID == worktreeID && $0.path == path }
     guard !done.isEmpty else { return }
     pending.removeAll { $0.worktreeID == worktreeID && $0.path == path }
-    for waiter in done { waiter.command.resumeExecution(withResult: "closed") }
+    for waiter in done { waiter.resume() }
   }
 
   static func fileRenamed(worktreeID: UUID, from: String, to: String) {
     pending = pending.map {
-      $0.worktreeID == worktreeID && $0.path == from ? (worktreeID, to, $0.command) : $0
+      $0.worktreeID == worktreeID && $0.path == from ? (worktreeID, to, $0.resume) : $0
     }
   }
 }

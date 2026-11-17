@@ -2235,7 +2235,12 @@ final class AgentSession {
         // and once a session is bridged some of them were typed on a phone — those hukan never
         // wrote, and nothing else would ever show them: the answer would arrive under no question.
         // The engine marks where a message came from, so this is its own account and not a guess.
-        if Self.isFromElsewhere(event.payload), let text = Self.promptText(event.payload) {
+        // One from another Claude session is drawn as its body under the sender's name — the
+        // content is the engine's wrapper, written for the model, not the words that were sent.
+        if let peer = ClaudeSessionStore.peerMessage(event.payload) {
+          append(Transcript.note(Transcript.peerNote(peer.from)))
+          appendUserMessage(Transcript.userMessage(peer.body, forkAnchor: lastRecordUUID))
+        } else if Self.isFromElsewhere(event.payload), let text = Self.promptText(event.payload) {
           appendUserMessage(Transcript.userMessage(text, forkAnchor: lastRecordUUID))
         }
         userMessages.append((anchor: lastRecordUUID, uuid: uuid))

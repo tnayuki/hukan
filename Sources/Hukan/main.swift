@@ -6,6 +6,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // worktrees. Every git query hukan makes goes through libgit2 in-process — no subprocess.
     Git.initialize()
 
+    // Before the first Apple event can arrive: from inside hukan, none is taken. The terminals'
+    // editor takes the socket instead, which has to be up before restoration spawns their shells.
+    AppleEventGate.install()
+    EditSocket.start()
+
     // Which Space a restored window comes back to is AppKit's to decide, and it only asks the
     // question when this default says so — off, every window lands on whichever Space happens
     // to be in front, which is why quitting an app scatters across Spaces and gathers into one.
@@ -105,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// waiter would die with the process before ever escalating. The trailing wait after SIGKILL
   /// lets the kernel actually reap the children before we exit, so none reparents.
   func applicationWillTerminate(_ notification: Notification) {
+    EditSocket.stop()
     // A Windows build's QEMU is a process of its own, and its half-made disk goes at next launch.
     WindowsTemplateBuilder.running?.terminate()
     // The sessions being deleted are in it too: their engines are mid-exit, and one nobody

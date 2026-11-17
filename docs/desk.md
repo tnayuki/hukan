@@ -128,11 +128,14 @@ and the reasoning behind it; read the file before changing the area it covers.
   the same "Return did nothing" the browser's error page fixed.
 - **The terminal's `$EDITOR` is hukan itself, and closing the tab is the editor exiting.** The
   bundled helper by absolute path — nothing installed on PATH, and the Dev build's terminals
-  reach the Dev app — riding one public verb, `edit`, whose `waiting` holds the Apple event's
-  reply until the tab closes. Injected as a default, not forced: a profile exporting its own
-  editor runs later and wins. Inside hukan's terminals the event is self-addressed, so the
-  automation prompt never appears; outside them a plain open goes through `open(1)`, and only
-  `--wait` costs the one-time prompt.
+  reach the Dev app. Inside hukan's terminals it takes **a Unix socket the terminal is spawned
+  with**, the way an editor's integrated terminal hands its CLI one: hukan takes no Apple event
+  from a process it started (`docs/model.md`), and the socket reaches nothing but opening a path
+  and holding the answer until its tab closes, so finding it buys no more than showing a file.
+  Outside them a plain open goes through `open(1)`, and only `--wait` rides the `edit` verb,
+  whose `waiting` holds the Apple event's reply until the tab closes, at the cost of the one-time
+  automation prompt. Injected as a default, not forced: a profile exporting its own editor runs
+  later and wins.
 - **A column's minimum width is the toolbar row over it, so it is the display mode's too.** The
   edge columns carry their own chrome in the bar — the panel's filter, ± and History over the
   panel, the rail's filter beside the sidebar toggle — which is what fixes their floors: squeeze

@@ -551,7 +551,6 @@ final class SDSession: NSObject {
   @objc(handleStopScriptCommand:)
   func handleStop(_ command: NSScriptCommand) -> Any? {
     guard let session = agentSession else { return command.fail("no such session") }
-    if command.refusedWhileWaiting(session) { return nil }
     session.stop()
     return "ok"
   }
@@ -568,7 +567,6 @@ final class SDSession: NSObject {
   @objc(handleInterruptScriptCommand:)
   func handleInterrupt(_ command: NSScriptCommand) -> Any? {
     guard let session = agentSession else { return command.fail("no such session") }
-    if command.refusedWhileWaiting(session) { return nil }
     guard session.isRunning else { return command.fail("session is not running") }
     session.interrupt()
     return "ok"
@@ -599,7 +597,6 @@ final class SDSession: NSObject {
     guard let session = agentSession, let controller else {
       return command.fail("no such session")
     }
-    if command.refusedWhileWaiting(session) { return nil }
     guard session.canRollBack else {
       return command.fail(
         "session is held by another process; close it there, or fork instead")
@@ -664,7 +661,7 @@ final class SDSession: NSObject {
   func handleDeny(_ command: NSScriptCommand) -> Any? { resolveApproval(command, allow: false) }
 
   /// approve/deny stand in for a human decision, so they stay behind `HUKAN_SCRIPTING_GUARDED` — a
-  /// session's own agent can reach osascript and must not approve its own tool calls.
+  /// session's own agent must not approve its own tool calls, nor a script anyone else runs.
   private func resolveApproval(_ command: NSScriptCommand, allow: Bool) -> Any? {
     guard guardedScriptingEnabled() else { return command.fail("approvals are not scriptable") }
     guard let session = agentSession else { return command.fail("no such session") }

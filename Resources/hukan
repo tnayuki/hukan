@@ -5,11 +5,15 @@
 # absolute path with nothing installed on PATH — and so the Dev build's terminals reach the
 # Dev app: the bundle id is read from the bundle this copy sits in, never hard-coded.
 #
-# Inside a hukan terminal (HUKAN_TERMINAL_ID is set) everything goes through the `edit`
-# Apple-event verb: the sender's responsible process is hukan itself, so the event is
-# self-addressed and the automation prompt never appears. Outside one, a plain open goes
-# through open(1) — Launch Services, which TCC does not gate — and only --wait falls back to
-# the Apple event, which is where an external terminal may see the one-time automation prompt.
+# Inside a hukan terminal (HUKAN_EDIT_SOCKET is set) everything goes through that socket: hukan
+# takes no Apple event from a process it started. HUKAN_TERMINAL_ID says which terminal asked.
+# Outside one, a plain open goes through open(1) — Launch Services, which TCC does not gate — and
+# only --wait falls back to the Apple event, which is where an external terminal may see the
+# one-time automation prompt.
+#
+# The socket speaks three NUL-ended fields — terminal id, 1 or 0 for waiting, the path — and
+# answers one line: opened, closed, or "error: " and why. zsh's own zsocket reaches it, so
+# nothing but the shell is run.
 #
 # The event is spelled in raw codes («event HuknEdit»), not terminology: the target is
 # `application id` held in a variable, and AppleScript resolves terminology only against a
@@ -44,7 +48,25 @@ for p in "${paths[@]}"; do
   abs+=("${p:A}")
 done
 
-if [[ -z "${HUKAN_TERMINAL_ID:-}" && "$wait_flag" == false ]]; then
+if [[ -n "${HUKAN_EDIT_SOCKET:-}" && -S "$HUKAN_EDIT_SOCKET" ]]; then
+  zmodload zsh/net/socket
+  for p in "${abs[@]}"; do
+    zsocket "$HUKAN_EDIT_SOCKET" || { print -u2 "hukan: cannot reach hukan"; exit 1; }
+    fd=$REPLY
+    print -rn -u $fd -- "${HUKAN_TERMINAL_ID:-}"$'\0'"$([[ $wait_flag == true ]] && print 1 || print 0)"$'\0'"$p"$'\0'
+    answer=""
+    IFS= read -r -u $fd answer || true
+    exec {fd}>&-
+    case "$answer" in
+      opened|closed) ;;
+      "error: "*) print -u2 "hukan: ${answer#error: }"; exit 1 ;;
+      *) print -u2 "hukan: hukan did not answer"; exit 1 ;;
+    esac
+  done
+  exit 0
+fi
+
+if [[ "$wait_flag" == false ]]; then
   exec open -b "$bundle_id" "${abs[@]}"
 fi
 

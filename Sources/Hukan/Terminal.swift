@@ -102,10 +102,11 @@ final class TerminalSession: LocalProcessTerminalViewDelegate {
     // lands its message as a tab and returns when the tab closes (`edit … waiting`, matching
     // the `$EDITOR` contract: done when the editor exits). Injected, not forced — a profile
     // that exports its own EDITOR runs later and wins, the register-not-write rule again.
-    // HUKAN_TERMINAL_ID is how the helper knows it is inside hukan (a self-addressed Apple
-    // event, exempt from the automation prompt) and which worktree's desk an outside file
-    // lands on.
+    // HUKAN_EDIT_SOCKET is how the helper reaches this app from inside it — an Apple event from
+    // here is refused (`AppleEventGate`) — and HUKAN_TERMINAL_ID which terminal asked, and so
+    // which worktree's desk an outside file lands on.
     environment.append("HUKAN_TERMINAL_ID=\(sessionID)")
+    if let socket = EditSocket.path { environment.append("HUKAN_EDIT_SOCKET=\(socket)") }
     if let helper = Bundle.main.resourceURL?.appendingPathComponent("hukan").path {
       environment.append("EDITOR='\(helper)' --wait")
       environment.append("VISUAL='\(helper)' --wait")
