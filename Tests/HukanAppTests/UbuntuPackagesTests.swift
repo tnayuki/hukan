@@ -134,6 +134,33 @@ final class UbuntuPackagesTests: XCTestCase {
     }
   }
 
+  func testAnISOsPackagesAreFoundByTheChecksumKeptOnIt() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    MachineStore.rootOverride = root.appendingPathComponent("Machines")
+    defer { MachineStore.rootOverride = nil }
+    MachineStore.prepare()
+    // Not an ISO at all: nothing here may read it.
+    let iso = root.appendingPathComponent("ubuntu-24.04.5-live-server-arm64.iso")
+    try Data("not an iso".utf8).write(to: iso)
+    // An ISO this hukan neither downloaded nor added is not ready, and is not hashed to find out.
+    XCTAssertNil(UbuntuPackages.snapshot(for: iso))
+    XCTAssertFalse(UbuntuPackages.isReady(iso: iso))
+    XCTAssertThrowsError(try UbuntuPackages.cached(iso: iso)) { error in
+      XCTAssertTrue(error.localizedDescription.contains(UbuntuPackages.missingPackagesMessage))
+    }
+    let identity = String(repeating: "ab", count: 32)
+    _ = try LinuxTemplateBuilder.tool(
+      "/usr/bin/xattr", ["-w", "dev.tnayuki.hukan.sha256", identity, iso.path])
+    XCTAssertEqual(UbuntuPackages.identity(of: iso), identity)
+    XCTAssertEqual(UbuntuPackages.snapshot(for: iso), UbuntuPackages.snapshot(identity: identity))
+    // The checksum alone is not enough: the packages it names have to be there.
+    XCTAssertFalse(UbuntuPackages.isReady(iso: iso))
+    try FileManager.default.createDirectory(
+      at: UbuntuPackages.snapshot(identity: identity), withIntermediateDirectories: true)
+    XCTAssertTrue(UbuntuPackages.isReady(iso: iso))
+  }
+
   func testUnresolvableVersionFailsInsteadOfKeepingPartialClosure() {
     XCTAssertThrowsError(try UbuntuPackages.Requirement(":"))
     XCTAssertThrowsError(try UbuntuPackages.Requirement("libc6 (~ 2)"))

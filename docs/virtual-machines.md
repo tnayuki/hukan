@@ -71,10 +71,14 @@ and the reasoning behind it; read the file before changing the area it covers.
   ISO is put in place only once they are all there: a fetch that fails or is cancelled takes the
   ISO with it, so no ISO is offered that would have to go back to the network for a template. An
   ISO added from a file is held to the same rule, its copy finished only once they are fetched;
-  template creation never fetches packages. New Template checks the selected ISO and authenticates
-  its saved packages in the background, with Create disabled while checking or when they are
-  missing or damaged. Such an ISO must be removed with − and downloaded or added again; the
-  builder repeats the offline validation before creating a template. Deleting an ISO
+  template creation never fetches packages. **The packages are found by the ISO's checksum, kept
+  on the ISO** as an extended attribute by the download or the add, which hash it anyway: the
+  sheet used to hash the ISO again each time one was chosen, seven seconds on a 3.8GB ISO, only to
+  look its packages up, and the builder then did the same. So New Template only asks whether they
+  are there, with Create disabled when they are not, and the builder authenticates them, without
+  hashing the ISO, once a template is being made. An ISO with no checksum on it — one kept by an
+  older hukan, or put in Images by hand, which is not a way in — reads as missing its packages,
+  and is removed with − and downloaded or added again. Deleting an ISO
   deletes its packages, which were fetched for it alone. It reaches the installer as a repository
   on the answers disc, and the installer is given no network, so nothing it would refresh, update
   or look up can make a template depend on the connection again.

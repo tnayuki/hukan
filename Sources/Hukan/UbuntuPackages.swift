@@ -225,16 +225,42 @@ enum UbuntuPackages {
     MachineStore.driversURL.appendingPathComponent("ubuntu-\(identity)-v1")
   }
 
-  /// The packages kept for `iso`, if any. Reads the whole ISO, so not on the main thread.
+  /// The ISO's SHA-256, kept on the file once its packages are: hashing an ISO is seconds, and its
+  /// content is what its packages are kept under. Only a download or an add writes it, so an ISO
+  /// without one is one whose packages were never made by this hukan.
+  private static let identityAttribute = "dev.tnayuki.hukan.sha256"
+
+  static func identity(of iso: URL) -> String? {
+    let size = getxattr(iso.path, identityAttribute, nil, 0, 0, 0)
+    guard size > 0 else { return nil }
+    var bytes = [UInt8](repeating: 0, count: size)
+    guard getxattr(iso.path, identityAttribute, &bytes, size, 0, 0) == size else { return nil }
+    return String(decoding: bytes, as: UTF8.self)
+  }
+
+  private static func remember(_ identity: String, on iso: URL) throws {
+    let bytes = Array(identity.utf8)
+    guard setxattr(iso.path, identityAttribute, bytes, bytes.count, 0, 0) == 0 else {
+      throw MachineError("The Ubuntu ISO's checksum could not be kept on it.")
+    }
+  }
+
+  /// The packages kept for `iso`, if any — found without reading the ISO.
   static func snapshot(for iso: URL) -> URL? {
-    RestoreImageDownload.sha256(of: iso).map { snapshot(identity: $0) }
+    identity(of: iso).map { snapshot(identity: $0) }
+  }
+
+  /// Whether a template can be made from `iso` as far as can be told without reading anything: its
+  /// packages are there. Whether they are intact is the builder's to check.
+  static func isReady(iso: URL) -> Bool {
+    snapshot(for: iso).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
   }
 
   static let missingPackagesMessage =
     "This ISO's packages are missing or incomplete. Remove the ISO with − and download or add it again."
 
-  /// Read and authenticate the saved packages without ever contacting the archive.
-  /// Hashing the ISO and checking packages must run off the main thread.
+  /// Read and authenticate the saved packages without ever contacting the archive or hashing the
+  /// ISO. Checking packages must run off the main thread.
   static func cached(iso: URL) throws -> Snapshot {
     do {
       return try prepare(iso: iso, cachedOnly: true)
@@ -309,8 +335,18 @@ enum UbuntuPackages {
     let kernel = baseline.keys.filter(isKernelImage).sorted().first
     let hwe = "linux-generic-hwe-\(series(release))"
     // Hash the actual ISO, not its filename: a rebuilt point release must never share a snapshot.
-    guard let identity = RestoreImageDownload.sha256(of: iso) else {
-      throw MachineError("The Ubuntu ISO could not be hashed.")
+    // A template's check goes by what the download or the add kept on the ISO; those two hash it.
+    let identity: String
+    if cachedOnly {
+      guard let kept = Self.identity(of: iso) else {
+        throw MachineError("This ISO was not downloaded or added by this hukan.")
+      }
+      identity = kept
+    } else {
+      guard let hashed = RestoreImageDownload.sha256(of: iso) else {
+        throw MachineError("The Ubuntu ISO could not be hashed.")
+      }
+      identity = hashed
     }
     let destination = snapshot(identity: identity)
     if FileManager.default.fileExists(atPath: destination.path) {
@@ -323,6 +359,7 @@ enum UbuntuPackages {
       }
       // Verify that the snapshot also contains the closure needed by the new installer.
       _ = try resolve(roots: [image] + extras, installed: baseline, available: saved)
+      if !cachedOnly { try remember(identity, on: iso) }
       return Snapshot(directory: destination, codename: code, kernel: image, server: server)
     }
     guard !cachedOnly else { throw MachineError("No saved package snapshot exists.") }
@@ -410,6 +447,7 @@ enum UbuntuPackages {
       to: partial.appendingPathComponent("InstallPackages"), atomically: true, encoding: .utf8)
     try checkCancellation(cancellation)
     try manager.moveItem(at: partial, to: destination)
+    try remember(identity, on: iso)
     return Snapshot(directory: destination, codename: code, kernel: kernelPackage, server: server)
   }
 

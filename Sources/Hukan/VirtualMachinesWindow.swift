@@ -645,8 +645,8 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     alert.buttons.first?.hasDestructiveAction = true
     alert.beginSheetModal(for: window) { [weak self] response in
       guard response == .alertFirstButtonReturn else { return }
-      // An Ubuntu ISO's packages go with it: they were fetched for it alone. Finding them means
-      // reading the ISO through, so it is done off the main thread, before the ISO goes.
+      // An Ubuntu ISO's packages go with it: they were fetched for it alone. They are found by
+      // the checksum kept on the ISO, before the ISO goes; removing them is off the main thread.
       if case .image(let image) = selected, UbuntuRelease.title(ofImage: image) != nil {
         DispatchQueue.global(qos: .userInitiated).async {
           // Kept by content, so another ISO with the same content still needs them.
@@ -1432,8 +1432,6 @@ private final class NewMacTemplateSheet: NSWindowController {
   private let titleField = NSTextField(string: "")
   private let imagePopUp = NSPopUpButton()
   private let createButton = NSButton(title: "Create", target: nil, action: nil)
-  private var packageCheck = UUID()
-  private var readyLinuxImage: URL?
   private let note = NSTextField(wrappingLabelWithString: "")
   private let diskField = NSTextField(string: "80")
   private let processorsPopUp = NSPopUpButton()
@@ -1610,10 +1608,9 @@ private final class NewMacTemplateSheet: NSWindowController {
     checkPackages()
   }
 
+  /// Whether the ISO's packages are there, which costs nothing to ask: whether they are intact is
+  /// checked once the template is being made, where a failure says so the same way.
   private func checkPackages() {
-    let check = UUID()
-    packageCheck = check
-    readyLinuxImage = nil
     describeAccount()
     guard let image = imagePopUp.selectedItem?.representedObject as? URL else {
       createButton.isEnabled = false
@@ -1623,22 +1620,9 @@ private final class NewMacTemplateSheet: NSWindowController {
       createButton.isEnabled = true
       return
     }
-    createButton.isEnabled = false
-    note.stringValue = "Checking this ISO and its saved packages…"
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let result = Result { try UbuntuPackages.cached(iso: image) }
-      DispatchQueue.main.async { [weak self] in
-        guard let self, self.packageCheck == check else { return }
-        switch result {
-        case .success:
-          self.readyLinuxImage = image
-          self.createButton.isEnabled = true
-          self.describeAccount()
-        case .failure:
-          self.note.stringValue = UbuntuPackages.missingPackagesMessage
-        }
-      }
-    }
+    let ready = UbuntuPackages.isReady(iso: image)
+    createButton.isEnabled = ready
+    if !ready { note.stringValue = UbuntuPackages.missingPackagesMessage }
   }
 
   /// The image's own name — `macOS 27.2` — as the template's, until someone types one.
@@ -1683,7 +1667,7 @@ private final class NewMacTemplateSheet: NSWindowController {
     let title = titleField.stringValue.isEmpty ? Self.versionTitle(ipsw) : titleField.stringValue
     let gigabytes = UInt64(diskField.integerValue)
     if Self.kind(of: ipsw) == .linux {
-      guard readyLinuxImage == ipsw else { return }
+      guard UbuntuPackages.isReady(iso: ipsw) else { return }
       window.sheetParent?.endSheet(window)
       onCreateLinux?(
         LinuxTemplateBuilder.Request(
