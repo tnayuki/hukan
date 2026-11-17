@@ -115,7 +115,7 @@ answering for the other. The cost is that the dev build answers to a different n
 leaking: `PRODUCT_MODULE_NAME` is pinned in both configurations, because `PRODUCT_NAME` otherwise
 renames the Swift module to `Hukan_Dev` and every `@testable import Hukan` stops compiling, and
 the test target's `TEST_HOST` names the Debug bundle. Both icns files ship in both bundles —
-`CFBundleIconFile` picks one, and a second 455 KB icon is cheaper than a copy phase that has to
+`CFBundleIconFile` picks one, and a second 410 KB icon is cheaper than a copy phase that has to
 know the configuration.
 
 **Signing is ad-hoc (`-`)** — nothing hukan does needs a stable signature (restoration and
