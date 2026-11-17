@@ -480,7 +480,7 @@ has no file open there, until which it goes on seeing the one it had; without Sa
 the machine runs without it. Text on the clipboard crosses when the machine's screen takes the
 keyboard, into the guest, and when it gives it up, out of it.
 
-A Linux template is Ubuntu, made from Canonical's desktop ISO for Apple silicon: the window's
+A Linux template is Ubuntu, made from Canonical's desktop or server ISO for Apple silicon: the window's
 `+` lists the supported LTS releases, each at its newest point release, downloads the one chosen
 and checks it against Ubuntu's own checksum. New Template… then runs Ubuntu's installer unattended
 — nothing to answer, about ten minutes — and sets up a GNOME desktop that signs in by itself
@@ -498,6 +498,13 @@ macOS machine and is saved and resumed the same way, with no limit on how many r
 worktree is `/worktree`, and moves with the session. The agent's commands run in a login bash, and
 its screenshots, clicks, typing and keys go through X11; there is no accessibility tree to read. A
 Linux guest that reboots stops, and Start brings it up again.
+
+The `+` lists each release's server ISO beside its desktop. A template made from it installs
+Ubuntu Server — about a third of the desktop's size on disk, with no GNOME — and the same agent,
+shares and Rosetta; nobody signs in, and the account's own half of the agent starts at boot. Its
+machines are given commands only: the agent's screen tools answer that there is no desktop, and
+the sheet offers no GPU. The server ISO carries its own kernel, so nothing but Ubuntu's signed
+package lists is fetched for it.
 
 On macOS 27 a Linux template can be made with a GPU (the sheet's GPU checkbox, “Run OpenGL on
 this Mac's GPU”): its machines' OpenGL runs on this Mac's GPU, 4.1 core, and their desktop is

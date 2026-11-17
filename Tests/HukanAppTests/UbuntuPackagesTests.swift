@@ -52,6 +52,15 @@ final class UbuntuPackagesTests: XCTestCase {
       ), ["libc6": "2.43", "linux-image-7.0.0-30-generic": "7.0.0-30.30"])
   }
 
+  func testALayersManifestIsADiffAgainstTheOneBelow() {
+    // The server ISO's `ubuntu-server` layer, over `ubuntu-server-minimal`.
+    let minimal = UbuntuPackages.manifest(
+      "--- /build/a\n+++ /build/b\n+adduser\t3.137\n+less\t590\n+netplan.io\t1.1.2\n")
+    let server = UbuntuPackages.manifest(
+      "--- /build/b\n+++ /build/c\n+apt-utils\t2.8.3\n-less\t590\n", over: minimal)
+    XCTAssertEqual(server, ["adduser": "3.137", "netplan.io": "1.1.2", "apt-utils": "2.8.3"])
+  }
+
   func testDependencyClosureKeepsISOVersionsAndResolvesAlternativesAndCycles() throws {
     let available = [
       package("kernel", depends: "image (= 7), libc6 (>= 2)"),

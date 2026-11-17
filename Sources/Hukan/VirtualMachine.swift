@@ -111,6 +111,12 @@ final class MachinePaneViewController: NSViewController {
     machineID.flatMap(UUID.init(uuidString:)).flatMap(MachineStore.session(id:))?.manifest.gpu
       == true
   }
+  /// A Linux machine made from Ubuntu's server ISO: no desktop, so nothing on its screen for the
+  /// agent's screen tools to read or drive.
+  var isServer: Bool {
+    machineID.flatMap(UUID.init(uuidString:)).flatMap(MachineStore.session(id:))?.manifest.server
+      == true
+  }
   /// The running machine, for the guest agent to be reached through.
   var virtualMachine: VZVirtualMachine? { runner?.vm }
   /// Which halves of the guest agent have said they are up; only those are dialled.

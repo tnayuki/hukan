@@ -108,28 +108,45 @@ enum LinuxMachine {
   }
 }
 
-/// An Ubuntu release a Linux template can be made from: its desktop ISO for arm64, which carries
-/// the whole desktop, so a template is made from it with no network — as a macOS one is from its
-/// IPSW and a Windows one from its ISO.
+/// An Ubuntu release a Linux template can be made from: its desktop or its server ISO for arm64,
+/// each of which carries what it installs, so a template is made from it with no network — as a
+/// macOS one is from its IPSW and a Windows one from its ISO. The server installs a fraction of
+/// what the desktop does and has no screen to drive, for machines that are only given commands.
 ///
 /// Nothing here is a table of releases. Which LTS releases are still supported is Canonical's
 /// `meta-release-lts`, the list `do-release-upgrade` reads, and the newest point release of each
-/// — 24.04.5, not 24.04 — is whichever desktop ISO for arm64 that release's `SHA256SUMS` names
-/// with the highest number, which also gives the checksum the download is held to. A release with
-/// no such ISO, 22.04, drops out by itself. Both are GETs of Canonical's fixed addresses with
+/// — 24.04.5, not 24.04 — is whichever ISO of an edition for arm64 that release's `SHA256SUMS`
+/// names with the highest number, which also gives the checksum the download is held to. A
+/// release with no such ISO drops out by itself. Both are GETs of Canonical's fixed addresses with
 /// nothing sent, made only when someone asks to download one.
 struct UbuntuRelease: Equatable {
+  enum Edition: CaseIterable {
+    case desktop, server
+
+    /// What Canonical ends the ISO's name with.
+    var suffix: String { self == .desktop ? "-desktop-arm64.iso" : "-live-server-arm64.iso" }
+    var name: String { self == .desktop ? "Desktop" : "Server" }
+  }
+
   /// `24.04.5`.
   let version: String
+  let edition: Edition
   let isoName: String
   let sha256: String
+
+  init(version: String, edition: Edition = .desktop, isoName: String, sha256: String) {
+    self.version = version
+    self.edition = edition
+    self.isoName = isoName
+    self.sha256 = sha256
+  }
 
   static let metaRelease = URL(string: "https://changelogs.ubuntu.com/meta-release-lts")!
   static func checksums(for series: String) -> URL {
     URL(string: "https://cdimage.ubuntu.com/ubuntu/releases/\(series)/release/SHA256SUMS")!
   }
 
-  var title: String { "Ubuntu \(version) LTS" }
+  var title: String { "Ubuntu \(version) LTS \(edition.name)" }
   var url: URL {
     Self.checksums(for: Self.series(of: version)).deletingLastPathComponent()
       .appendingPathComponent(isoName)
@@ -155,16 +172,17 @@ struct UbuntuRelease: Equatable {
     }
   }
 
-  /// The newest desktop ISO for arm64 a `SHA256SUMS` lists, by its version's numbers.
-  static func newest(inChecksums text: String) -> UbuntuRelease? {
+  /// The newest ISO of `edition` for arm64 a `SHA256SUMS` lists, by its version's numbers.
+  static func newest(inChecksums text: String, edition: Edition = .desktop) -> UbuntuRelease? {
     let releases = text.split(separator: "\n").compactMap { line -> UbuntuRelease? in
       let parts = line.split(separator: " ", maxSplits: 1)
       guard parts.count == 2 else { return nil }
       let name = parts[1].hasPrefix("*") ? String(parts[1].dropFirst()) : String(parts[1])
-      guard name.hasPrefix("ubuntu-"), name.hasSuffix("-desktop-arm64.iso") else { return nil }
-      let version = String(name.dropFirst("ubuntu-".count).dropLast("-desktop-arm64.iso".count))
+      guard name.hasPrefix("ubuntu-"), name.hasSuffix(edition.suffix) else { return nil }
+      let version = String(name.dropFirst("ubuntu-".count).dropLast(edition.suffix.count))
       guard !version.isEmpty, version.allSatisfy({ $0.isNumber || $0 == "." }) else { return nil }
-      return UbuntuRelease(version: version, isoName: name, sha256: String(parts[0]))
+      return UbuntuRelease(
+        version: version, edition: edition, isoName: name, sha256: String(parts[0]))
     }
     return releases.max { a, b in
       a.version.compare(b.version, options: .numeric) == .orderedAscending
@@ -176,13 +194,15 @@ struct UbuntuRelease: Equatable {
     DispatchQueue.global(qos: .userInitiated).async {
       let result = Result { () -> [UbuntuRelease] in
         let list = try fetch(metaRelease)
-        let releases = try supportedSeries(inMetaRelease: list).compactMap { series in
-          newest(inChecksums: try fetch(checksums(for: series)))
+        // Newest release first, its desktop before its server.
+        let releases = try supportedSeries(inMetaRelease: list).reversed().flatMap { series in
+          let sums = try fetch(checksums(for: series))
+          return Edition.allCases.compactMap { newest(inChecksums: sums, edition: $0) }
         }
         guard !releases.isEmpty else {
-          throw MachineError("Ubuntu lists no supported release with a desktop for arm64.")
+          throw MachineError("Ubuntu lists no supported release for arm64.")
         }
-        return releases.reversed()
+        return releases
       }
       DispatchQueue.main.async { completion(result) }
     }
@@ -203,14 +223,21 @@ struct UbuntuRelease: Equatable {
     return try outcome.get()
   }
 
-  /// `ubuntu-24.04.5-desktop-arm64.iso` reads as `Ubuntu 24.04.5`.
+  /// `ubuntu-24.04.5-desktop-arm64.iso` reads as `Ubuntu 24.04.5`, and its server's as
+  /// `Ubuntu 24.04.5 Server`.
   static func title(ofImage url: URL) -> String? {
     let name = url.lastPathComponent
     guard isUbuntu(url),
       let version = name.dropFirst("ubuntu-".count).split(separator: "-").first,
       version.contains(".")
     else { return nil }
-    return "Ubuntu \(version)"
+    return "Ubuntu \(version)" + (isServer(url) ? " Server" : "")
+  }
+
+  /// Ubuntu's server ISO, by the name Canonical gives it — which the window goes by before a
+  /// template is made. What a template installs is read off the ISO itself (`UbuntuPackages`).
+  static func isServer(_ url: URL) -> Bool {
+    url.lastPathComponent.lowercased().contains("-live-server-")
   }
 
   /// An ISO is Ubuntu's by its name — the name Canonical gives it, which is the one it keeps when
@@ -323,6 +350,10 @@ final class LinuxTemplateBuilder {
 
   private func prepare() throws -> Machine {
     let packages = try UbuntuPackages.cached(iso: request.image)
+    // A GPU is for a desktop to draw with; a server has none to draw.
+    guard !(packages.server && request.gpu) else {
+      throw MachineError("A machine made from Ubuntu's server ISO has no desktop to give a GPU.")
+    }
     MachineStore.prepare()
     let id = UUID()
     let url = MachineStore.templatesURL.appendingPathComponent(".building-\(id.uuidString)")
@@ -337,7 +368,8 @@ final class LinuxTemplateBuilder {
         macAddress: MachineManifest.randomMACAddress(),
         machineIdentifier: VZGenericMachineIdentifier().dataRepresentation.base64EncodedString(),
         username: request.username, password: password, created: Date(),
-        gpu: request.gpu ? true : nil, rosetta: request.rosetta ? nil : false)
+        gpu: request.gpu ? true : nil, rosetta: request.rosetta ? nil : false,
+        server: packages.server ? true : nil)
       let machine = Machine(url: url, manifest: manifest)
       try machine.save()
       // Sparse: the disk costs what the guest writes, not what it is told it has.
@@ -458,7 +490,7 @@ final class LinuxTemplateBuilder {
     defer { try? manager.removeItem(at: directory) }
     try "instance-id: hukan-\(machine.id.uuidString.lowercased())\n".write(
       to: directory.appendingPathComponent("meta-data"), atomically: true, encoding: .utf8)
-    try userData(kernel: packages.kernel).write(
+    try userData(kernel: packages.kernel, server: packages.server).write(
       to: directory.appendingPathComponent("user-data"), atomically: true, encoding: .utf8)
     try Self.setupScript.write(
       to: directory.appendingPathComponent("hukan-setup"), atomically: true, encoding: .utf8)
@@ -520,20 +552,26 @@ final class LinuxTemplateBuilder {
       ])
   }
 
-  /// The autoinstall: the desktop from the ISO onto the whole disk, unattended, then hukan's setup
-  /// into what was installed, and the guest powered off. The account is not the installer's — it
-  /// is made on the first boot from the `user-data` handed on, which is what lets it take this
-  /// Mac's user id, so what it writes into the shared worktree is this Mac user's from either side.
+  /// The autoinstall: the desktop or the server from the ISO onto the whole disk, unattended, then
+  /// hukan's setup into what was installed, and the guest powered off. The account is not the
+  /// installer's — it is made on the first boot from the `user-data` handed on, which is what lets
+  /// it take this Mac's user id, so what it writes into the shared worktree is this Mac user's from
+  /// either side. On a server nobody signs in, so the account lingers: its user manager starts at
+  /// boot, and with it the agent's user half.
   // Internal so tests can read the answers without building a template.
-  func userData(kernel: String = "linux-generic-hwe-24.04") -> String {
+  func userData(kernel: String = "linux-generic-hwe-24.04", server: Bool = false) -> String {
     let user = request.username
+    // Codecs are the desktop installer's; the server's is not asked about them.
+    // Spelt out rather than as literals: these sit inside the YAML below, at its indentation.
+    let codecs = server ? "" : "\n  codecs:\n    install: false"
+    let linger = server ? "\n    runcmd:\n      - [loginctl, enable-linger, \(user)]" : ""
     return """
       #cloud-config
       autoinstall:
         version: 1
         interactive-sections: []
         source:
-          id: ubuntu-desktop-minimal
+          id: \(server ? "ubuntu-server" : "ubuntu-desktop-minimal")
         storage:
           layout:
             name: direct
@@ -561,14 +599,11 @@ final class LinuxTemplateBuilder {
             Acquire::AllowDowngradeToInsecureRepositories "true";
             APT::Get::AllowUnauthenticated "true";
         early-commands:
-          - sh -exc 'exec >/dev/hvc0 2>&1; trap "echo hukan-early exit=\\$?" EXIT; blkid; cat /proc/self/mountinfo; mkdir -p /run/hukan; device=$(blkid -L cidata || blkid -L CIDATA); test -n "$device"; mount -o ro "$device" /run/hukan; sh /run/hukan/hukan-offline'
-
-        codecs:
-          install: false
+          - sh -exc 'exec >/dev/hvc0 2>&1; trap "echo hukan-early exit=\\$?" EXIT; blkid; cat /proc/self/mountinfo; mkdir -p /run/hukan; device=$(blkid -L cidata || blkid -L CIDATA); test -n "$device"; mount -o ro "$device" /run/hukan; sh /run/hukan/hukan-offline'\(codecs)
         drivers:
           install: false
         late-commands:
-          - sh -exc 'exec >/dev/hvc0 2>&1; trap "echo hukan-late exit=\\$?" EXIT; sh /run/hukan/hukan-setup /target \(user) \(request.rosetta ? "rosetta" : "no-rosetta") && umount /run/hukan'
+          - sh -exc 'exec >/dev/hvc0 2>&1; trap "echo hukan-late exit=\\$?" EXIT; sh /run/hukan/hukan-setup /target \(user) \(request.rosetta ? "rosetta" : "no-rosetta") \(server ? "server" : "desktop") && umount /run/hukan'
         user-data:
           hostname: hukan
           users:
@@ -579,7 +614,7 @@ final class LinuxTemplateBuilder {
               sudo: ALL=(ALL) NOPASSWD:ALL
               shell: /bin/bash
               lock_passwd: false
-              plain_text_passwd: \(password)
+              plain_text_passwd: \(password)\(linger)
         shutdown: poweroff
 
       """
@@ -643,9 +678,9 @@ final class LinuxTemplateBuilder {
     """#
 
   /// What the install's late commands run, with the installed system at `$1`, the account's name in
-  /// `$2` and `rosetta` or `no-rosetta` in `$3`: the agent and its two services, the shares, Rosetta
-  /// unless told not to, a desktop that signs in by
-  /// itself on X11 and never locks, and amd64 packages for apt to fetch. Then the finishing script
+  /// `$2`, `rosetta` or `no-rosetta` in `$3` and `desktop` or `server` in `$4`: the agent and its
+  /// two services, the shares, Rosetta unless told not to, amd64 packages for apt to fetch, and —
+  /// on a desktop — one that signs in by itself on X11 and never locks. Then the finishing script
   /// hukan runs at the end of the first boot.
   static let setupScript = #"""
     #!/bin/sh
@@ -666,6 +701,20 @@ final class LinuxTemplateBuilder {
     [Install]
     WantedBy=multi-user.target
     EOF
+    # The user half lives in the signed-in desktop; a server has none, and its account lingers
+    # instead (the user-data's runcmd), so the half starts with the user manager at boot.
+    if [ "$4" = server ]; then
+    cat > "$T/etc/systemd/user/hukan-guest-agent.service" <<'EOF'
+    [Unit]
+    Description=hukan guest agent (user)
+    [Service]
+    ExecStart=/usr/local/libexec/hukan-guest-agent --user
+    Restart=always
+    RestartSec=2
+    [Install]
+    WantedBy=default.target
+    EOF
+    else
     cat > "$T/etc/systemd/user/hukan-guest-agent.service" <<'EOF'
     [Unit]
     Description=hukan guest agent (user)
@@ -678,6 +727,7 @@ final class LinuxTemplateBuilder {
     [Install]
     WantedBy=graphical-session.target
     EOF
+    fi
     chroot "$T" systemctl enable hukan-guest-agent-root.service
     chroot "$T" systemctl --global enable hukan-guest-agent.service
     # The worktree, a share the host may or may not give; Rosetta, unless the template was made
@@ -723,7 +773,9 @@ final class LinuxTemplateBuilder {
     mount --bind /cdrom/repository "$T/cdrom/hukan"
     printf 'deb [trusted=yes] file:/cdrom/hukan ./\n' > "$T/etc/apt/sources.list.d/hukan.list"
     chroot "$T" apt-get -o Dir::Etc::sourcelist=sources.list.d/hukan.list -o Dir::Etc::sourceparts=- update || exit 1
+    if [ "$4" != server ]; then
     chroot "$T" apt-get -o Dir::Etc::sourcelist=sources.list.d/hukan.list -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 --no-install-recommends install -y ibus-mozc || exit 1
+    fi
     umount "$T/cdrom/hukan"
     rm -f "$T/etc/apt/sources.list.d/hukan.list"
     rmdir "$T/cdrom/hukan" "$T/cdrom" 2>/dev/null || true
@@ -732,12 +784,15 @@ final class LinuxTemplateBuilder {
     rm -f "$T/etc/apt/apt.conf.d/94curtin-config"
     printf 'Acquire::Retries "5";\n' > "$T/etc/apt/apt.conf.d/80hukan-retries"
     rm -f "$T"/var/lib/apt/lists/*cdrom* "$T"/var/lib/apt/lists/*hukan*
-    # The installer is deliberately offline. Normal DHCP starts on the installed first boot.
+    # The installer is deliberately offline. Normal DHCP starts on the installed first boot, by
+    # whichever renderer the system has: a server has networkd and no NetworkManager.
     rm -f "$T"/etc/netplan/*.yaml
-    cat > "$T/etc/netplan/50-hukan.yaml" <<'EOF'
+    R=NetworkManager
+    if [ "$4" = server ]; then R=networkd; fi
+    cat > "$T/etc/netplan/50-hukan.yaml" <<EOF
     network:
       version: 2
-      renderer: NetworkManager
+      renderer: $R
       ethernets:
         ethernet:
           match:
@@ -746,6 +801,10 @@ final class LinuxTemplateBuilder {
           dhcp6: true
     EOF
     chmod 600 "$T/etc/netplan/50-hukan.yaml"
+    echo hukan > "$T/etc/hostname"
+    # Everything from here to the finishing script is the desktop's: a server has no sign-in, no
+    # screen to put on a GPU, and nothing to lock.
+    if [ "$4" != server ]; then
     # Signed in by itself, on X11 where the release still has it: what the guest's screen tools
     # speak, and what Unity's editor is supported on.
     printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=%s\n' "$U" > "$T/etc/gdm3/custom.conf"
@@ -806,7 +865,6 @@ final class LinuxTemplateBuilder {
     # account is made from /etc/skel on the first boot, so it starts out having seen it.
     mkdir -p "$T/etc/skel/.config"
     echo yes > "$T/etc/skel/.config/gnome-initial-setup-done"
-    echo hukan > "$T/etc/hostname"
     # A machine an agent drives has nobody at it: nothing locks, blanks or sleeps.
     printf 'user-db:user\nsystem-db:local\n' > "$T/etc/dconf/profile/user"
     mkdir -p "$T/etc/dconf/db/local.d"
@@ -819,6 +877,7 @@ final class LinuxTemplateBuilder {
     sleep-inactive-ac-type='nothing'
     EOF
     chroot "$T" dconf update
+    fi
     cat > "$T/usr/local/libexec/hukan-finish-template" <<'EOF'
     #!/bin/sh
     exec >/dev/hvc0 2>&1

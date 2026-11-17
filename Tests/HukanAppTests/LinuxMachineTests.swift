@@ -46,6 +46,50 @@ final class LinuxMachineTests: XCTestCase {
       "https://cdimage.ubuntu.com/ubuntu/releases/24.04/release/ubuntu-24.04.10-desktop-arm64.iso")
     // A release with no desktop for arm64 offers nothing.
     XCTAssertNil(UbuntuRelease.newest(inChecksums: "ff *ubuntu-22.04.5-live-server-arm64.iso"))
+    // Its server is read off the same list, and the large-memory build is not it.
+    let server = try XCTUnwrap(
+      UbuntuRelease.newest(
+        inChecksums: text + "\ngg *ubuntu-24.04.10-live-server-arm64+largemem.iso",
+        edition: .server))
+    XCTAssertEqual(server.version, "24.04.10")
+    XCTAssertEqual(server.sha256, "dd")
+    XCTAssertEqual(server.title, "Ubuntu 24.04.10 LTS Server")
+    XCTAssertEqual(release.title, "Ubuntu 24.04.10 LTS Desktop")
+  }
+
+  func testAServerISOIsLinuxAndSaysSo() {
+    let server = URL(fileURLWithPath: "/x/ubuntu-24.04.5-live-server-arm64.iso")
+    XCTAssertEqual(MachineKind(image: server), .linux)
+    XCTAssertTrue(UbuntuRelease.isServer(server))
+    XCTAssertFalse(
+      UbuntuRelease.isServer(URL(fileURLWithPath: "/x/ubuntu-24.04.5-desktop-arm64.iso")))
+    XCTAssertEqual(VirtualMachinesWindowController.imageTitle(server), "Ubuntu 24.04.5 Server")
+  }
+
+  func testAServerInstallsTheServerAndLingersForTheAgent() {
+    let builder = LinuxTemplateBuilder(
+      request: .init(
+        title: "Ubuntu", image: URL(fileURLWithPath: "/x.iso"), diskSize: 1, cpuCount: nil,
+        memorySize: nil, username: "someone"))
+    let server = builder.userData(server: true)
+    XCTAssertTrue(server.contains("    id: ubuntu-server\n"))
+    XCTAssertFalse(server.contains("codecs:"))
+    XCTAssertTrue(server.contains("  drivers:\n"))
+    XCTAssertTrue(server.contains("rosetta server && umount"))
+    XCTAssertTrue(server.contains("    runcmd:\n      - [loginctl, enable-linger, someone]\n"))
+    XCTAssertTrue(server.contains("plain_text_passwd: \(builder.password)\n    runcmd:"))
+    XCTAssertFalse(server.contains("\t"))
+    let desktop = builder.userData()
+    XCTAssertTrue(desktop.contains("  codecs:\n    install: false\n  drivers:\n"))
+    XCTAssertTrue(desktop.contains("rosetta desktop && umount"))
+    XCTAssertFalse(desktop.contains("runcmd"))
+    XCTAssertTrue(desktop.contains("plain_text_passwd: \(builder.password)\n  shutdown: poweroff"))
+    // The user half starts with the user manager on a server, with the session on a desktop.
+    let script = LinuxTemplateBuilder.setupScript
+    XCTAssertTrue(script.contains("WantedBy=default.target"))
+    XCTAssertTrue(script.contains("WantedBy=graphical-session.target"))
+    XCTAssertTrue(script.contains("if [ \"$4\" = server ]; then R=networkd; fi"))
+    XCTAssertTrue(script.contains("renderer: $R"))
   }
 
   func testChecksumIsTheFilesSHA256() throws {

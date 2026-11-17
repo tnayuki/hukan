@@ -11,7 +11,7 @@ and the reasoning behind it; read the file before changing the area it covers.
   **Five outbound requests are hukan's own, and the line around them is the whole of why they are
   allowed.** The cask check: one fixed URL, GET, nothing sent, no credentials, nothing about the
   work. A macOS restore image, fetched only when someone asks for one in the template sheet, from
-  the address Virtualization.framework names. An Ubuntu desktop ISO, likewise only when asked for:
+  the address Virtualization.framework names. An Ubuntu desktop or server ISO, likewise only when asked for:
   Canonical's list of supported LTS releases (`meta-release-lts`), each release's `SHA256SUMS` to
   find its newest point release and hold the download to, and the ISO. And the virtio-win drivers, from one
   fixed address, once, the first time a Windows template is made. And the packages an Ubuntu ISO

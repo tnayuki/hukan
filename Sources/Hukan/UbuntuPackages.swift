@@ -32,18 +32,31 @@ enum UbuntuPackages {
     }
   }
 
-  static func manifest(_ text: String) -> [String: String] {
-    var installed: [String: String] = [:]
+  /// What a casper manifest says is installed: a plain list, or a diff against the layer below —
+  /// `base` — whose `-` lines take a package back out.
+  static func manifest(_ text: String, over base: [String: String] = [:]) -> [String: String] {
+    var installed = base
     for line in text.split(separator: "\n") {
       let parts = line.split(whereSeparator: \.isWhitespace)
       if parts.count == 2, !parts[0].hasPrefix("---"), !parts[0].hasPrefix("+++") {
-        let raw = parts[0].hasPrefix("+") ? parts[0].dropFirst() : parts[0][...]
+        let removed = parts[0].hasPrefix("-")
+        let raw = parts[0].hasPrefix("+") || removed ? parts[0].dropFirst() : parts[0][...]
         let name = String(raw.split(separator: ":")[0])
-        if !name.hasPrefix("-") { installed[name] = String(parts[1]) }
+        if removed {
+          installed[name] = nil
+        } else {
+          installed[name] = String(parts[1])
+        }
       }
     }
     return installed
   }
+
+  /// The layers of the server ISO's `ubuntu-server` source, lowest first: each manifest is a diff
+  /// against the one before it.
+  static let serverManifests = [
+    "casper/ubuntu-server-minimal.manifest", "casper/ubuntu-server-minimal.ubuntu-server.manifest",
+  ]
 
   /// Debian's epoch/upstream/revision ordering, including tilde and numeric runs (not SemVer).
   static func compareVersions(_ lhs: String, _ rhs: String) -> ComparisonResult {
@@ -199,6 +212,8 @@ enum UbuntuPackages {
     let directory: URL
     let codename: String
     let kernel: String
+    /// The ISO is Ubuntu's server: it installs `ubuntu-server`, with no desktop to set up.
+    var server = false
   }
 
   private static let archive = URL(string: "https://ports.ubuntu.com/ubuntu-ports/")!
@@ -275,12 +290,24 @@ enum UbuntuPackages {
     else {
       throw MachineError("The Ubuntu ISO has no release codename.")
     }
-    let manifestData =
-      try (try? isoFile(iso, "casper/minimal.manifest.full"))
-      ?? (try isoFile(iso, "casper/minimal.manifest"))
-    let baseline = manifest(String(decoding: manifestData, as: UTF8.self))
+    // Which ISO this is, read off what it carries: the server's source is two layers, each a diff.
+    let serverLayers = serverManifests.compactMap { try? isoFile(iso, $0) }
+    let server = serverLayers.count == serverManifests.count
+    let baseline: [String: String]
+    if server {
+      baseline = serverLayers.reduce([:]) {
+        manifest(String(decoding: $1, as: UTF8.self), over: $0)
+      }
+    } else {
+      let manifestData =
+        try (try? isoFile(iso, "casper/minimal.manifest.full"))
+        ?? (try isoFile(iso, "casper/minimal.manifest"))
+      baseline = manifest(String(decoding: manifestData, as: UTF8.self))
+    }
+    // Japanese input is for a desktop; a server has nothing to type into.
+    let extras = server ? [] : ["ibus-mozc"]
     let kernel = baseline.keys.filter(isKernelImage).sorted().first
-    let meta = "linux-generic-hwe-\(series(release))"
+    let hwe = "linux-generic-hwe-\(series(release))"
     // Hash the actual ISO, not its filename: a rebuilt point release must never share a snapshot.
     guard let identity = RestoreImageDownload.sha256(of: iso) else {
       throw MachineError("The Ubuntu ISO could not be hashed.")
@@ -295,8 +322,8 @@ enum UbuntuPackages {
         throw MachineError("The saved packages have no kernel image.")
       }
       // Verify that the snapshot also contains the closure needed by the new installer.
-      _ = try resolve(roots: [image, "ibus-mozc"], installed: baseline, available: saved)
-      return Snapshot(directory: destination, codename: code, kernel: image)
+      _ = try resolve(roots: [image] + extras, installed: baseline, available: saved)
+      return Snapshot(directory: destination, codename: code, kernel: image, server: server)
     }
     guard !cachedOnly else { throw MachineError("No saved package snapshot exists.") }
     let manager = FileManager.default
@@ -346,13 +373,14 @@ enum UbuntuPackages {
       $0.name == $1.name
         ? compareVersions($0.version, $1.version) == .orderedDescending : $0.name < $1.name
     }
-    let kernelPackage =
-      try kernel
-      ?? kernelImage(
-        meta: meta, available: pool + remote)
+    // The HWE kernel where the release has one yet; a release new enough to have none is on its
+    // first kernel, which is what `linux-generic` names.
+    let available = pool + remote
+    let meta = available.contains { $0.name == hwe } ? hwe : "linux-generic"
+    let kernelPackage = try kernel ?? kernelImage(meta: meta, available: available)
     let chosen = try resolve(
-      roots: (kernel == nil ? [kernelPackage] : []) + ["ibus-mozc"], installed: baseline,
-      available: pool + remote)
+      roots: (kernel == nil ? [kernelPackage] : []) + extras, installed: baseline,
+      available: available)
     var local: [Package] = []
     for package in chosen {
       try checkCancellation(cancellation)
@@ -382,7 +410,7 @@ enum UbuntuPackages {
       to: partial.appendingPathComponent("InstallPackages"), atomically: true, encoding: .utf8)
     try checkCancellation(cancellation)
     try manager.moveItem(at: partial, to: destination)
-    return Snapshot(directory: destination, codename: code, kernel: kernelPackage)
+    return Snapshot(directory: destination, codename: code, kernel: kernelPackage, server: server)
   }
 
   static func installIndex(pool: [Package], local: [Package]) -> String {

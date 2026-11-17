@@ -1645,6 +1645,13 @@ final class WorktreeDeskViewController: NSViewController {
       }
       return
     }
+    if pane.isServer, Self.screenTools.contains(call.name) {
+      completion(
+        .error(
+          "This machine was made from Ubuntu's server ISO and has no desktop — use guest_exec,"
+            + " guest_read_file and guest_write_file."))
+      return
+    }
     let admin = call.arguments["admin"] as? Bool ?? false
     // Never dial a half that has not said hello: a connection to a port nobody listens on has
     // crashed Virtualization.framework.
@@ -1781,6 +1788,13 @@ final class WorktreeDeskViewController: NSViewController {
     case .macOS: return ["/bin/zsh", "-c", command]
     }
   }
+
+  /// The tools that read or drive a guest's screen, which a machine with no desktop answers with
+  /// a refusal rather than a failure from inside the guest.
+  static let screenTools: Set<String> = [
+    "guest_screenshot", "guest_list_windows", "guest_click", "guest_type", "guest_key",
+    "guest_ui_tree", "guest_ui_press", "guest_ui_set_value",
+  ]
 
   /// The guest agent's request for a tool that reads or drives the interface — each is a call's
   /// arguments under the agent's own names, and nil for the tools that are not one of these.

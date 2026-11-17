@@ -326,6 +326,9 @@ struct MachineManifest: Codable, Equatable {
   /// was). Chosen when the template is made, since the guest's binfmt and amd64 packages are set
   /// up then; without it the Rosetta share is not given either.
   var rosetta: Bool? = nil
+  /// Linux: made from Ubuntu's server ISO, so it has no desktop — no screen for the agent to read
+  /// or drive, only commands (nil means a desktop, as every template before this had).
+  var server: Bool? = nil
 
   static func randomMACAddress() -> String {
     // Locally administered, unicast: the first octet's low bits are 10.

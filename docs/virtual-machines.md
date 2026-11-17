@@ -78,6 +78,22 @@ and the reasoning behind it; read the file before changing the area it covers.
   deletes its packages, which were fetched for it alone. It reaches the installer as a repository
   on the answers disc, and the installer is given no network, so nothing it would refresh, update
   or look up can make a template depend on the connection again.
+  **The server ISO is the second Ubuntu, for a machine that is only given commands** — a
+  worktree's `docker compose` and its tests are the case that asked for it. The desktop ISO
+  cannot stand in: its sources are `ubuntu-desktop-minimal` and `ubuntu-desktop` and nothing
+  under them, so a desktop with GNOME left unstarted still writes 4.6GB where the server's
+  `ubuntu-server` writes 1.34GB, and the ISOs themselves are no smaller one way or the other
+  (3.83GB against 3.97 for 24.04.5). Which one an ISO is, is read off what it carries — the
+  server's two casper layers, each manifest a diff against the one below — and recorded on the
+  template as `server`; the name only steers the window before a template exists. One installer
+  road serves both, branched where they differ: the source, codecs (the desktop installer's
+  question alone), networkd for NetworkManager, no Japanese input, and none of the sign-in, GPU
+  or lock setup. **The account lingers** instead of signing in, since the agent's user half was
+  started by the desktop session and a template is finished only once both halves say hello;
+  `loginctl enable-linger` runs from cloud-init once the account exists, which is the earliest
+  it can. A server's screen tools are refused by hukan rather than left to fail inside the guest.
+  The server ISO's pool carries both kernels, so its HWE kernel comes off the ISO and only the
+  signed package lists are fetched.
   **Select the concrete HWE image, not its meta package, when the install layer lacks a kernel.**
   The meta package's image selector identifies the version; only that concrete image's required
   dependency closure is fetched. This drops headers and physical-device firmware. Hard dependencies

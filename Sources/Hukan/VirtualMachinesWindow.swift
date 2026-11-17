@@ -396,6 +396,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     ]
     if let user = manifest.username { facts.append(("Account", user)) }
     if manifest.kind == .linux {
+      facts.append(("Desktop", manifest.server == true ? "None (server)" : "GNOME"))
       facts.append(("GPU", manifest.gpu == true ? "On" : "Off"))
       facts.append(("Rosetta", manifest.rosetta == false ? "Off" : "On"))
     }
@@ -533,7 +534,8 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
         let alert = NSAlert()
         alert.messageText = "Download Ubuntu"
         alert.informativeText =
-          "The desktop ISO for Apple silicon, and the packages to install it offline."
+          "The ISO for Apple silicon, and the packages to install it offline. A server has no"
+          + " desktop: its machines are given commands only."
         let popUp = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 240, height: 26))
         for release in releases { popUp.addItem(withTitle: release.title) }
         alert.accessoryView = popUp
@@ -810,8 +812,11 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     guard !isBuilding else { return "a template is already being made" }
     if gpu {
       guard #available(macOS 27, *) else { return "a GPU needs macOS 27 or later" }
-      guard let image = MachineStore.images().first(where: { MachineKind(image: $0) == .linux })
-      else { return "no Ubuntu ISO in Images" }
+      guard
+        let image = MachineStore.images().first(where: {
+          MachineKind(image: $0) == .linux && !UbuntuRelease.isServer($0)
+        })
+      else { return "no Ubuntu desktop ISO in Images" }
       startBuilding(
         LinuxTemplateBuilder.Request(
           title: title, image: image, diskSize: 64 << 30, cpuCount: nil, memorySize: nil,
@@ -1568,14 +1573,20 @@ private final class NewMacTemplateSheet: NSWindowController {
   private func showGPUChoice() {
     var available = false
     if #available(macOS 27, *) { available = true }
-    gpuRow?.isHidden = !(system == .linux && available)
+    // A server has no desktop to draw, so it is offered no GPU.
+    let server =
+      (imagePopUp.selectedItem?.representedObject as? URL).map(UbuntuRelease.isServer) ?? false
+    gpuRow?.isHidden = !(system == .linux && available && !server)
     rosettaRow?.isHidden = system != .linux
   }
 
   private func describeAccount() {
+    let server =
+      (imagePopUp.selectedItem?.representedObject as? URL).map(UbuntuRelease.isServer) ?? false
     note.stringValue =
-      "“\(NSUserName())” logs in by itself. Its password is made up for you — copy it from the"
-      + " template."
+      (server
+        ? "“\(NSUserName())” has no desktop to log in to." : "“\(NSUserName())” logs in by itself.")
+      + " Its password is made up for you — copy it from the template."
   }
 
   private func reloadImages() {
@@ -1595,6 +1606,7 @@ private final class NewMacTemplateSheet: NSWindowController {
 
   @objc private func imageChosen() {
     suggestTitle()
+    showGPUChoice()
     checkPackages()
   }
 
