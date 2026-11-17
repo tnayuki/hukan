@@ -58,6 +58,11 @@ meson setup "$WORK/virgl/build" "$WORK/virgl" --prefix "$PREFIX" --buildtype rel
   -Ddefault_library=static -Dvenus=false -Dcheck-gl-errors=false -Dtests=false >/dev/null
 ninja -C "$WORK/virgl/build" install >/dev/null
 
+. "$HERE/licenses.sh"
+write_license libepoxy "$EPOXY_VERSION" https://github.com/anholt/libepoxy "$WORK/epoxy/COPYING"
+write_license virglrenderer "$VIRGLRENDERER_VERSION" https://gitlab.freedesktop.org/virgl/virglrenderer \
+  "$WORK/virgl/COPYING"
+
 echo "==> Merging into one archive"
 # The static libvirglrenderer.a carries its own objects only; the internal libraries it was linked
 # from (Mesa's util, gallium's auxiliary) are archives of their own in the build tree.

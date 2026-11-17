@@ -584,4 +584,5 @@ install zig`) — see [CLAUDE.md](CLAUDE.md).
 
 ## License
 
-hukan is released under the [MIT License](LICENSE).
+hukan is released under the [MIT License](LICENSE). The licenses of what it ships from others are in
+[Resources/Licenses](Resources/Licenses), and inside the app at `Contents/Resources/Licenses`.

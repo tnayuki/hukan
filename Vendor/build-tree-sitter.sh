@@ -58,6 +58,7 @@ QUERIES="highlights.scm locals.scm injections.scm"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RESOURCES="$HERE/../Resources/TreeSitter"
+. "$HERE/licenses.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -123,6 +124,10 @@ echo "$GRAMMARS" | while IFS='|' read -r name symbol version url subdir; do
     echo "no highlights.scm for $name (looked in $QUERYDIR)" >&2
     exit 1
   }
+
+  # Named for the repository, so the two grammars one repository ships share one license.
+  repo="$(echo "$url" | cut -d/ -f4-5)"
+  write_license "$(basename "$repo")" "$version" "https://github.com/$repo" "$TOP/LICENSE"
 done
 
 # Some grammars' queries are written to be laid *on top of* another language's rather than to

@@ -22,6 +22,9 @@ echo "==> Fetching libgit2 v$LIBGIT2_VERSION"
 curl -fsSL "https://github.com/libgit2/libgit2/archive/refs/tags/v${LIBGIT2_VERSION}.tar.gz" \
   | tar xz -C "$WORK"
 SRC="$WORK/libgit2-${LIBGIT2_VERSION}"
+# COPYING carries the licenses of what libgit2 bundles too — the zlib and regex built in here.
+. "$HERE/licenses.sh"
+write_license libgit2 "$LIBGIT2_VERSION" https://github.com/libgit2/libgit2 "$SRC/COPYING"
 
 echo "==> Configuring (static, no https/ssh, bundled zlib + builtin regex)"
 cmake -S "$SRC" -B "$WORK/build" \

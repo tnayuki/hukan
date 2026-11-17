@@ -79,7 +79,7 @@ outbound list is in `docs/updates.md`, and the guarded verbs in `docs/testing.md
 | `docs/virtual-machines.md` | macOS, Linux (Rosetta, GPU) and Windows machines |
 | `docs/remote-control.md` | Remote Control, its QR code and the replay of remote messages |
 | `docs/updates.md` | The update check and the list of hukan's own outbound requests |
-| `docs/build.md` | The build system, vendored frameworks, ripgrep, arm64, the Dev app, signing |
+| `docs/build.md` | The build system, vendored frameworks, ripgrep, arm64, the Dev app, signing, third-party licenses |
 | `docs/testing.md` | Parallel tests, transcript previews, snapshot tests and CI, AppleScript verification |
 | `docs/release.md` | swift-format and the release chain |
 

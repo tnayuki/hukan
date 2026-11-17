@@ -143,3 +143,14 @@ scripting key on the bundle id). The one cost: TCC grants (screen recording, acc
 automation) reset every rebuild, so re-approve them in System Settings after rebuilding. Nothing
 in hukan depends on those grants: a screen capture of its own window needs one even from inside
 the app, which is why looking at the window is `WindowPreviewTests` drawing it by hand instead.
+
+**What hukan ships and did not write ships with its license, in `Resources/Licenses`.** Every
+such piece — libgit2, virglrenderer and libepoxy, the tree-sitter grammars, the Swift packages
+linked in (SwiftTerm, SwiftTreeSitter, tree-sitter), and Zig's standard library inside the guest
+agents — is under a license whose condition for redistribution is shipping its text, and for a
+while none of them was shipped. One file per source, headed by its name, version and where it
+came from, then the text as the source has it; the folder is bundled as it is, and nothing in the
+app shows it. Each file is written by whatever fetches that source — the Vendor script of an
+archive, and `Vendor/build-licenses.sh` for the packages, at the commits Package.resolved pins,
+and for Zig — so a version bump that reruns the script refreshes its license with it. Homebrew's
+ripgrep and QEMU are not shipped, and have no file here.
