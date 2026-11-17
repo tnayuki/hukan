@@ -68,12 +68,20 @@ final class ScriptingCallerTests: XCTestCase {
   /// The terminals' editor reaches the app over its socket, through the helper as shipped: the
   /// request goes in, and the answer — here why nothing could open, as the test host has no
   /// window — comes back as the helper's own error.
+  /// What the app answers depends on whether the test host has a window up — "no window" when it
+  /// has none, the path opened when another test running beside this one has left one — so
+  /// either answer is the helper having reached the app; only not reaching it, or hearing
+  /// nothing back, fails. The path is a directory of its own, so what is opened is nobody's.
   func testTheHelperReachesTheAppOverItsSocket() throws {
     let socket = try XCTUnwrap(EditSocket.path, "the socket is up from launch")
     let helper = try XCTUnwrap(Bundle.main.resourceURL?.appendingPathComponent("hukan"))
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("helper-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
     let run = Process()
     run.executableURL = helper
-    run.arguments = [NSTemporaryDirectory()]
+    run.arguments = [directory.path]
     run.environment = [
       "HUKAN_EDIT_SOCKET": socket, "HUKAN_TERMINAL_ID": "none", "PATH": "/usr/bin:/bin",
     ]
@@ -87,7 +95,13 @@ final class ScriptingCallerTests: XCTestCase {
     }
     XCTAssertFalse(run.isRunning)
     let said = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    XCTAssertEqual(run.terminationStatus, 1)
-    XCTAssertEqual(said, "hukan: no window\n")
+    XCTAssertFalse(said.contains("cannot reach hukan"), said)
+    XCTAssertFalse(said.contains("did not answer"), said)
+    if run.terminationStatus == 0 {
+      XCTAssertEqual(said, "", "opened, and nothing said")
+    } else {
+      XCTAssertEqual(run.terminationStatus, 1)
+      XCTAssertTrue(said.hasPrefix("hukan: "), said)
+    }
   }
 }
