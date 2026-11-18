@@ -507,8 +507,9 @@ the sheet offers no GPU. The server ISO carries its own kernel, so nothing but U
 package lists is fetched for it.
 
 On macOS 27 a Linux template can be made with a GPU (the sheet's GPU checkbox, “Run OpenGL on
-this Mac's GPU”): its machines' OpenGL runs on this Mac's GPU, 4.1 core, and their desktop is
-drawn by it — enough for Unity's editor on its default OpenGL. Such a machine cannot be
+this Mac's GPU”): its machines' OpenGL runs on this Mac's GPU, 4.3 core — compute shaders
+included — and their desktop is drawn by it, enough for Unity's editor on its default OpenGL.
+Such a machine cannot be
 suspended — its GPU's state is not saved — so its Suspend is off and hukan quitting shuts it
 down. Each such machine renders in a process of its own, so several can run at once.
 

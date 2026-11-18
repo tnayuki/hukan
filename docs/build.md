@@ -30,7 +30,7 @@ build was not.
 The project is hand-authored and tracked — edit `project.pbxproj` directly. Folder groups are
 file-system-synchronized, so a new file under `Sources/` just appears. `Resources/hukan.icns`,
 `Vendor/Clibgit2.xcframework`, `Vendor/CtreesitterParsers.xcframework`,
-`Vendor/Cvirglrenderer.xcframework` and the
+`Vendor/Cvirglrenderer.xcframework`, the libraries under `Vendor/Mesa/` and the
 query files under `Resources/TreeSitter/` are committed static assets; regenerating any of them is a manual
 step, not part of the build. `Resources/hukan-rosetta-low32-*.so`
 are the library a Linux template preloads for Rosetta and its empty arm64 stand-in,
@@ -83,9 +83,23 @@ archive linked with `-liconv`. Rebuild it — to bump the libgit2 version — wi
 
 `Cvirglrenderer.xcframework` is the same idea for a Linux machine's GPU: virglrenderer's GL
 renderer and libepoxy, the one library it needs, built static together from pinned releases by
-`Vendor/build-virglrenderer.sh`, with `Vendor/virglrenderer-macos.patch` applied. Its headers sit
-one directory down too, for the reason the tree-sitter ones do, and `SWIFT_INCLUDE_PATHS` names
-both directories.
+`Vendor/build-virglrenderer.sh`, with `Vendor/virglrenderer-hukan.patch` and
+`Vendor/libepoxy-macos-egl.patch` applied. Its headers sit one directory down too, for the reason
+the tree-sitter ones do, and carry epoxy's GL and EGL headers, which include each other by
+`<path>` — so `SWIFT_INCLUDE_PATHS` names that directory in the test target as well, which reads
+the module through `@testable import Hukan`.
+
+**Mesa is the one thing shipped as dynamic libraries**, `Vendor/Mesa/lib`, which the Embed Mesa
+phase copies into `Contents/Frameworks` and signs; `LD_RUNPATH_SEARCH_PATHS` is what finds them.
+They are the OpenGL a GPU machine's renderer process plays the guest's on (Zink over KosmicKrisp,
+`docs/virtual-machines.md`), and only that process loads them — through libepoxy, which opens
+`@rpath/libEGL.1.dylib` — so the app itself pays nothing for their 21 MB but the download.
+`Vendor/build-mesa.sh` builds them from a pinned Mesa commit with
+`Vendor/mesa-kosmickrisp-transform-feedback.patch` (an open merge request), in two passes: one
+with LLVM, for the compilers KosmicKrisp needs while it builds, and the shipped one without LLVM,
+SPIRV-Tools or zstd, leaving nothing beneath the four libraries but the system's. The fourth is
+`Vendor/mesa-vulkan-shim.c` standing in for the Vulkan loader Zink opens: with one driver, a
+loader's search and layers would only be something more to ship and to go wrong.
 
 `CtreesitterParsers.xcframework` is the same idea for syntax highlighting: the tree-sitter
 *grammars*, compiled from pinned tag archives by `Vendor/build-tree-sitter.sh`, which also
@@ -145,7 +159,7 @@ in hukan depends on those grants: a screen capture of its own window needs one e
 the app, which is why looking at the window is `WindowPreviewTests` drawing it by hand instead.
 
 **What hukan ships and did not write ships with its license, in `Resources/Licenses`.** Every
-such piece — libgit2, virglrenderer and libepoxy, the tree-sitter grammars, the Swift packages
+such piece — libgit2, virglrenderer and libepoxy, Mesa, the tree-sitter grammars, the Swift packages
 linked in (SwiftTerm, SwiftTreeSitter, tree-sitter), and Zig's standard library inside the guest
 agents — is under a license whose condition for redistribution is shipping its text, and for a
 while none of them was shipped. One file per source, headed by its name, version and where it

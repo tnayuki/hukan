@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AD0000000000000000000020 /* libEGL.1.dylib in Embed Mesa */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000010 /* libEGL.1.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		AD0000000000000000000021 /* libgallium-27.0.0-devel.dylib in Embed Mesa */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000011 /* libgallium-27.0.0-devel.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		AD0000000000000000000022 /* libvulkan_kosmickrisp.dylib in Embed Mesa */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000012 /* libvulkan_kosmickrisp.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		AD0000000000000000000023 /* libvulkan.1.dylib in Embed Mesa */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000013 /* libvulkan.1.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		AC000000000000000000000E /* hukan.sdef in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000000D /* hukan.sdef */; };
 		AC0000000000000000000021 /* hukan in Resources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000020 /* hukan */; };
 		AC000000000000000000002D /* hukan-rosetta-low32-arm64.so in Resources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000002C /* hukan-rosetta-low32-arm64.so */; };
@@ -35,6 +39,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		AD0000000000000000000010 /* libEGL.1.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = libEGL.1.dylib; sourceTree = "<group>"; };
+		AD0000000000000000000011 /* libgallium-27.0.0-devel.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = "libgallium-27.0.0-devel.dylib"; sourceTree = "<group>"; };
+		AD0000000000000000000012 /* libvulkan_kosmickrisp.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = libvulkan_kosmickrisp.dylib; sourceTree = "<group>"; };
+		AD0000000000000000000013 /* libvulkan.1.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = libvulkan.1.dylib; sourceTree = "<group>"; };
 		AC0000000000000000000003 /* Hukan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hukan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AC000000000000000000000D /* hukan.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = hukan.sdef; sourceTree = "<group>"; };
 		AC0000000000000000000020 /* hukan */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = hukan; sourceTree = "<group>"; };
@@ -50,6 +58,23 @@
 		AD00000000000000000000C3 /* CtreesitterParsers.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/CtreesitterParsers.xcframework; sourceTree = "<group>"; };
 		AD00000000000000000000C5 /* Cvirglrenderer.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/Cvirglrenderer.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AD0000000000000000000030 /* Embed Mesa */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				AD0000000000000000000020 /* libEGL.1.dylib in Embed Mesa */,
+				AD0000000000000000000021 /* libgallium-27.0.0-devel.dylib in Embed Mesa */,
+				AD0000000000000000000022 /* libvulkan_kosmickrisp.dylib in Embed Mesa */,
+				AD0000000000000000000023 /* libvulkan.1.dylib in Embed Mesa */,
+			);
+			name = "Embed Mesa";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AB0000000000000000000002 /* Transcript */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources/Transcript; sourceTree = "<group>"; };
@@ -102,6 +127,7 @@
 				AD00000000000000000000C1 /* Clibgit2.xcframework */,
 				AD00000000000000000000C3 /* CtreesitterParsers.xcframework */,
 				AD00000000000000000000C5 /* Cvirglrenderer.xcframework */,
+				AD0000000000000000000031 /* Mesa */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -131,6 +157,18 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		AD0000000000000000000031 /* Mesa */ = {
+			isa = PBXGroup;
+			children = (
+				AD0000000000000000000010 /* libEGL.1.dylib */,
+				AD0000000000000000000011 /* libgallium-27.0.0-devel.dylib */,
+				AD0000000000000000000012 /* libvulkan_kosmickrisp.dylib */,
+				AD0000000000000000000013 /* libvulkan.1.dylib */,
+			);
+			name = Mesa;
+			path = Vendor/Mesa/lib;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -141,6 +179,7 @@
 				AC0000000000000000000007 /* Sources */,
 				AC0000000000000000000008 /* Frameworks */,
 				AC0000000000000000000009 /* Resources */,
+				AD0000000000000000000030 /* Embed Mesa */,
 				AC0000000000000000000030 /* Build Guest Agents */,
 			);
 			buildRules = (
@@ -349,6 +388,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Hukan.entitlements;
 				ENABLE_HARDENED_RUNTIME = NO;
 				EXECUTABLE_NAME = Hukan;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				INFOPLIST_FILE = Resources/Info.plist;
 				OTHER_LDFLAGS = "-liconv";
 				ICON_FILE = "hukan-dev";
@@ -368,6 +408,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Hukan.entitlements;
 				ENABLE_HARDENED_RUNTIME = NO;
 				EXECUTABLE_NAME = Hukan;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				INFOPLIST_FILE = Resources/Info.plist;
 				OTHER_LDFLAGS = "-liconv";
 				ICON_FILE = hukan;
@@ -386,6 +427,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tnayuki.HukanAppTests;
 				PRODUCT_NAME = HukanAppTests;
+				SWIFT_INCLUDE_PATHS = "$(BUILT_PRODUCTS_DIR)/include/Cvirglrenderer";
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hukan Dev.app/Contents/MacOS/Hukan";
 			};
@@ -398,6 +440,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tnayuki.HukanAppTests;
 				PRODUCT_NAME = HukanAppTests;
+				SWIFT_INCLUDE_PATHS = "$(BUILT_PRODUCTS_DIR)/include/Cvirglrenderer";
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hukan.app/Contents/MacOS/Hukan";
 			};

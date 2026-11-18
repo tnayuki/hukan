@@ -1,5 +1,4 @@
 module Cvirglrenderer {
     header "Cvirglrenderer.h"
-    link framework "OpenGL"
     export *
 }

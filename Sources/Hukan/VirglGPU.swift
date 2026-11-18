@@ -5,9 +5,10 @@ import Virtualization
 /// A Linux guest's GPU: a virtio-gpu of hukan's own, carrying the guest's OpenGL to this Mac's.
 ///
 /// The guest's Mesa (its `virgl` driver) turns OpenGL into a command stream and sends it down a
-/// virtio-gpu; virglrenderer replays it on macOS's OpenGL — 4.1 core, implemented over Metal, and
-/// with the geometry shaders and transform feedback Metal itself lacks. Virtualization.framework has
-/// no such device, and from macOS 27 lets a process implement one (`VZCustomVirtioDevice`).
+/// virtio-gpu; virglrenderer replays it on Mesa's Zink over KosmicKrisp — OpenGL on Vulkan on Metal,
+/// which builds the geometry shaders and transform feedback Metal itself lacks from compute.
+/// Virtualization.framework has no such device, and from macOS 27 lets a process implement one
+/// (`VZCustomVirtioDevice`).
 ///
 /// This half is the device: it forwards each request to the machine's renderer, a process of its
 /// own (`VirglRenderer`, over `VirglLink`), and writes back the answers. Guest RAM is handed to the

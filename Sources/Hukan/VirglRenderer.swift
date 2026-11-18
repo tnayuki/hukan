@@ -1,14 +1,14 @@
 import Cvirglrenderer
 import Foundation
 import IOSurface
-import OpenGL
-import OpenGL.GL3
 
 /// A GPU machine's renderer: this executable started with `VirglLink.launchArgument`, one process
 /// per machine (`VirglLink` says why). It is handed guest RAM once, then reads the guest's
-/// virtio-gpu requests off its socket and plays them through virglrenderer's vrend on macOS's
-/// OpenGL — 4.1 core over Metal — through CGL contexts it hands vrend, since vrend has no CGL winsys
-/// of its own. What the guest scans out is blitted into IOSurfaces the device's process shows.
+/// virtio-gpu requests off its socket and plays them through virglrenderer's vrend on Mesa's Zink
+/// over KosmicKrisp — OpenGL 4.6 on Vulkan on Metal, the libraries in Contents/Frameworks — in
+/// surfaceless EGL contexts it hands vrend. Every GL and EGL call, vrend's and this file's, goes
+/// through libepoxy to Mesa's; Apple's OpenGL is not used. What the guest scans out is read back
+/// by the GPU into IOSurfaces the device's process shows.
 enum VirglRendererProcess {
   private static var parentExit: DispatchSourceProcess?
 
@@ -122,11 +122,14 @@ final class VirglRenderer {
 
   func start() {
     queue.async { [self] in
-      // vrend declares integer vertex inputs as integers only on an ARM GPU unless told to, and
-      // macOS's OpenGL does not forgive a float input fed integers.
+      // vrend declares integer vertex inputs as integers only on an ARM GPU unless told to, and a
+      // float input fed integers arrives as garbage.
       setenv("VIRGL_USE_INTEGER", "1", 1)
+      Self.configureMesa()
+      guard Self.display != nil else { VirglRendererProcess.fail(73, "no EGL display from Mesa") }
       guard virgl_renderer_init(Unmanaged.passUnretained(self).toOpaque(), 0, &Self.callbacks) == 0
       else { VirglRendererProcess.fail(72, "virglrenderer did not start") }
+      releaseCurrent()
       writer = VirglLink.Writer(descriptor: socket, queue: queue) { exit(0) }
       let source = DispatchSource.makeReadSource(fileDescriptor: socket, queue: queue)
       source.setEventHandler { [weak self] in self?.readSocket() }
@@ -139,6 +142,7 @@ final class VirglRenderer {
   private func readSocket() {
     guard let bytes = VirglLink.read(from: socket) else { exit(0) }  // the machine has gone
     makeCurrent()
+    defer { releaseCurrent() }
     for frame in reader.feed(bytes) {
       switch frame.kind {
       case .request: handle(frame.payload, tag: frame.tag)
@@ -157,25 +161,85 @@ final class VirglRenderer {
     writer?.send(VirglLink.encode(kind, value: value, tag: tag, payload: payload))
   }
 
-  // MARK: CGL, for vrend
+  // MARK: EGL, for vrend
 
-  private static let pixelFormat: CGLPixelFormatObj? = {
-    let attributes: [CGLPixelFormatAttribute] = [
-      kCGLPFAOpenGLProfile, CGLPixelFormatAttribute(UInt32(kCGLOGLPVersion_GL4_Core.rawValue)),
-      kCGLPFAAccelerated, kCGLPFAAllowOfflineRenderers, CGLPixelFormatAttribute(0),
-    ]
-    var format: CGLPixelFormatObj?
-    var count: GLint = 0
-    CGLChoosePixelFormat(attributes, &format, &count)
-    return format
+  /// Read by Mesa as it starts, so set before the first EGL call.
+  private static func configureMesa() {
+    // Zink is the only GL driver the libraries carry; named, so nothing is inferred.
+    setenv("GALLIUM_DRIVER", "zink", 1)
+    // Metal has no RGB32 texel buffer format before Apple family 11, and that one extension is all
+    // that holds Zink's GL below 4.0; vrend never hands it the format (virglrenderer-hukan.patch).
+    // With it, Mesa works the version out as 4.6 — but EGL checks a context request against the
+    // version from before the override, so that is overridden to what Mesa then reports.
+    setenv("MESA_EXTENSION_OVERRIDE", "+GL_ARB_texture_buffer_object_rgb32", 1)
+    setenv("MESA_GL_VERSION_OVERRIDE", "4.6", 1)
+    // Compiled shaders are kept between runs, where a Mac app keeps a cache.
+    if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+      let directory = caches.appendingPathComponent(
+        "\(Bundle.main.bundleIdentifier ?? "hukan")/mesa", isDirectory: true)
+      setenv("MESA_SHADER_CACHE_DIR", directory.path, 1)
+    }
+  }
+
+  private typealias GetPlatformDisplay =
+    @convention(c) (
+      EGLenum, UnsafeMutableRawPointer?, UnsafePointer<EGLint>?
+    ) -> EGLDisplay?
+
+  /// Mesa's surfaceless platform: contexts with no window, which is all vrend and the screen need.
+  /// Asked of eglGetProcAddress: epoxy looks an EGL 1.5 function up only once a display has told
+  /// it the version, and this is how the display is got.
+  private static let display: EGLDisplay? = {
+    guard let address = epoxy_eglGetProcAddress("eglGetPlatformDisplayEXT") else { return nil }
+    let getDisplay = unsafeBitCast(address, to: GetPlatformDisplay.self)
+    guard let display = getDisplay(EGLenum(EGL_PLATFORM_SURFACELESS_MESA), nil, nil),
+      epoxy_eglInitialize(display, nil, nil) != 0,
+      epoxy_eglBindAPI(EGLenum(EGL_OPENGL_API)) != 0
+    else { return nil }
+    return display
   }()
-  /// The first context vrend asks for; every later one, and the blit's, shares objects with it.
-  private var shareContext: CGLContextObj?
-  /// The context vrend last made current. CGL's current context is per thread and a serial queue
-  /// runs on whichever thread it gets, so every block here puts it back before touching GL.
-  private var currentContext: CGLContextObj?
+
+  private static func createContext(
+    major: Int32, minor: Int32, compatibility: Bool, share: EGLContext?
+  ) -> EGLContext? {
+    guard let display else { return nil }
+    let profile =
+      compatibility
+      ? EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT : EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT
+    let attributes: [EGLint] = [
+      EGLint(EGL_CONTEXT_MAJOR_VERSION), major, EGLint(EGL_CONTEXT_MINOR_VERSION), minor,
+      EGLint(EGL_CONTEXT_OPENGL_PROFILE_MASK), EGLint(profile), EGLint(EGL_NONE),
+    ]
+    // The API a context is made for is per thread, and OpenGL ES on a thread that never said, which
+    // a serial queue's next block may well run on; a GLES context cannot share with a GL one.
+    _ = epoxy_eglBindAPI(EGLenum(EGL_OPENGL_API))
+    let context = epoxy_eglCreateContext(display, nil, share, attributes)
+    if context == nil {
+      VirglLink.note(
+        "renderer: eglCreateContext \(major).\(minor)\(compatibility ? " compat" : "")"
+          + "\(share != nil ? " shared" : "") failed: 0x\(String(epoxy_eglGetError(), radix: 16))")
+    }
+    return context
+  }
+
+  /// The first live context vrend asked for — context 0's, once the version probe is gone; every
+  /// later one, and the screen's, shares objects with it.
+  private var shareContext: EGLContext?
+  /// The context vrend last made current. EGL's current context is per thread and a serial queue
+  /// runs on whichever thread it gets, so every block here puts it back before touching GL — and
+  /// lets go of it when done (`releaseCurrent`): unlike CGL, EGL refuses to make a context current
+  /// on one thread while another still holds it, and every later block would run with none.
+  private var currentContext: EGLContext?
   private func makeCurrent() {
-    if CGLGetCurrentContext() != currentContext { CGLSetCurrentContext(currentContext) }
+    if epoxy_eglGetCurrentContext() != currentContext {
+      _ = epoxy_eglMakeCurrent(Self.display, nil, nil, currentContext)
+    }
+  }
+  /// The end of every block that touched GL. `currentContext` stays what vrend last asked for.
+  private func releaseCurrent() {
+    if epoxy_eglGetCurrentContext() != nil {
+      _ = epoxy_eglMakeCurrent(Self.display, nil, nil, nil)
+    }
   }
 
   private static var callbacks: virgl_renderer_callbacks = {
@@ -186,38 +250,38 @@ final class VirglRenderer {
       Unmanaged<VirglRenderer>.fromOpaque(cookie).takeUnretainedValue().signalled(UInt64(fence))
     }
     callbacks.create_gl_context = { cookie, _, parameters in
-      guard let cookie, let p = parameters?.pointee, let format = VirglRenderer.pixelFormat else {
-        return nil
-      }
-      // CGL offers 4.1 core and nothing above it, and no compatibility profile past 2.1.
-      if p.compat_ctx != 0 || p.major_ver > 4 || (p.major_ver == 4 && p.minor_ver > 1) {
-        return nil
-      }
+      guard let cookie, let p = parameters?.pointee else { return nil }
       let renderer = Unmanaged<VirglRenderer>.fromOpaque(cookie).takeUnretainedValue()
-      var context: CGLContextObj?
       guard
-        CGLCreateContext(format, p.shared ? renderer.shareContext : nil, &context) == kCGLNoError,
-        let context
+        let context = VirglRenderer.createContext(
+          major: p.major_ver, minor: p.minor_ver, compatibility: p.compat_ctx != 0,
+          share: p.shared ? renderer.shareContext : nil)
       else { return nil }
       if renderer.shareContext == nil { renderer.shareContext = context }
-      return UnsafeMutableRawPointer(context)
+      return context
     }
     callbacks.destroy_gl_context = { cookie, context in
       guard let cookie, let context else { return }
       let renderer = Unmanaged<VirglRenderer>.fromOpaque(cookie).takeUnretainedValue()
-      let cgl = context.assumingMemoryBound(to: _CGLContextObject.self)
-      if renderer.currentContext == cgl {
-        CGLSetCurrentContext(nil)
+      if renderer.currentContext == context {
+        _ = epoxy_eglMakeCurrent(VirglRenderer.display, nil, nil, nil)
         renderer.currentContext = nil
       }
-      CGLDestroyContext(cgl)
+      // vrend's first context only probes the version and is destroyed before context 0 is made;
+      // EGL, unlike CGL, refuses a destroyed context as a share, so the next one takes its place.
+      if renderer.shareContext == context { renderer.shareContext = nil }
+      _ = epoxy_eglDestroyContext(VirglRenderer.display, context)
     }
     callbacks.make_current = { cookie, _, context in
       guard let cookie else { return -1 }
       let renderer = Unmanaged<VirglRenderer>.fromOpaque(cookie).takeUnretainedValue()
-      let cgl = context?.assumingMemoryBound(to: _CGLContextObject.self)
-      renderer.currentContext = cgl
-      return CGLSetCurrentContext(cgl) == kCGLNoError ? 0 : -1
+      renderer.currentContext = context
+      guard epoxy_eglMakeCurrent(VirglRenderer.display, nil, nil, context) != 0 else {
+        VirglLink.note(
+          "renderer: eglMakeCurrent failed: 0x\(String(epoxy_eglGetError(), radix: 16))")
+        return -1
+      }
+      return 0
     }
     return callbacks
   }()
@@ -241,6 +305,7 @@ final class VirglRenderer {
       guard let self else { return }
       self.pollScheduled = false
       self.poll()
+      self.releaseCurrent()
     }
   }
 
@@ -470,16 +535,29 @@ final class VirglRenderer {
   /// Two IOSurfaces taken in turn, so the one being shown is never the one being drawn into, and so
   /// handing over the other is what tells the layer there is a new frame.
   private var surfaces: [IOSurfaceRef] = []
-  private var surfaceTextures: [GLuint] = []
+  /// Each IOSurface's own pages, pinned as a GL buffer (GL_AMD_pinned_memory, which Zink builds on
+  /// KosmicKrisp's host-pointer import): the scanout is read back into them by the GPU, with no
+  /// copy on this side. Nothing more direct exists — KosmicKrisp shares memory with the outside as
+  /// a Metal heap or a host pointer only, and an IOSurface's texture cannot live in a heap.
+  private var packBuffers: [GLuint] = []
   private var surfaceSize = (width: 0, height: 0)
   private var nextSurface = 0
-  /// A context of the blit's own, in vrend's share group: framebuffers are per context, so vrend's
-  /// are left alone.
-  private var blitContext: CGLContextObj?
+  /// A context of the screen's own, in vrend's share group: framebuffers are per context, so
+  /// vrend's are left alone.
+  private var screenContext: EGLContext?
   private var readFramebuffer: GLuint = 0
-  private var drawFramebuffer: GLuint = 0
+  /// Read-backs the GPU has not finished, oldest first: a frame is handed over only once its
+  /// pixels are in the IOSurface, which a fence says, polled rather than waited on so the guest's
+  /// commands keep flowing meanwhile.
+  private var framesInFlight: [(sync: GLsync, surface: Int)] = []
+  private var framePollScheduled = false
 
+  /// In the screen context.
   private func makeSurfaces(width: Int, height: Int) {
+    // What is in flight names the surfaces about to be replaced.
+    while !framesInFlight.isEmpty { finishFrames(upTo: framesInFlight.count) }
+    if !packBuffers.isEmpty { epoxy_glDeleteBuffers(GLsizei(packBuffers.count), packBuffers) }
+    packBuffers = []
     surfaces = (0..<2).compactMap { _ in
       IOSurfaceCreate(
         [
@@ -487,65 +565,97 @@ final class VirglRenderer {
           kIOSurfacePixelFormat: 0x4247_5241,  // 'BGRA'
         ] as CFDictionary)
     }
-    guard surfaces.count == 2, let blitContext else { return }
-    if !surfaceTextures.isEmpty {
-      glDeleteTextures(GLsizei(surfaceTextures.count), surfaceTextures)
+    guard surfaces.count == 2 else { return }
+    packBuffers = [0, 0]
+    epoxy_glGenBuffers(2, &packBuffers)
+    let target = GLenum(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD)
+    for (surface, buffer) in zip(surfaces, packBuffers) {
+      // An IOSurface is page aligned and a whole number of pages, which the import requires.
+      epoxy_glBindBuffer(target, buffer)
+      epoxy_glBufferData(
+        target, GLsizeiptr(IOSurfaceGetAllocSize(surface)), IOSurfaceGetBaseAddress(surface),
+        GLenum(GL_STREAM_READ))
     }
-    surfaceTextures = [0, 0]
-    glGenTextures(2, &surfaceTextures)
-    for (surface, texture) in zip(surfaces, surfaceTextures) {
-      glBindTexture(GLenum(GL_TEXTURE_RECTANGLE), texture)
-      CGLTexImageIOSurface2D(
-        blitContext, GLenum(GL_TEXTURE_RECTANGLE), GLenum(GL_RGBA), GLsizei(width),
-        GLsizei(height), GLenum(GL_BGRA), GLenum(GL_UNSIGNED_INT_8_8_8_8_REV), surface, 0)
-    }
+    epoxy_glBindBuffer(target, 0)
     surfaceSize = (width, height)
     VirglLink.send(
       surfaces.map { IOSurfaceCreateMachPort($0) }, id: VirglLink.surfacesID, to: service,
       disposition: UInt32(MACH_MSG_TYPE_MOVE_SEND))
   }
 
-  /// Copy the scanout into the next IOSurface and say which; the texture is vrend's, in its share
-  /// group, and keeps its top row first, as an IOSurface does.
+  /// Read the scanout back into the next IOSurface, and say which once the GPU is done; the texture
+  /// is vrend's, in its share group, and keeps its top row first, as an IOSurface does.
   private func present(_ resource: UInt32) {
-    guard resource != 0, resource == scanoutResource, let share = shareContext,
-      let format = Self.pixelFormat
-    else { return }
+    guard resource != 0, resource == scanoutResource, let share = shareContext else { return }
     var info = virgl_renderer_resource_info()
     guard virgl_renderer_resource_get_info(Int32(resource), &info) == 0, info.width > 0 else {
       return
     }
-    glFlush()  // vrend's commands for the frame, before another context reads the texture
-    if blitContext == nil {
-      CGLCreateContext(format, share, &blitContext)
-      CGLSetCurrentContext(blitContext)
-      glGenFramebuffers(1, &readFramebuffer)
-      glGenFramebuffers(1, &drawFramebuffer)
+    epoxy_glFlush()  // vrend's commands for the frame, before another context reads the texture
+    if screenContext == nil {
+      screenContext = Self.createContext(major: 4, minor: 3, compatibility: false, share: share)
+      guard let screenContext, epoxy_eglMakeCurrent(Self.display, nil, nil, screenContext) != 0
+      else {
+        makeCurrent()
+        return
+      }
+      epoxy_glGenFramebuffers(1, &readFramebuffer)
     }
-    CGLSetCurrentContext(blitContext)
+    _ = epoxy_eglMakeCurrent(Self.display, nil, nil, screenContext)
+    defer { makeCurrent() }
     if surfaceSize != (Int(info.width), Int(info.height)) {
       makeSurfaces(width: Int(info.width), height: Int(info.height))
     }
-    guard surfaces.count == 2 else {
-      makeCurrent()
-      return
-    }
-    let w = GLint(info.width)
-    let h = GLint(info.height)
-    glBindFramebuffer(GLenum(GL_READ_FRAMEBUFFER), readFramebuffer)
-    glFramebufferTexture2D(
+    guard surfaces.count == 2 else { return }
+    // Two surfaces: the GPU must be done with the one about to be written again.
+    while framesInFlight.count >= 2 { finishFrames(upTo: 1) }
+    let surface = surfaces[nextSurface]
+    epoxy_glBindFramebuffer(GLenum(GL_READ_FRAMEBUFFER), readFramebuffer)
+    epoxy_glFramebufferTexture2D(
       GLenum(GL_READ_FRAMEBUFFER), GLenum(GL_COLOR_ATTACHMENT0), GLenum(GL_TEXTURE_2D),
       GLuint(info.tex_id), 0)
-    glBindFramebuffer(GLenum(GL_DRAW_FRAMEBUFFER), drawFramebuffer)
-    glFramebufferTexture2D(
-      GLenum(GL_DRAW_FRAMEBUFFER), GLenum(GL_COLOR_ATTACHMENT0), GLenum(GL_TEXTURE_RECTANGLE),
-      surfaceTextures[nextSurface], 0)
-    glBlitFramebuffer(
-      0, 0, w, h, 0, 0, w, h, GLbitfield(GL_COLOR_BUFFER_BIT), GLenum(GL_NEAREST))
-    glFlush()
-    send(.frame, value: IOSurfaceGetID(surfaces[nextSurface]))
+    epoxy_glBindBuffer(GLenum(GL_PIXEL_PACK_BUFFER), packBuffers[nextSurface])
+    epoxy_glPixelStorei(GLenum(GL_PACK_ROW_LENGTH), GLint(IOSurfaceGetBytesPerRow(surface) / 4))
+    epoxy_glReadPixels(
+      0, 0, GLsizei(info.width), GLsizei(info.height), GLenum(GL_BGRA),
+      GLenum(GL_UNSIGNED_INT_8_8_8_8_REV), nil)
+    epoxy_glBindBuffer(GLenum(GL_PIXEL_PACK_BUFFER), 0)
+    if let sync = epoxy_glFenceSync(GLenum(GL_SYNC_GPU_COMMANDS_COMPLETE), 0) {
+      framesInFlight.append((sync, nextSurface))
+    }
+    epoxy_glFlush()
     nextSurface ^= 1
-    makeCurrent()
+    scheduleFramePoll()
+  }
+
+  /// Hand over every read-back the GPU has finished; in the screen context.
+  private func finishFrames(upTo wait: Int = 0) {
+    var waited = 0
+    while let first = framesInFlight.first {
+      let timeout: GLuint64 = waited < wait ? 1_000_000_000 : 0
+      let result = epoxy_glClientWaitSync(
+        first.sync, GLbitfield(GL_SYNC_FLUSH_COMMANDS_BIT), timeout)
+      if result == GLenum(GL_TIMEOUT_EXPIRED) { return }
+      waited += 1
+      epoxy_glDeleteSync(first.sync)
+      framesInFlight.removeFirst()
+      if result != GLenum(GL_WAIT_FAILED) {
+        send(.frame, value: IOSurfaceGetID(surfaces[first.surface]))
+      }
+    }
+  }
+
+  private func scheduleFramePoll() {
+    guard !framesInFlight.isEmpty, !framePollScheduled else { return }
+    framePollScheduled = true
+    queue.asyncAfter(deadline: .now() + .milliseconds(1)) { [weak self] in
+      guard let self, let screenContext = self.screenContext else { return }
+      self.framePollScheduled = false
+      _ = epoxy_eglMakeCurrent(Self.display, nil, nil, screenContext)
+      self.finishFrames()
+      self.releaseCurrent()
+      self.scheduleFramePoll()
+    }
   }
 
   /// The cursor is a small resource of its own: width, height and BGRA pixels, read back.

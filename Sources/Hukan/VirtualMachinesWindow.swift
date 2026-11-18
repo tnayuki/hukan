@@ -1521,7 +1521,7 @@ private final class NewMacTemplateSheet: NSWindowController {
     rosettaCheckbox.toolTip =
       "Also lets apt install amd64 packages."
     gpuCheckbox.toolTip =
-      "OpenGL 4.1. Shut down instead of suspended, and only one runs at a time."
+      "OpenGL 4.3. Shut down instead of suspended."
     note.textColor = .secondaryLabelColor
     note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
