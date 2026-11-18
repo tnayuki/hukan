@@ -59,8 +59,18 @@ static void *below_2gb(size_t length, int prot, int flags, int fd, off_t offset)
 }
 
 void *mmap(void *address, size_t length, int prot, int flags, int fd, off_t offset) {
-  if ((flags & MAP_32BIT) && !(flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) && address == NULL)
+  if ((flags & MAP_32BIT) && !(flags & (MAP_FIXED | MAP_FIXED_NOREPLACE))) {
+    // An address is only a hint, and Mono gives one — the end of its last code region — for each
+    // region after the first. Passed on, the kernel places it anywhere when the hint is taken, and
+    // Mono aborts on a jump it cannot encode; so the hint is tried below 2GB, then the search.
+    if (address != NULL && (uintptr_t)address + length <= 0x80000000) {
+      int fixed = (flags & ~MAP_32BIT) | MAP_FIXED_NOREPLACE;
+      void *mapped = kernel_mmap(address, length, prot, fixed, fd, offset);
+      if (mapped == address) return mapped;
+      if (mapped != MAP_FAILED) syscall(SYS_munmap, mapped, length);
+    }
     return below_2gb(length, prot, flags, fd, offset);
+  }
   return kernel_mmap(address, length, prot, flags, fd, offset);
 }
 

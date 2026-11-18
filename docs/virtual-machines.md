@@ -48,7 +48,9 @@ and the reasoning behind it; read the file before changing the area it covers.
   **Rosetta ignores `MAP_32BIT`**, the flag x86_64 Linux answers with a mapping below 2GB, and
   Mono's JIT — so Unity's editor — aborts on the address it gets instead. So a template with
   Rosetta preloads a library of hukan's into every x86_64 process that places those mappings
-  below 2GB itself and passes every other one to the kernel untouched: every process rather than
+  below 2GB itself — an address given with one too, since Mono hints at the end of its last code
+  region for each one after the first, and a hint the kernel takes can land anywhere — and passes
+  every other mapping to the kernel untouched: every process rather than
   a wrapper around Unity, because Unity is started by its Hub, by a desktop file and by scripts,
   and a fix that holds for one road and not the others is the failure moved somewhere harder to
   see. It is named through the loader's `$LIB`, so an arm64 process finds an empty library under
