@@ -785,8 +785,13 @@ final class LinuxTemplateBuilder {
     printf 'Acquire::Retries "5";\n' > "$T/etc/apt/apt.conf.d/80hukan-retries"
     rm -f "$T"/var/lib/apt/lists/*cdrom* "$T"/var/lib/apt/lists/*hukan*
     # The installer is deliberately offline. Normal DHCP starts on the installed first boot, by
-    # whichever renderer the system has: a server has networkd and no NetworkManager.
+    # whichever renderer the system has: a server has networkd and no NetworkManager. The offline
+    # stanza is also handed to cloud-init, which wrote it back on that first boot as
+    # 50-cloud-init.yaml — a second en* match with no DHCP, and NetworkManager picked either one —
+    # so cloud-init is kept off the network, and the file is gone again when the template is done.
     rm -f "$T"/etc/netplan/*.yaml
+    mkdir -p "$T/etc/cloud/cloud.cfg.d"
+    printf 'network: {config: disabled}\n' > "$T/etc/cloud/cloud.cfg.d/99-hukan-network.cfg"
     R=NetworkManager
     if [ "$4" = server ]; then R=networkd; fi
     cat > "$T/etc/netplan/50-hukan.yaml" <<EOF
@@ -888,6 +893,7 @@ final class LinuxTemplateBuilder {
     # and each copy makes its own machine id on its first boot.
     touch /etc/cloud/cloud-init.disabled
     cloud-init clean --logs --machine-id
+    rm -f /etc/netplan/50-cloud-init.yaml
     apt-get clean
     shutdown -h now
     EOF
