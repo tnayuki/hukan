@@ -914,8 +914,8 @@ final class MachinePaneViewController: NSViewController {
   }
 
   /// Starts the keeper below in place of the one already running. The interface's own
-  /// `scaling-factor` is put back: X11's mutter never reads it for the screen, while the settings
-  /// daemon hands it to every GTK app as theirs, so a 2 left there would double them at 1×.
+  /// `scaling-factor` is put back: mutter never reads it for the screen, while the settings daemon
+  /// hands it to every X11 app on Xwayland as theirs, so a 2 left there would double them at 1×.
   static let linuxScaleLauncher = #"""
     gsettings reset org.gnome.desktop.interface scaling-factor
     pkill -f '^python3 -c # hukan-scale'
@@ -1043,7 +1043,7 @@ final class MachinePaneViewController: NSViewController {
     if kind == .linux {
       // GNOME owns the input sources and has only a key to step through them, so the key is sent
       // when the engine is not the one asked for — sent regardless, it would step away from it.
-      // Typed on the agent's own keyboard, which reaches a session on Wayland as well as X11.
+      // Typed on the agent's own keyboard, which reaches the session whatever has the keyboard.
       let wanted = japanese ? "mozc-jp" : "xkb:jp::jpn"
       GuestAgent.exec(["ibus", "engine"], on: vm) { [weak self] result in
         guard case .success(let run) = result,

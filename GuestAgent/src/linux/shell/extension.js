@@ -1,9 +1,7 @@
-// The screen of a hukan machine on Wayland, for the guest agent's user half (shell.zig). A
-// Wayland compositor lets no client read another's pixels, list its windows or type into it, so
-// what the agent does over the X11 protocol on X11 is done here, inside GNOME Shell, and asked for
-// over a unix socket in the user's runtime directory, which only the user can open: one JSON
-// request a line, one JSON answer a line, then the connection closes. On X11 this does nothing —
-// the agent speaks X11 there itself.
+// The screen of a hukan machine, for the guest agent's user half (shell.zig). A Wayland compositor
+// lets no client read another's pixels, list its windows or type into it, so the agent asks GNOME
+// Shell itself, over a unix socket in the user's runtime directory, which only the user can open:
+// one JSON request a line, one JSON answer a line, then the connection closes.
 //
 //   {"op":"screenshot","window":?}                  -> {"ok":true,"data":"<base64 PNG>"}
 //   {"op":"windows"}                                -> {"ok":true,"text":"<id\tapp\ttitle\tx,y wxh a line>"}
@@ -11,7 +9,7 @@
 //   {"op":"keys","keysyms":[...]}                   -> {"ok":true}
 //   {"op":"type","text":...}                        -> {"ok":true}
 //
-// The clipboard is not here: spice-vdagent carries it on Wayland as on X11.
+// The clipboard is not here: spice-vdagent carries it.
 
 import Clutter from 'gi://Clutter';
 import GdkPixbuf from 'gi://GdkPixbuf';
@@ -42,9 +40,6 @@ const rounded = value => Math.floor(value + 0.5);
 
 export default class HukanShell extends Extension {
     enable() {
-        // GNOME 49 dropped X11, and the question with it: no function is Wayland.
-        if (Meta.is_wayland_compositor && !Meta.is_wayland_compositor())
-            return;
         const seat = Clutter.get_default_backend().get_default_seat();
         this._pointer = seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
         this._keyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
@@ -117,7 +112,7 @@ export default class HukanShell extends Extension {
         }
     }
 
-    /// Front to back, as the X11 half lists them.
+    /// Front to back.
     _windows() {
         const listed = global.display.sort_windows_by_stacking(
             global.display.get_tab_list(Meta.TabList.NORMAL_ALL, null)).reverse();
@@ -129,8 +124,8 @@ export default class HukanShell extends Extension {
         return {ok: true, text: lines.join('\n')};
     }
 
-    /// Read off the screen where the window stands, so what covers it is in the picture, as on
-    /// X11. The part off the screen is black and the picture stays the window's size, so a
+    /// Read off the screen where the window stands, so what covers it is in the picture. The part
+    /// off the screen is black and the picture stays the window's size, so a
     /// position in it is still a position in the window.
     async _screenshot(r) {
         const frame = this._frame(r.window);

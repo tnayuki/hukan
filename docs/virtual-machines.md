@@ -122,28 +122,28 @@ and the reasoning behind it; read the file before changing the area it covers.
   keys typed against a timeout. **Its disks are `.cached`, never `.automatic`**: on the automatic
   mode a Linux guest read back pages that were not what it wrote — journald failing, systemd
   killed by SIGILL, the installer aborting — and the same install cached went through clean.
-  **GNOME, on X11 where the release has it**, because that is what Unity's editor is supported on;
-  26.04 has no X11 session. **The agent is Zig**, a static binary with no libc, cross-compiled
-  here, that drives the screen over the X11 protocol itself, so the guest needs nothing installed
-  for it; the protocol is shared with the macOS and Windows agents, one program for all three — not
-  Swift, which cannot build the Windows one from this Mac (see docs/build.md). **On Wayland it
-  asks a GNOME Shell extension of hukan's instead**, since a Wayland compositor lets no outside
-  client read the screen, list windows or type, and the extension runs inside it: the screen
-  through `Shell.Screenshot`, windows from mutter, keys and the pointer as Clutter virtual devices,
-  over a socket in the user's runtime directory. Not a portal, which asks the person on the screen
-  before each picture, and not uinput alone, which can press keys but not see. It travels inside
-  the agent, so it needs no template: the root half writes it under
+  **GNOME on Wayland, for every release**: 26.04 has no X11 session, and one road for the agent's
+  screen tools beats two — X11 was kept on 24.04 first because Unity's editor was supported there
+  and the agent spoke X11, and Unity 6.x supports 24.04's Wayland, its editor an X11 app on
+  Xwayland. **The agent is Zig**, a static binary with no libc, cross-compiled here; the
+  protocol is shared with the macOS and Windows agents, one program for all three — not Swift,
+  which cannot build the Windows one from this Mac (see docs/build.md). **Its screen tools go
+  through a GNOME Shell extension of hukan's**, since a Wayland compositor lets no outside client
+  read the screen, list windows or type, and the extension runs inside it: the screen through `Shell.Screenshot`, windows from mutter, keys and the pointer as
+  Clutter virtual devices, over a socket in the user's runtime directory. Not a portal, which asks
+  the person on the screen before each picture, and not uinput alone, which can press keys but not
+  see. It travels inside the agent, so it needs no template: the root half writes it under
   `/usr/share/gnome-shell/extensions` when it differs, and the user half adds it to the account's
   enabled extensions; GNOME reads its extensions when it starts, so one written under a running
   desktop works from the next sign-in. A key the keymap lacks is dropped on Wayland, where X11
   took a spare keycode for it, so text past ASCII is committed through IBus's panel, which GNOME
   Shell is: the daemon hands it to whatever input context has focus — an X11 app's own on
-  Xwayland, the shell's for a Wayland client — and an app with no input method gets ASCII only.
-  Keys still carry ASCII, Return and Tab, since a key is what focuses the shell's search and what
-  activates; a run of other characters is one commit, as an input method would send it (character
-  by character, close together, a Wayland client kept only the last), and keys and commits each
-  wait 50–80ms for the other, since they reach a client by different roads. The first text typed
-  after the desktop starts can still arrive out of order. The clipboard stays spice-vdagent's,
+  Xwayland, the shell's for a Wayland client — and an app with no input
+  method gets ASCII only. Keys still carry ASCII, Return and Tab, since a key is what focuses the
+  shell's search and what activates; a run of other characters is one commit, as an input method
+  would send it (character by character, close together, a Wayland client kept only the last),
+  and keys and commits each wait 50–80ms for the other, since they reach a client by different
+  roads. The first text typed after the desktop starts can still arrive out of order. The clipboard stays spice-vdagent's,
   which carries it on Wayland as well — measured both ways on 24.04's GNOME 46. Checked end to
   end, through the agent, on 24.04's GNOME 46 and 26.04's GNOME 50. **The
   framework gives a Linux guest a screen and nothing to render with**, so without the GPU below
@@ -193,9 +193,8 @@ and the reasoning behind it; read the file before changing the area it covers.
   CPU this way (macOS's own OpenGL, by contrast, had made a plain readback cost 59% of a core).
   **VZ's own screen stays, for input only**:
   `VZVirtualMachineView` hands the keyboard and pointer to a guest only through a screen of VZ's,
-  so it is kept, left alone by the guest — Xorg is pinned to the GPU by PCI address at each boot,
-  by address because a path Xorg opens itself bypasses logind and gets no DRM master — and the
-  GPU follows its size, which keeps fit, fixed and agent-set resolutions working unchanged.
+  so it is kept, left alone by the guest — mutter is told by udev tags at each boot to take the
+  GPU's card as its primary and ignore VZ's — and the GPU follows its size, which keeps fit, fixed and agent-set resolutions working unchanged.
   Socket writes are queued and nonblocking on both ends: a full socket must leave the queue free
   to read replies and handle a reset or stop. Guest fence ids stay opaque 64-bit values in replies;
   vrend gets a separate 32-bit sequence, and only one fence poll is scheduled at a time. A reset

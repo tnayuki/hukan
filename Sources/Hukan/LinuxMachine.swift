@@ -680,7 +680,7 @@ final class LinuxTemplateBuilder {
   /// What the install's late commands run, with the installed system at `$1`, the account's name in
   /// `$2`, `rosetta` or `no-rosetta` in `$3` and `desktop` or `server` in `$4`: the agent and its
   /// two services, the shares, Rosetta unless told not to, amd64 packages for apt to fetch, and —
-  /// on a desktop — one that signs in by itself on X11 and never locks. Then the finishing script
+  /// on a desktop — one that signs in by itself and never locks. Then the finishing script
   /// hukan runs at the end of the first boot.
   static let setupScript = #"""
     #!/bin/sh
@@ -810,26 +810,18 @@ final class LinuxTemplateBuilder {
     # Everything from here to the finishing script is the desktop's: a server has no sign-in, no
     # screen to put on a GPU, and nothing to lock.
     if [ "$4" != server ]; then
-    # Signed in by itself, on X11 where the release still has it: what Unity's editor is supported
-    # on. The guest's screen tools speak X11 there, and through the agent's GNOME Shell extension on
-    # Wayland.
+    # Signed in by itself, on Wayland, which is all 26.04 has and what 24.04 starts by default: the
+    # guest's screen tools go through the agent's GNOME Shell extension either way.
     printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=%s\n' "$U" > "$T/etc/gdm3/custom.conf"
-    if ls "$T"/usr/share/xsessions/*.desktop >/dev/null 2>&1; then
-      echo 'WaylandEnable=false' >> "$T/etc/gdm3/custom.conf"
-    fi
     # A machine with a GPU has two virtio screens: VZ's own, which carries the keyboard and the
     # pointer and which the guest leaves alone, and the GPU's, which draws. The GPU's is found at
     # each boot from the VIRGL bit in its virtio features (bit 0, the file's first character), so
-    # whatever slot it lands in is found, and a machine without one writes nothing. Two desktops
-    # are told: Xorg, pinned to it by PCI address — not by device path, since Xorg runs as the user
-    # and gets the device from logind, which a path it opens itself would bypass, leaving it no DRM
-    # master — and mutter on Wayland, the only session 26.04 has, by udev tags: the GPU's card its
-    # primary, VZ's ignored.
+    # whatever slot it lands in is found, and a machine without one writes nothing. mutter is told
+    # by udev tags: the GPU's card its primary, VZ's ignored.
     cat > "$T/usr/local/libexec/hukan-pin-gpu" <<'EOF'
     #!/bin/sh
-    conf=/etc/X11/xorg.conf.d/10-hukan-gpu.conf
     rules=/run/udev/rules.d/61-hukan-gpu.rules
-    rm -f "$conf" "$rules"
+    rm -f "$rules"
     gpu=
     others=
     for card in /sys/class/drm/card*; do
@@ -841,10 +833,7 @@ final class LinuxTemplateBuilder {
       done
     done
     [ -n "$gpu" ] || exit 0
-    dom=$((0x$(echo "$gpu" | cut -d: -f1))); bus=$((0x$(echo "$gpu" | cut -d: -f2)))
-    slot=$((0x$(echo "$gpu" | cut -d: -f3 | cut -d. -f1))); fn=$(echo "$gpu" | cut -d. -f2)
-    mkdir -p /etc/X11/xorg.conf.d /run/udev/rules.d
-    printf 'Section "ServerFlags"\n  Option "AutoAddGPU" "false"\nEndSection\nSection "Device"\n  Identifier "hukan-gpu"\n  Driver "modesetting"\n  BusID "PCI:%d@%d:%d:%d"\nEndSection\n' "$bus" "$dom" "$slot" "$fn" > "$conf"
+    mkdir -p /run/udev/rules.d
     echo "SUBSYSTEM==\"drm\", KERNEL==\"card*\", KERNELS==\"$gpu\", TAG+=\"mutter-device-preferred-primary\"" > "$rules"
     for other in $others; do
       echo "SUBSYSTEM==\"drm\", KERNEL==\"card*\", KERNELS==\"$other\", TAG+=\"mutter-device-ignore\"" >> "$rules"

@@ -15,7 +15,7 @@ import Virtualization
 /// renderer once, as a Mach memory entry, so its transfers read and write the guest's pages
 /// directly; nothing here touches GL.
 ///
-/// The device also carries the guest's screen. Xorg is pinned to it (the template's job), and the
+/// The device also carries the guest's screen. mutter is pointed at it (the template's job), and the
 /// renderer draws what it scans out into IOSurfaces the tab shows (`VirglScreenView`). VZ's own
 /// virtio screen stays configured beside it, unused by the guest, for the keyboard and pointer:
 /// `VZVirtualMachineView` hands them to the guest only for a machine with a screen of VZ's, and maps

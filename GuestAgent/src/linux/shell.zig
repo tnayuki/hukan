@@ -1,7 +1,17 @@
-//! The screen of a session on Wayland, which no client outside the compositor may read or drive:
-//! what screen.zig does over X11 is asked of hukan's GNOME Shell extension (shell/extension.js)
-//! instead, over the socket it opens in the user's runtime directory. The extension travels inside
-//! this binary, so a new agent brings a new one: the root half puts it where GNOME looks for the
+//! The screen of a Linux guest, for the user half: what the host's screenshot, click, type, key and
+//! window-list tools ask for, asked of hukan's GNOME Shell extension (shell/extension.js) over the
+//! socket it opens in the user's runtime directory — on Wayland no client outside the compositor
+//! may read or drive the screen, so the extension does it from inside.
+//!
+//!   {"op":"screenshot","window":?}                 -> {"ok":true,"data":"<base64 PNG>"}
+//!   {"op":"windows"}                               -> {"ok":true,"text":"<id\tapp\ttitle\tx,y wxh a line>"}
+//!   {"op":"click","x":..,"y":..,"count":?,"right":?,"window":?}  -> {"ok":true}
+//!   {"op":"type","text":...}                       -> {"ok":true}
+//!   {"op":"key","key":"return","modifiers":["command"]?}  -> {"ok":true}
+//!
+//! Positions are in the pixels of a screenshot — of that window's own, given a window.
+//!
+//! The extension travels inside this binary, so a new agent brings a new one: the root half puts it where GNOME looks for the
 //! system's extensions (`install`), and the user half switches it on for the account (`enable`).
 //! GNOME reads its extensions when it starts, so one put in place under a running desktop is there
 //! from the next sign-in.
@@ -20,13 +30,20 @@ const files = [_]struct { name: []const u8, data: []const u8 }{
     .{ .name = "extension.js", .data = @embedFile("shell/extension.js") },
 };
 
-/// The socket the extension listens on: there only while it runs, and it runs only on Wayland.
+/// The socket the extension listens on: there only while it runs.
 fn socketPath(buffer: []u8) []const u8 {
     return std.fmt.bufPrint(buffer, "/run/user/{d}/hukan-shell.sock", .{linux.getuid()}) catch "";
 }
 
-/// Whether the session's screen is the extension's to answer for rather than X11's.
-pub fn present() bool {
+pub fn handles(op: []const u8) bool {
+    for ([_][]const u8{ "screenshot", "windows", "click", "type", "key" }) |name| {
+        if (std.mem.eql(u8, op, name)) return true;
+    }
+    return false;
+}
+
+/// Whether the extension is running in the signed-in desktop.
+fn present() bool {
     var buffer: [64]u8 = undefined;
     const path = socketPath(&buffer);
     var z: [65]u8 = @splat(0);
@@ -86,8 +103,10 @@ fn enableNow(served: *const agent.Agent) void {
 }
 
 /// Answers a screen request through the extension. A key is turned into keysyms here, by the
-/// names the X11 half reads, so both read a key's name the same way.
+/// names keys.zig reads.
 pub fn answer(r: *agent.Request, op: []const u8) agent.Answer {
+    if (!present())
+        return r.failure("no desktop answers here: nobody is signed in, or hukan's GNOME Shell extension starts with the next sign-in");
     var request = r.value;
     if (std.mem.eql(u8, op, "key")) {
         var buffer: [64]u8 = undefined;

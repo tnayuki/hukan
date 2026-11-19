@@ -484,7 +484,7 @@ A Linux template is Ubuntu, made from Canonical's desktop or server ISO for Appl
 `+` lists the supported LTS releases, each at its newest point release, downloads the one chosen
 and checks it against Ubuntu's own checksum. New Template… then runs Ubuntu's installer unattended
 — nothing to answer, about ten minutes — and sets up a GNOME desktop that signs in by itself
-(on X11 where the release still has it), the guest agent, and
+on Wayland, the guest agent, and
 Rosetta, so x86_64 programs run — Unity's editor among them, which Rosetta alone cannot start —
 with amd64 packages installable by apt beside the arm64 ones, unless the sheet's Rosetta checkbox
 is turned off, which leaves all of it out.
@@ -498,10 +498,10 @@ an ISO without its packages — one kept by an older hukan — has to be removed
 again. It runs inside hukan like a
 macOS machine and is saved and resumed the same way, with no limit on how many run at once; the
 worktree is `/worktree`, and moves with the session. The agent's commands run in a login bash, and
-its screenshots, clicks, typing and keys go through X11 — or, on Wayland, through a GNOME Shell
-extension the agent puts in place itself, which a running desktop picks up from its next sign-in;
-there is no accessibility tree to read. On Wayland, text with no key on the keyboard — Japanese,
-say — goes in through IBus, so it reaches any window with an input method, on Xwayland too. A
+its screenshots, clicks, typing and keys go through a GNOME Shell extension the agent puts in
+place itself, which a running desktop picks up from its next sign-in; there is no accessibility
+tree to read. Text with no key on the keyboard — Japanese, say — goes in through IBus, so it
+reaches any window with an input method, on Xwayland too. A
 Linux guest that reboots stops, and Start brings it up again.
 
 The `+` lists each release's server ISO beside its desktop. A template made from it installs
