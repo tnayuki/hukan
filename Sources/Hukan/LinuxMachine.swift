@@ -810,8 +810,9 @@ final class LinuxTemplateBuilder {
     # Everything from here to the finishing script is the desktop's: a server has no sign-in, no
     # screen to put on a GPU, and nothing to lock.
     if [ "$4" != server ]; then
-    # Signed in by itself, on X11 where the release still has it: what the guest's screen tools
-    # speak, and what Unity's editor is supported on.
+    # Signed in by itself, on X11 where the release still has it: what Unity's editor is supported
+    # on. The guest's screen tools speak X11 there, and through the agent's GNOME Shell extension on
+    # Wayland.
     printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=%s\n' "$U" > "$T/etc/gdm3/custom.conf"
     if ls "$T"/usr/share/xsessions/*.desktop >/dev/null 2>&1; then
       echo 'WaylandEnable=false' >> "$T/etc/gdm3/custom.conf"

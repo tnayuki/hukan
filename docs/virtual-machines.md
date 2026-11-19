@@ -122,12 +122,30 @@ and the reasoning behind it; read the file before changing the area it covers.
   keys typed against a timeout. **Its disks are `.cached`, never `.automatic`**: on the automatic
   mode a Linux guest read back pages that were not what it wrote — journald failing, systemd
   killed by SIGILL, the installer aborting — and the same install cached went through clean.
-  **GNOME, on X11 where the release has it**, because that is what Unity's editor is supported on
-  and what the agent's screen tools speak; 26.04 has no X11 session and is offered knowing those
-  tools fail there. **The agent is Zig**, a static binary with no libc, cross-compiled here, that
-  drives the screen over the X11 protocol itself, so the guest needs nothing installed for it;
-  the protocol is shared with the macOS and Windows agents, one program for all three — not
-  Swift, which cannot build the Windows one from this Mac (see docs/build.md). **The
+  **GNOME, on X11 where the release has it**, because that is what Unity's editor is supported on;
+  26.04 has no X11 session. **The agent is Zig**, a static binary with no libc, cross-compiled
+  here, that drives the screen over the X11 protocol itself, so the guest needs nothing installed
+  for it; the protocol is shared with the macOS and Windows agents, one program for all three — not
+  Swift, which cannot build the Windows one from this Mac (see docs/build.md). **On Wayland it
+  asks a GNOME Shell extension of hukan's instead**, since a Wayland compositor lets no outside
+  client read the screen, list windows or type, and the extension runs inside it: the screen
+  through `Shell.Screenshot`, windows from mutter, keys and the pointer as Clutter virtual devices,
+  over a socket in the user's runtime directory. Not a portal, which asks the person on the screen
+  before each picture, and not uinput alone, which can press keys but not see. It travels inside
+  the agent, so it needs no template: the root half writes it under
+  `/usr/share/gnome-shell/extensions` when it differs, and the user half adds it to the account's
+  enabled extensions; GNOME reads its extensions when it starts, so one written under a running
+  desktop works from the next sign-in. A key the keymap lacks is dropped on Wayland, where X11
+  took a spare keycode for it, so text past ASCII is committed through IBus's panel, which GNOME
+  Shell is: the daemon hands it to whatever input context has focus — an X11 app's own on
+  Xwayland, the shell's for a Wayland client — and an app with no input method gets ASCII only.
+  Keys still carry ASCII, Return and Tab, since a key is what focuses the shell's search and what
+  activates; a run of other characters is one commit, as an input method would send it (character
+  by character, close together, a Wayland client kept only the last), and keys and commits each
+  wait 50–80ms for the other, since they reach a client by different roads. The first text typed
+  after the desktop starts can still arrive out of order. The clipboard stays spice-vdagent's,
+  which carries it on Wayland as well — measured both ways on 24.04's GNOME 46. Checked end to
+  end, through the agent, on 24.04's GNOME 46 and 26.04's GNOME 50. **The
   framework gives a Linux guest a screen and nothing to render with**, so without the GPU below
   drawing is llvmpipe on the CPU. The account takes this Mac's user id,
   so what either side writes in the shared worktree is the same user's.

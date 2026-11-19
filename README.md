@@ -498,7 +498,10 @@ an ISO without its packages — one kept by an older hukan — has to be removed
 again. It runs inside hukan like a
 macOS machine and is saved and resumed the same way, with no limit on how many run at once; the
 worktree is `/worktree`, and moves with the session. The agent's commands run in a login bash, and
-its screenshots, clicks, typing and keys go through X11; there is no accessibility tree to read. A
+its screenshots, clicks, typing and keys go through X11 — or, on Wayland, through a GNOME Shell
+extension the agent puts in place itself, which a running desktop picks up from its next sign-in;
+there is no accessibility tree to read. On Wayland, text with no key on the keyboard — Japanese,
+say — goes in through IBus, so it reaches any window with an input method, on Xwayland too. A
 Linux guest that reboots stops, and Start brings it up again.
 
 The `+` lists each release's server ISO beside its desktop. A template made from it installs

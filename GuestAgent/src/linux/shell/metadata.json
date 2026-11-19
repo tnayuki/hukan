@@ -1,0 +1,6 @@
+{
+  "uuid": "hukan-shell@hukan",
+  "name": "hukan",
+  "description": "The screen of a hukan machine on Wayland, for its guest agent.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"]
+}

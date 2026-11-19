@@ -1659,8 +1659,8 @@ final class WorktreeDeskViewController: NSViewController {
       completion(.error(absence))
       return
     }
-    // A Linux guest's agent takes every screenshot itself, over X11; a Windows one takes a
-    // window's, the whole screen being QEMU's to give.
+    // A Linux guest's agent takes every screenshot itself, over X11 or through its GNOME Shell
+    // extension on Wayland; a Windows one takes a window's, the whole screen being QEMU's to give.
     if call.name == "guest_screenshot",
       pane.kind == .linux || (pane.runsOnQEMU && call.arguments["window"] != nil)
     {

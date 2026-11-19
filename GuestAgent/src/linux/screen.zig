@@ -1,7 +1,7 @@
 //! The screen of a Linux guest, for the user half: what the host's screenshot, click, type, key and
 //! window-list tools ask for, answered over the X11 protocol itself — the core protocol for pictures
 //! and windows, XTEST for input — so the guest needs nothing installed for it. X11 only: a session
-//! on Wayland has no X server to ask, and says so.
+//! on Wayland is answered by shell.zig instead.
 //!
 //!   {"op":"screenshot","window":?}                 -> {"ok":true,"data":"<base64 PNG>"}
 //!   {"op":"windows"}                               -> {"ok":true,"text":"<id\tapp\ttitle\tx,y wxh a line>"}

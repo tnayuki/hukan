@@ -1,10 +1,12 @@
 //! What Linux adds to the shared agent: the JIS keys VZ drops (keyboard.zig), for the root half,
-//! and the screen over X11 (screen.zig), for the user half.
+//! and the screen — over X11 (screen.zig), or through hukan's GNOME Shell extension on Wayland
+//! (shell.zig) — for the user half.
 
 const std = @import("std");
 const agent = @import("../agent.zig");
 const screen = @import("screen.zig");
 const keyboard = @import("keyboard.zig");
+const shell = @import("shell.zig");
 
 pub const search_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin";
 
@@ -13,17 +15,23 @@ pub const search_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin
 pub fn once(_: std.process.Init) void {}
 
 pub fn startup(served: *const agent.Agent) void {
-    if (std.mem.eql(u8, served.mode, "root")) keyboard.startup(served.io);
+    if (std.mem.eql(u8, served.mode, "root")) {
+        keyboard.startup(served.io);
+        shell.install(served.io);
+    } else {
+        shell.enable(served);
+    }
 }
 
 pub fn extra(r: *agent.Request) ?agent.Answer {
     const op = r.text("op") orelse return null;
     if (std.mem.eql(u8, op, "jis_key")) return keyboard.answer(r);
-    if (screen.handles(op)) return screen.answer(r, op);
+    if (screen.handles(op)) return if (shell.present()) shell.answer(r, op) else screen.answer(r, op);
     return null;
 }
 
 test {
     _ = @import("protocol.zig");
     _ = @import("keys.zig");
+    _ = @import("shell.zig");
 }
