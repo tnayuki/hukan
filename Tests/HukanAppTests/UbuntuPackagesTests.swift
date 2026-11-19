@@ -75,24 +75,33 @@ final class UbuntuPackagesTests: XCTestCase {
     XCTAssertEqual(chosen.first(where: { $0.name == "image" })?.version, "7")
   }
 
-  func testHWESelectionDropsHardwareMetaDependencies() throws {
+  func testVirtualKernelBringsHeadersAndLeavesFirmwareOut() throws {
     let available = [
-      package("linux-generic-hwe-24.04", depends: "linux-image-generic-hwe-24.04 (= 7), headers"),
       package(
-        "linux-image-generic-hwe-24.04", "7",
-        depends: "linux-image-7.0.0-43-generic (= 7), firmware, zfs"),
-      package("linux-image-7.0.0-43-generic", "7", depends: "linux-modules-7.0.0-43-generic (= 7)"),
-      package("linux-modules-7.0.0-43-generic", "7", depends: "zfs"), package("zfs"),
-      // Headers and firmware need not even be resolvable to select an image.
-      package("ibus-mozc"),
+        UbuntuPackages.kernelMeta,
+        depends: "linux-image-virtual (= 6), linux-headers-virtual (= 6)"),
+      package("linux-image-virtual", "6", depends: "linux-image-6.8.0-149-generic"),
+      package("linux-headers-virtual", "6", depends: "linux-headers-generic (= 6)"),
+      package("linux-headers-generic", "6", depends: "linux-headers-6.8.0-149-generic"),
+      package("linux-headers-6.8.0-149-generic", "6"),
+      package("linux-image-6.8.0-149-generic", "6", depends: "linux-modules-6.8.0-149-generic"),
+      package("linux-modules-6.8.0-149-generic", "6"),
+      // What linux-generic would bring for real hardware: never asked for.
+      package(
+        "linux-image-generic", "6",
+        depends:
+          "linux-image-6.8.0-149-generic, linux-modules-extra-6.8.0-149-generic, linux-firmware"),
+      package("linux-firmware"),
     ]
-    let image = try UbuntuPackages.kernelImage(
-      meta: "linux-generic-hwe-24.04", available: available)
-    XCTAssertEqual(image, "linux-image-7.0.0-43-generic")
+    let chosen = try UbuntuPackages.resolve(
+      roots: [UbuntuPackages.kernelMeta], installed: [:], available: available)
     XCTAssertEqual(
-      try UbuntuPackages.resolve(roots: [image, "ibus-mozc"], installed: [:], available: available)
-        .map(\.name),
-      ["ibus-mozc", "linux-image-7.0.0-43-generic", "linux-modules-7.0.0-43-generic", "zfs"])
+      chosen.map(\.name),
+      [
+        "linux-headers-6.8.0-149-generic", "linux-headers-generic", "linux-headers-virtual",
+        "linux-image-6.8.0-149-generic", "linux-image-virtual", "linux-modules-6.8.0-149-generic",
+        "linux-virtual",
+      ])
   }
 
   func testKernelAlreadyInstalledNeedsNoArchiveKernel() throws {

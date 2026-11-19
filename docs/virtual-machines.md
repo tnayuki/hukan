@@ -98,17 +98,15 @@ and the reasoning behind it; read the file before changing the area it covers.
   started by the desktop session and a template is finished only once both halves say hello;
   `loginctl enable-linger` runs from cloud-init once the account exists, which is the earliest
   it can. A server's screen tools are refused by hukan rather than left to fail inside the guest.
-  The server ISO's pool carries both kernels, so its HWE kernel comes off the ISO and only the
-  signed package lists are fetched.
-  **Select the concrete HWE image, not its meta package, when the install layer lacks a kernel.**
-  The meta package's image selector identifies the version; only that concrete image's required
-  dependency closure is fetched. This drops headers and physical-device firmware. Hard dependencies
-  remain: noble's 7.0 `linux-modules` requires `linux-main-modules-zfs`, so that package stays.
-  With the authenticated archive snapshot of 2026-11-16, 24.04.5 needs six debs totalling
-  316,816,180 bytes (formerly 30 / 990,948,948): `linux-image-7.0.0-43-generic`,
-  `linux-modules-7.0.0-43-generic`, `linux-main-modules-zfs-7.0.0-43-generic`, `ibus-mozc`,
-  `mozc-data`, and `mozc-server`. Later archive snapshots may select a newer kernel.
-  An ISO whose install layer already includes a kernel (26.04.1) keeps that kernel as before.
+  **When the install layer lacks a kernel, the template gets `linux-virtual`**: the release's own
+  kernel (GA), not the later one its point releases default to (HWE) — 24.04.5's installer would
+  put 26.04's 7.0 on a 24.04 machine, and nothing recorded asked for it — through Ubuntu's meta
+  package for a virtual machine. A meta package, so the machine's apt follows the kernel's
+  security updates, which come as new packages a concrete image never gets; and that one, since
+  `linux-generic` brings the firmware and extra drivers for real hardware: from 24.04's archive
+  on 2026-11-19, `linux-virtual` is 21 packages and 123MB from scratch, `linux-image-generic` 34
+  and 848MB. It carries the headers too, so a module built against the kernel follows it. An ISO
+  whose install layer already includes a kernel (26.04.1) keeps that kernel.
   **Answers-disc debs use short names (`p0.deb`, …), and both indexes use those names.**
   `hdiutil makehybrid -iso -joliet` changes long names and embedded dots in its primary ISO9660
   namespace, which Linux uses here; Joliet or the host's `tar` view can hide that difference.

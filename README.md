@@ -491,9 +491,11 @@ is turned off, which leaves all of it out.
 The install itself needs no network: what the ISO lacks — 24.04.5's kernel, and Japanese input —
 is fetched from Ubuntu's archive and checked as the last part of the ISO's download, so making a
 template later needs no connection; if that part fails, the ISO is not kept either. An ISO added
-from a file is completed the same way, and only the kernel and its modules are fetched, not the
-firmware for real hardware. Making a template never downloads: an ISO without its packages — one
-kept by an older hukan — has to be removed with `−` and added again. It runs inside hukan like a
+from a file is completed the same way. The kernel is Ubuntu's for a virtual machine
+(`linux-virtual`): the release's own rather than a later one, with its headers, kept up to date by
+apt like the rest, and without the firmware for real hardware. Making a template never downloads:
+an ISO without its packages — one kept by an older hukan — has to be removed with `−` and added
+again. It runs inside hukan like a
 macOS machine and is saved and resumed the same way, with no limit on how many run at once; the
 worktree is `/worktree`, and moves with the session. The agent's commands run in a login bash, and
 its screenshots, clicks, typing and keys go through X11; there is no accessibility tree to read. A
@@ -503,8 +505,7 @@ The `+` lists each release's server ISO beside its desktop. A template made from
 Ubuntu Server — about a third of the desktop's size on disk, with no GNOME — and the same agent,
 shares and Rosetta; nobody signs in, and the account's own half of the agent starts at boot. Its
 machines are given commands only: the agent's screen tools answer that there is no desktop, and
-the sheet offers no GPU. The server ISO carries its own kernel, so nothing but Ubuntu's signed
-package lists is fetched for it.
+the sheet offers no GPU. Its kernel is fetched the same way, as the desktop's is.
 
 On macOS 27 a Linux template can be made with a GPU (the sheet's GPU checkbox, “Run OpenGL on
 this Mac's GPU”): its machines' OpenGL runs on this Mac's GPU, 4.3 core — compute shaders

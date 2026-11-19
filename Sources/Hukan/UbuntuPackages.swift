@@ -269,29 +269,11 @@ enum UbuntuPackages {
     }
   }
 
-  /// Follow only the HWE image selectors, leaving headers and firmware out of the roots.
-  /// The concrete image's complete dependency closure is still required, including ZFS when
-  /// Ubuntu makes it a hard dependency of linux-modules (as noble's 7.0 kernel does).
-  static func kernelImage(meta: String, available: [Package]) throws
-    -> String
-  {
-    let byName = Dictionary(grouping: available, by: \.name)
-    var visited: Set<String> = []
-    func image(_ requirement: Requirement) throws -> String {
-      guard visited.insert(requirement.name).inserted,
-        let package = byName[requirement.name]?.first(where: { requirement.accepts($0.version) })
-      else { throw MachineError("The Ubuntu HWE selector has no concrete kernel image.") }
-      if isKernelImage(package.name) { return package.name }
-      for expression in package.dependencies.split(separator: ",") {
-        for alternative in expression.split(separator: "|") {
-          let dependency = try Requirement(String(alternative))
-          if dependency.name.hasPrefix("linux-image-") { return try image(dependency) }
-        }
-      }
-      throw MachineError("The Ubuntu HWE selector has no concrete kernel image.")
-    }
-    return try image(Requirement(meta))
-  }
+  /// The kernel a template is given when its install layer has none: Ubuntu's meta package for a
+  /// virtual machine, the release's own kernel (GA) and its headers, without the firmware and extra
+  /// drivers for real hardware `linux-generic` brings. A meta package rather than a concrete image,
+  /// so the machine's apt follows the kernel's updates, headers with them.
+  static let kernelMeta = "linux-virtual"
 
   static func isKernelImage(_ name: String) -> Bool {
     name.hasPrefix("linux-image-") && name.hasSuffix("-generic")
@@ -333,7 +315,6 @@ enum UbuntuPackages {
     // Japanese input is for a desktop; a server has nothing to type into.
     let extras = server ? [] : ["ibus-mozc"]
     let kernel = baseline.keys.filter(isKernelImage).sorted().first
-    let hwe = "linux-generic-hwe-\(series(release))"
     // Hash the actual ISO, not its filename: a rebuilt point release must never share a snapshot.
     // A template's check goes by what the download or the add kept on the ISO; those two hash it.
     let identity: String
@@ -354,13 +335,22 @@ enum UbuntuPackages {
       let saved = stanzas(
         try String(contentsOf: destination.appendingPathComponent("Packages"), encoding: .utf8)
       ).map(Package.init)
-      guard let image = kernel ?? saved.first(where: { isKernelImage($0.name) })?.name else {
-        throw MachineError("The saved packages have no kernel image.")
+      // The snapshot must hold what this hukan installs: a kernel and the closure of the extras.
+      // One made for a different list — the list changed since — is thrown away and made again,
+      // unless only what is saved may be read, where it is reported as missing.
+      let image = kernel ?? saved.first(where: { $0.name == kernelMeta })?.name
+      let complete =
+        image.map {
+          (try? resolve(roots: [$0] + extras, installed: baseline, available: saved)) != nil
+        } ?? false
+      if complete, let image {
+        if !cachedOnly { try remember(identity, on: iso) }
+        return Snapshot(directory: destination, codename: code, kernel: image, server: server)
       }
-      // Verify that the snapshot also contains the closure needed by the new installer.
-      _ = try resolve(roots: [image] + extras, installed: baseline, available: saved)
-      if !cachedOnly { try remember(identity, on: iso) }
-      return Snapshot(directory: destination, codename: code, kernel: image, server: server)
+      guard !cachedOnly else {
+        throw MachineError("The saved packages are not the ones this hukan installs.")
+      }
+      try FileManager.default.removeItem(at: destination)
     }
     guard !cachedOnly else { throw MachineError("No saved package snapshot exists.") }
     let manager = FileManager.default
@@ -410,11 +400,8 @@ enum UbuntuPackages {
       $0.name == $1.name
         ? compareVersions($0.version, $1.version) == .orderedDescending : $0.name < $1.name
     }
-    // The HWE kernel where the release has one yet; a release new enough to have none is on its
-    // first kernel, which is what `linux-generic` names.
     let available = pool + remote
-    let meta = available.contains { $0.name == hwe } ? hwe : "linux-generic"
-    let kernelPackage = try kernel ?? kernelImage(meta: meta, available: available)
+    let kernelPackage = kernel ?? kernelMeta
     let chosen = try resolve(
       roots: (kernel == nil ? [kernelPackage] : []) + extras, installed: baseline,
       available: available)
@@ -564,10 +551,6 @@ enum UbuntuPackages {
       throw MachineError("The Ubuntu ISO has no APT Release.")
     }
     return String(path.split(separator: "/")[1])
-  }
-
-  private static func series(_ release: String) -> String {
-    stanzas(release).first?["Version"].map { UbuntuRelease.series(of: $0) } ?? ""
   }
 
   static func isoFile(_ iso: URL, _ path: String) throws -> Data {

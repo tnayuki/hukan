@@ -559,7 +559,7 @@ final class LinuxTemplateBuilder {
   /// either side. On a server nobody signs in, so the account lingers: its user manager starts at
   /// boot, and with it the agent's user half.
   // Internal so tests can read the answers without building a template.
-  func userData(kernel: String = "linux-generic-hwe-24.04", server: Bool = false) -> String {
+  func userData(kernel: String = UbuntuPackages.kernelMeta, server: Bool = false) -> String {
     let user = request.username
     // Codecs are the desktop installer's; the server's is not asked about them.
     // Spelt out rather than as literals: these sit inside the YAML below, at its indentation.
