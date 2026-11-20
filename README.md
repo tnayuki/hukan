@@ -422,14 +422,15 @@ sender's name, never as something you typed.
 
 A session can have a macOS or Linux guest of its own, running inside hukan on
 Virtualization.framework and shown as a tab on its desk (Windows, below, runs in QEMU).
-**Window ▸ Virtual Machines** is where they are kept: templates, the copies sessions are using,
-and the restore images templates are made from. Disk space is shown as
-what each takes on this Mac, since a copy shares its blocks with its template.
+**Window ▸ Virtual Machines** is where they are kept: templates and the copies sessions are
+using. Disk space is shown as what each takes on this Mac, since a copy shares its blocks with its
+template.
 
-A template is made from a restore image in about ten minutes with nothing to answer. Images come
-in through the window's `+` — the latest macOS, which hukan finds and downloads; an older one from
-its address on Apple's servers; or a file already on this Mac — and New Template… on the same menu
-makes one from what is there. hukan installs macOS, creates an account with a generated password,
+The window's `+` makes a template, from the system and version chosen — the latest macOS, an
+Ubuntu release, Windows in a language. The image it is made from is downloaded the first time, as
+the first part of making it, and kept for the next: a newer one replaces the older of its line,
+and the `…` beside `−` deletes all of them, saying how much that gives back. A macOS template takes
+about ten minutes with nothing to answer: hukan installs macOS, creates an account with a generated password,
 installs a guest agent reached over vsock, turns SSH back off, turns SIP off through Recovery so
 the agent can be given its permissions, and turns off sleep and the screen lock. A template is for
 automation: it has SIP off and is not a machine to keep anything in. The window's `−` on a template
@@ -468,10 +469,10 @@ compared with what this build of hukan ships and replaced if they differ, so a t
 have to be made again for that. The toolbar's CPU and memory include the machines this app is
 running.
 
-Windows 11 for Arm comes in through the window's `+` too, in the language chosen: hukan downloads
-Microsoft's own image, checks it against Microsoft's checksum, and makes it into an ISO, with
-wimlib from Homebrew, which the cask installs. A Windows on Arm ISO makes a Windows template the same way, unattended in about twenty minutes,
-on QEMU from Homebrew, which the cask installs, with Microsoft Defender switched off from the start
+Windows 11 for Arm makes a template the same way, unattended in about twenty minutes, from
+Microsoft's own image in the language chosen, checked against Microsoft's checksum and made into
+an ISO with wimlib, and run on QEMU, both from Homebrew and installed by the cask, with Microsoft
+Defender switched off from the start
 — it is the guest's heaviest load while a toolchain installs, and its sample submission would send
 files from the worktree to Microsoft. It runs on a tab like a macOS machine, with its screen
 and keyboard there, and is saved and resumed the same way; it signs itself in again after a sign-out. The agent's tools work on it as they do
@@ -482,9 +483,9 @@ has no file open there, until which it goes on seeing the one it had; without Sa
 the machine runs without it. Text on the clipboard crosses when the machine's screen takes the
 keyboard, into the guest, and when it gives it up, out of it.
 
-A Linux template is Ubuntu, made from Canonical's desktop or server ISO for Apple silicon: the window's
-`+` lists the supported LTS releases, each at its newest point release, downloads the one chosen
-and checks it against Ubuntu's own checksum. New Template… then runs Ubuntu's installer unattended
+A Linux template is Ubuntu, made from Canonical's desktop or server ISO for Apple silicon: New
+Template lists the supported LTS releases, each at its newest point release, downloads the one
+chosen and checks it against Ubuntu's own checksum, then runs Ubuntu's installer unattended
 — nothing to answer, about ten minutes — and sets up a GNOME desktop that signs in by itself
 on Wayland, the guest agent, and
 Rosetta, so x86_64 programs run — Unity's editor among them, which Rosetta alone cannot start —
@@ -492,12 +493,9 @@ with amd64 packages installable by apt beside the arm64 ones, unless the sheet's
 is turned off, which leaves all of it out.
 The install itself needs no network: what the ISO lacks — 24.04.5's kernel, and Japanese input —
 is fetched from Ubuntu's archive and checked as the last part of the ISO's download, so making a
-template later needs no connection; if that part fails, the ISO is not kept either. An ISO added
-from a file is completed the same way. The kernel is Ubuntu's for a virtual machine
+template again needs no connection; if that part fails, the ISO is not kept either. The kernel is Ubuntu's for a virtual machine
 (`linux-virtual`): the release's own rather than a later one, with its headers, kept up to date by
-apt like the rest, and without the firmware for real hardware. Making a template never downloads:
-an ISO without its packages — one kept by an older hukan — has to be removed with `−` and added
-again. It runs inside hukan like a
+apt like the rest, and without the firmware for real hardware. It runs inside hukan like a
 macOS machine and is saved and resumed the same way, with no limit on how many run at once; the
 worktree is `/worktree`, and moves with the session. The agent's commands run in a login bash, and
 its screenshots, clicks, typing and keys go through a GNOME Shell extension the agent puts in
@@ -506,7 +504,7 @@ tree to read. Text with no key on the keyboard — Japanese, say — goes in thr
 reaches any window with an input method, on Xwayland too. A
 Linux guest that reboots stops, and Start brings it up again.
 
-The `+` lists each release's server ISO beside its desktop. A template made from it installs
+New Template lists each release's server ISO beside its desktop. A template made from it installs
 Ubuntu Server — about a third of the desktop's size on disk, with no GNOME — and the same agent,
 shares and Rosetta; nobody signs in, and the account's own half of the agent starts at boot. Its
 machines are given commands only: the agent's screen tools answer that there is no desktop, and

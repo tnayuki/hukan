@@ -443,6 +443,9 @@ final class MacTemplateBuilder {
   }
 
   enum Phase: Equatable {
+    /// The image the template is made from being brought into the cache first: what is being
+    /// done, and how far, or -1 when that cannot be said.
+    case fetching(String, Double)
     case preparing
     case installing(Double)
     case firstBoot

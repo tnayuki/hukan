@@ -217,32 +217,6 @@ final class MachineStoreTests: XCTestCase {
     XCTAssertEqual(MachineStore.images().map(\.lastPathComponent), ["B.ISO", "A.ipsw"])
   }
 
-  func testFileImageArrivesWholeInImages() throws {
-    let source = directory.appendingPathComponent("installer.ipsw")
-    let contents = Data("installer fixture".utf8)
-    try contents.write(to: source)
-    let download = RestoreImageDownload(.file(source))
-    let finished = expectation(description: "file copied")
-    download.onChange = {
-      if case .done = download.state { finished.fulfill() }
-      if case .failed(let message) = download.state {
-        XCTFail(message)
-        finished.fulfill()
-      }
-    }
-    download.start()
-    wait(for: [finished], timeout: 5)
-    let destination = MachineStore.imagesURL.appendingPathComponent(source.lastPathComponent)
-    XCTAssertEqual(download.state, .done(destination))
-    XCTAssertEqual(try Data(contentsOf: destination), contents)
-    // Compared as real paths: the temporary directory is reached through a link.
-    XCTAssertEqual(
-      MachineStore.images().map { $0.resolvingSymlinksInPath() },
-      [destination.resolvingSymlinksInPath()])
-    XCTAssertFalse(
-      FileManager.default.fileExists(atPath: destination.appendingPathExtension("download").path))
-  }
-
   func testReplyLimitRejectsAnUnterminatedReply() throws {
     var sockets: [Int32] = [0, 0]
     guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0 else {

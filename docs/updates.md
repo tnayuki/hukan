@@ -10,8 +10,9 @@ and the reasoning behind it; read the file before changing the area it covers.
   hukan is the one of the two that can go quietly stale.
   **Six outbound requests are hukan's own, and the line around them is the whole of why they are
   allowed.** The cask check: one fixed URL, GET, nothing sent, no credentials, nothing about the
-  work. A macOS restore image, fetched only when someone asks for one in the template sheet, from
-  the address Virtualization.framework names. An Ubuntu desktop or server ISO, likewise only when asked for:
+  work. A macOS restore image: where the latest is, asked of Apple through Virtualization.framework
+  when the template sheet's macOS is chosen, so the sheet can say which macOS it is; the IPSW
+  itself fetched from there only when a template asks for one the cache lacks. An Ubuntu desktop or server ISO, likewise only when asked for:
   Canonical's list of supported LTS releases (`meta-release-lts`), each release's `SHA256SUMS` to
   find its newest point release and hold the download to, and the ISO. Windows 11 for Arm, likewise
   only when asked for: Microsoft's ESD in the language chosen, from the address and held to the

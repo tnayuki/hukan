@@ -155,13 +155,53 @@ enum MachineStore {
     Machine(url: templatesURL.appendingPathComponent(id.uuidString))
   }
 
-  /// The installers in `Images`, newest first.
+  /// The images in the cache, newest first. Nothing lists them but this: they are fetched when a
+  /// template asks for one, so a template is what is made, and the cache is a means to it.
   static func images() -> [URL] {
     let urls =
       (try? FileManager.default.contentsOfDirectory(
         at: imagesURL, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
     return urls.filter { MachineKind(image: $0) != nil }
       .sorted { $0.lastPathComponent > $1.lastPathComponent }
+  }
+
+  /// What `image` replaces in the cache: the other images of its line — any other macOS, since
+  /// only the latest is fetched; Ubuntu of the same series and edition; Windows in the same
+  /// language. An image of a line nothing fetches any more is left for the person to let go.
+  static func superseded(by image: URL, among images: [URL]) -> [URL] {
+    guard let line = line(of: image) else { return [] }
+    return images.filter { $0 != image && Self.line(of: $0) == line }
+  }
+
+  private static func line(of image: URL) -> String? {
+    let name = image.lastPathComponent
+    if image.pathExtension.lowercased() == "ipsw" { return "macOS" }
+    // `Windows11_26200.6899_ja-jp_arm64.iso`: Windows in Japanese.
+    let windows = name.split(separator: "_")
+    if windows.count == 4, windows[0] == "Windows11", windows[3] == "arm64.iso" {
+      return "Windows " + windows[2]
+    }
+    // `ubuntu-24.04.5-desktop-arm64.iso`: the 24.04 desktop.
+    for edition in UbuntuRelease.Edition.allCases where name.hasSuffix(edition.suffix) {
+      let version = name.dropFirst("ubuntu-".count).dropLast(edition.suffix.count)
+      guard name.hasPrefix("ubuntu-"), !version.isEmpty else { return nil }
+      return "Ubuntu \(UbuntuRelease.series(of: String(version))) \(edition.name)"
+    }
+    return nil
+  }
+
+  /// An image out of the cache, and an Ubuntu ISO's packages with it — they were fetched for it
+  /// alone, and are found by the checksum kept on the ISO, so before the ISO goes. Kept by
+  /// content, so packages another ISO with the same content still needs stay. Off the main thread.
+  static func removeImage(_ image: URL) {
+    if UbuntuRelease.isUbuntu(image), let snapshot = UbuntuPackages.snapshot(for: image),
+      !images().contains(where: {
+        $0 != image && UbuntuRelease.isUbuntu($0) && UbuntuPackages.snapshot(for: $0) == snapshot
+      })
+    {
+      try? FileManager.default.removeItem(at: snapshot)
+    }
+    try? FileManager.default.removeItem(at: image)
   }
 
   private static func machines(in directory: URL) -> [Machine] {

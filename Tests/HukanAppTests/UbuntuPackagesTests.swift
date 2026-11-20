@@ -10,7 +10,8 @@ final class UbuntuPackagesTests: XCTestCase {
   }
 
   func testCancelledImageDownloadIgnoresRestart() {
-    let download = RestoreImageDownload(.file(URL(fileURLWithPath: "/missing.iso")))
+    let download = RestoreImageDownload(
+      .checked(URL(string: "https://example.invalid/missing.iso")!, sha256: ""))
     download.cancel()
     var changes = 0
     download.onChange = { changes += 1 }

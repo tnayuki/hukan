@@ -379,10 +379,10 @@
 
         <command name="machines" code="HuknMach" hidden="yes" description="Report the virtual machine store — templates, session machines, images — and a template build's progress; or start a build, for automated checks">
             <cocoa class="MachinesCommand"/>
-            <parameter name="building" code="Bild" type="text" optional="yes" description="start making a macOS template with this name from the newest IPSW in Images, the way the window's + does">
+            <parameter name="building" code="Bild" type="text" optional="yes" description="start making a macOS template with this name from the newest IPSW in the image cache, the way the window's New Template does">
                 <cocoa key="building"/>
             </parameter>
-            <parameter name="with gpu" code="Bgpu" type="boolean" optional="yes" description="with building: make a Linux template from the newest Ubuntu ISO in Images, its machines given a GPU">
+            <parameter name="with gpu" code="Bgpu" type="boolean" optional="yes" description="with building: make a Linux template from the newest Ubuntu ISO in the image cache, its machines given a GPU">
                 <cocoa key="gpu"/>
             </parameter>
             <result type="text"/>

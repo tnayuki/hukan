@@ -2,24 +2,21 @@ import CryptoKit
 import Foundation
 import Virtualization
 
-/// Bringing an image a template can be made from into the store's `Images`: the latest macOS, an
-/// address someone gave, or a file already on this Mac.
+/// Bringing the image a template is made from into the store's image cache: the latest macOS, an
+/// Ubuntu release, or Windows in one language. One already there is used as it is.
 ///
-/// The latest is one of the few requests hukan makes for itself: Virtualization.framework says
-/// where the newest IPSW this Mac supports is — a file Apple publishes on its CDN — and hukan
+/// Each is one of the few requests hukan makes for itself (`docs/updates.md`): Virtualization.framework
+/// says where the newest IPSW this Mac supports is — a file Apple publishes on its CDN — and hukan
 /// fetches it. Nothing is sent but the GET, no credential and nothing about the work, which is the
-/// line the update check already draws. An older one is an address the person brings: nothing
-/// lists them but third parties, and a list kept here would be stale the day after a release. The file is tens of gigabytes, so it goes to a `.download` name beside the
-/// others and takes its real name only once it is whole: a half-fetched IPSW must never be
-/// offered to a template.
+/// line the update check already draws. Only the latest macOS: nothing lists older ones but third
+/// parties. The file is tens of gigabytes, so it goes to a `.download` name beside the others and
+/// takes its real name only once it is whole: a half-fetched IPSW must never be made a template.
 final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
   /// Where the image comes from.
   enum Source {
     case latest
-    case address(URL)
     /// An address whose publisher states the file's SHA-256, which the download is held to.
     case checked(URL, sha256: String)
-    case file(URL)
     /// Windows, as Microsoft's ESD in one language, made into an ISO once it is here.
     case windows(WindowsImage)
   }
@@ -55,7 +52,7 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     self.source = source
     switch source {
     case .latest: break
-    case .address(let url), .checked(let url, _), .file(let url): name = url.lastPathComponent
+    case .checked(let url, _): name = url.lastPathComponent
     case .windows(let image): name = image.isoName
     }
   }
@@ -64,8 +61,7 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     guard !cancellation.isCancelled else { return }
     switch source {
     case .latest: locateLatest()
-    case .address(let url), .checked(let url, _): fetch(url)
-    case .file(let url): copy(url)
+    case .checked(let url, _): fetch(url)
     case .windows(let image): fetch(image.url)
     }
   }
@@ -105,41 +101,6 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     state = .downloading(0)
     onChange?()
     task.resume()
-  }
-
-  /// A clone where the file is on the same volume, so a file already here costs nothing; a copy
-  /// from elsewhere is a minute of a disk, so it is done off the main thread, under the same
-  /// `.download` name a fetch is.
-  private func copy(_ file: URL) {
-    state = .copying
-    onChange?()
-    MachineStore.prepare()
-    let destination = MachineStore.imagesURL.appendingPathComponent(file.lastPathComponent)
-    let partial = destination.appendingPathExtension("download")
-    DispatchQueue.global(qos: .userInitiated).async {
-      // Held until the copy is in place, packages and all, so another hukan starting meanwhile
-      // does not take it for one left behind. Taken here, not on the main thread: it waits for
-      // a claim an earlier copy of the same file still holds, and that one is let go on main.
-      let claim = MachineStore.Claim.take(partial)
-      let result = Result {
-        if FileManager.default.fileExists(atPath: destination.path) { return false }
-        try? FileManager.default.removeItem(at: partial)
-        try FileManager.default.copyItem(at: file, to: partial)
-        return true
-      }
-      DispatchQueue.main.async { [self] in
-        let release: () -> Void = { claim?.release() }
-        switch result {
-        case .success(true): settle(partial, at: destination, then: release)
-        case .success(false):
-          release()
-          imageReady(destination)
-        case .failure(let error):
-          release()
-          finish(.failed(error.localizedDescription))
-        }
-      }
-    }
   }
 
   private func locateLatest() {

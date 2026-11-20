@@ -272,55 +272,13 @@ final class WindowsTemplateBuilder {
     }
   }
 
-  /// What a Windows ISO is, `Windows 11 24H2`, read off the image it installs. A WIM keeps a
-  /// description of its images as XML, uncompressed, at a place its header names — so no tool is
-  /// needed to read it, only the header's 24-byte record at offset 72: a 7-byte size, a flags
-  /// byte, then the offset.
-  static func title(ofISO iso: URL) throws -> String? {
-    try mounted(iso) { mount in
-      let sources = mount.appendingPathComponent("sources")
-      guard
-        let wim = ["install.wim", "install.esd"].map({ sources.appendingPathComponent($0) })
-          .first(where: { FileManager.default.fileExists(atPath: $0.path) }),
-        let handle = try? FileHandle(forReadingFrom: wim)
-      else { return nil }
-      defer { try? handle.close() }
-      guard let range = xmlRange(inWIMHeader: try handle.read(upToCount: 208) ?? Data()) else {
-        return nil
-      }
-      try handle.seek(toOffset: range.offset)
-      guard let xml = try handle.read(upToCount: range.size) else { return nil }
-      return String(data: xml, encoding: .utf16).flatMap(title(fromWIMXML:))
-    }
-  }
-
-  static func xmlRange(inWIMHeader header: Data) -> (offset: UInt64, size: Int)? {
-    guard header.count >= 96, header.prefix(8) == Data("MSWIM\0\0\0".utf8) else { return nil }
-    let record = header.subdata(in: 72..<96)
-    let size = record.prefix(7).reversed().reduce(0) { $0 << 8 | Int($1) }
-    let offset = record.subdata(in: 8..<16).reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
-    guard size > 0, size < 16 << 20 else { return nil }
-    return (offset, size)
-  }
-
-  /// The product from the first image's name and the release from its build — the XML carries a
-  /// build number and never the `24H2` people call it by, so a release this table has not heard
-  /// of is named by its build instead.
-  static func title(fromWIMXML xml: String) -> String? {
-    func first(_ tag: String) -> String? {
-      guard let start = xml.range(of: "<\(tag)>"),
-        let end = xml.range(of: "</\(tag)>", range: start.upperBound..<xml.endIndex)
-      else { return nil }
-      return String(xml[start.upperBound..<end.lowerBound])
-    }
-    guard let name = first("NAME"),
-      let product = name.range(of: #"^Windows \d+"#, options: .regularExpression).map({
-        String(name[$0])
-      })
-    else { return nil }
-    guard let build = first("BUILD").flatMap(Int.init) else { return product }
+  /// What a Windows 11 build is called, `Windows 11 25H2` for `26200.6899`: a build number is
+  /// all Microsoft's catalog gives, never the `25H2` people call it by, so a release this table
+  /// has not heard of is named by its build instead.
+  static func title(ofBuild build: String) -> String {
     let releases = [22000: "21H2", 22621: "22H2", 22631: "23H2", 26100: "24H2", 26200: "25H2"]
-    return releases[build].map { "\(product) \($0)" } ?? "\(product) (\(build))"
+    let major = build.split(separator: ".").first.flatMap { Int($0) }
+    return major.flatMap { releases[$0] }.map { "Windows 11 \($0)" } ?? "Windows 11 (\(build))"
   }
 
   /// An ISO mounted read-only and out of sight for as long as `body` runs.

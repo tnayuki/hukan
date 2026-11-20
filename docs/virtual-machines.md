@@ -18,6 +18,17 @@ and the reasoning behind it; read the file before changing the area it covers.
   **Window ▸ Virtual Machines is the store, not a settings window**: every row is a thing on disk,
   nothing in it is a preference. Images and session machines are excluded from Time Machine;
   templates are not.
+  **The images templates are made from are a cache, not rows.** New Template names a version —
+  the latest macOS, an Ubuntu release, Windows in a language — and the image comes from the cache
+  when it is there and is downloaded into it when not, on the build's own row, as the build's first
+  part; a template is what was asked for, and an image only the means to it. A newer image replaces
+  the older of its line — the other IPSW, the same Ubuntu series and edition, Windows in the same
+  language — so the cache stays at one image a line and making a template again downloads nothing.
+  What is left to do by hand is to let all of it go, the `…` beside `−`, with what it gives back,
+  and not while a template is being made from one. An image nothing names — one put there by an
+  older hukan, which also took files and addresses — is never replaced, only let go that way.
+  **Only the latest macOS**: an older one was an address the person brought, since nothing lists
+  them but third parties, and the cache has no place for an image nobody will fetch again.
   **The agent reaches the guest through an agent of hukan's, over vsock**, and tools named for
   where they run: `vm_` acts on the machine from here, `guest_` runs inside it. Creating, first use,
   suspending, saving a template and deleting are each a card. The guest agent is replaced at boot when it
@@ -71,17 +82,13 @@ and the reasoning behind it; read the file before changing the area it covers.
   fetched once, then a template made with no network at all. Fetched with the ISO rather than
   with the template, since the download is already the moment that wants a connection, and the
   ISO is put in place only once they are all there: a fetch that fails or is cancelled takes the
-  ISO with it, so no ISO is offered that would have to go back to the network for a template. An
-  ISO added from a file is held to the same rule, its copy finished only once they are fetched;
-  template creation never fetches packages. **The packages are found by the ISO's checksum, kept
-  on the ISO** as an extended attribute by the download or the add, which hash it anyway: the
-  sheet used to hash the ISO again each time one was chosen, seven seconds on a 3.8GB ISO, only to
-  look its packages up, and the builder then did the same. So New Template only asks whether they
-  are there, with Create disabled when they are not, and the builder authenticates them, without
-  hashing the ISO, once a template is being made. An ISO with no checksum on it — one kept by an
-  older hukan, or put in Images by hand, which is not a way in — reads as missing its packages,
-  and is removed with − and downloaded or added again. Deleting an ISO
-  deletes its packages, which were fetched for it alone. It reaches the installer as a repository
+  ISO with it, so no ISO is used that would have to go back to the network for a template. An ISO
+  already in the cache without them has them fetched before the template is begun; the installer
+  never fetches packages. **The packages are found by the ISO's checksum, kept on the ISO** as an
+  extended attribute by the download, which hashes it anyway: hashing the ISO again to look them
+  up costs seven seconds on a 3.8GB ISO, so the builder authenticates them without it. An ISO with
+  no checksum on it reads as missing its packages, and is let go with the rest of the cache and
+  downloaded again. Letting an ISO go lets its packages go, which were fetched for it alone. It reaches the installer as a repository
   on the answers disc, and the installer is given no network, so nothing it would refresh, update
   or look up can make a template depend on the connection again.
   **The server ISO is the second Ubuntu, for a machine that is only given commands** — a

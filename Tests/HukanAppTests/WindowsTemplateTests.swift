@@ -44,30 +44,10 @@ final class WindowsTemplateTests: XCTestCase {
     XCTAssertNil(WindowsTemplateBuilder.machineType(inHelp: "virt-11.1  QEMU 11.1 ARM\n"))
   }
 
-  func testTheWIMHeaderSaysWhereItsDescriptionIs() throws {
-    var header = Data("MSWIM\0\0\0".utf8) + Data(count: 200)
-    // Size 5270 in seven bytes, a flags byte, then offset 4716689920 in eight.
-    header.replaceSubrange(72..<80, with: [0x96, 0x14, 0, 0, 0, 0, 0, 0x02])
-    header.replaceSubrange(80..<88, with: [0x00, 0xFA, 0x22, 0x19, 0x01, 0, 0, 0])
-    let range = try XCTUnwrap(WindowsTemplateBuilder.xmlRange(inWIMHeader: header))
-    XCTAssertEqual(range.size, 5270)
-    XCTAssertEqual(range.offset, 4_716_689_920)
-    XCTAssertNil(WindowsTemplateBuilder.xmlRange(inWIMHeader: Data("not a wim".utf8)))
-  }
-
-  func testAnISOIsNamedByProductAndRelease() {
-    func xml(_ name: String, _ build: String) -> String {
-      "<WIM><IMAGE INDEX=\"1\"><WINDOWS><VERSION><BUILD>\(build)</BUILD></VERSION></WINDOWS>"
-        + "<NAME>\(name)</NAME></IMAGE></WIM>"
-    }
-    XCTAssertEqual(
-      WindowsTemplateBuilder.title(fromWIMXML: xml("Windows 11 Home", "26100")), "Windows 11 24H2")
-    XCTAssertEqual(
-      WindowsTemplateBuilder.title(fromWIMXML: xml("Windows 11 Pro", "26200")), "Windows 11 25H2")
-    XCTAssertEqual(
-      WindowsTemplateBuilder.title(fromWIMXML: xml("Windows 11 Pro", "26300")),
-      "Windows 11 (26300)")
-    XCTAssertNil(WindowsTemplateBuilder.title(fromWIMXML: xml("Something else", "1")))
+  func testABuildIsNamedByItsRelease() {
+    XCTAssertEqual(WindowsTemplateBuilder.title(ofBuild: "26100.4349"), "Windows 11 24H2")
+    XCTAssertEqual(WindowsTemplateBuilder.title(ofBuild: "26200.6899"), "Windows 11 25H2")
+    XCTAssertEqual(WindowsTemplateBuilder.title(ofBuild: "26300.1"), "Windows 11 (26300.1)")
   }
 
   func testLanguageComesOnlyFromAvailableUILanguagesSection() throws {

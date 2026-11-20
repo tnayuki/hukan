@@ -257,7 +257,8 @@ enum UbuntuPackages {
   }
 
   static let missingPackagesMessage =
-    "This ISO's packages are missing or incomplete. Remove the ISO with − and download or add it again."
+    "This ISO's packages are missing or incomplete. Delete the downloaded images from the window's"
+    + " … menu, and make the template again."
 
   /// Read and authenticate the saved packages without ever contacting the archive or hashing the
   /// ISO. Checking packages must run off the main thread.
