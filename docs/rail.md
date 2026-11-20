@@ -76,7 +76,12 @@ and the reasoning behind it; read the file before changing the area it covers.
   the value of one *kind* of tag, are the other two — the kind because a session carries several
   and a ticket and a pull request are not one sequence, and each falls back to the instruction
   order where it has nothing to say. No headings come with them: grouping by branch would be the
-  worktree headings back under another name, and an order costs nothing to undo. No pinning
+  worktree headings back under another name, and an order costs nothing to undo. An instruction
+  is any message the session is given, not only one typed into this window's composer: one sent
+  from Remote Control or by another session stamps the order too (and, like a send, takes the row
+  out of the Archived fold) — a session driven from a phone otherwise kept the age of its last
+  local send and sank while it worked. The agent's own turns — a task notification, a tool's
+  result — are not instructions and move nothing. No pinning
   either, there being nothing a pinned row would say that the choice of order does not. The
   choice is a glyph pulling down a menu at the rail's toolbar row — a pop-up naming the order
   would spend the width that row's floor is measured from — and the same items under View and on

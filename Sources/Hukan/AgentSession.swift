@@ -145,7 +145,9 @@ final class AgentSession {
   /// deliberately: a session you instructed long ago but which is working or waiting now sinks
   /// by its instruction time — its dot and its notification are what reach you, not its position.
   /// Seeded from the transcript mtime for a restored session (a proxy until you send), then set
-  /// precisely on each send. `/login` and a dropped signed-out send do not count.
+  /// precisely on each send — and on each message the engine replays from Remote Control or from
+  /// another session, which are instructions too. `/login` and a dropped signed-out send do not
+  /// count.
   var lastInstructedAt = Date.distantPast
 
   /// How long ago `date` was, at the coarsest unit that still says something — `12s`, `3m`, `5h`,
@@ -864,6 +866,13 @@ final class AgentSession {
     payload["origin"] != nil
   }
 
+  /// Whether a message from elsewhere is the engine waking its own agent — a background task
+  /// reporting how it ended — rather than someone instructing it. It is drawn like any other, but
+  /// it does not reorder the rail: that is the agent's own work, not a message it was given.
+  static func isTaskNotification(_ payload: [String: Any]) -> Bool {
+    (payload["origin"] as? [String: Any])?["kind"] as? String == "task-notification"
+  }
+
   /// The text of a user message, however the engine spelled its content — a bare string, or the
   /// blocks a message with attachments arrives as. Only the text: an image typed on a phone lives
   /// on Anthropic's side, not in this worktree, so there is no path here to draw it from.
@@ -1227,6 +1236,13 @@ final class AgentSession {
     append(Transcript.note(text))
   }
 
+  /// Stamp the rail's sort key and let the window take the row out of the Archived fold — for a
+  /// composer send, and for a message the engine replays from Remote Control or another session.
+  private func noteInstruction() {
+    lastInstructedAt = Date()
+    onInstructed?()
+  }
+
   /// Take a line from the composer. Delivered straight through when the agent is idle.
   ///
   /// Mid-turn, what happens turns on whether type-ahead is already stacked. Nothing queued
@@ -1251,11 +1267,10 @@ final class AgentSession {
     // deliver, a queued type-ahead line, and a redirect alike — so ordering tracks when you
     // last engaged this session, not the agent's own chatter. `/login` and the signed-out drop
     // returned above, so neither reorders anything.
-    lastInstructedAt = Date()
     // And it is your decision about this session, not just a timestamp: a send is what takes an
     // archived one back out of the fold. Fired before the start below, so the row is already out
     // when the engine's first state change reloads the rail.
-    onInstructed?()
+    noteInstruction()
     // Start is deferred to the first send, so a new or merely-viewed session spawns no `claude`
     // until you actually talk to it. Bring the process up now; bail if it could not start —
     // already owned by another process, in which case `start` left a note. The engine's outbox
@@ -2082,8 +2097,9 @@ final class AgentSession {
   var onRecencyChange: (() -> Void)?
 
   /// You instructed this session. `onRecencyChange` is the agent speaking and fires per fragment;
-  /// this is your send, and it fires once — which is what makes it the seam the archive flag hangs
-  /// off (see `Workspace.noteInstruction`).
+  /// this is your send — or a message replayed from Remote Control or another session — and it
+  /// fires once per message, which is what makes it the seam the archive flag hangs off (see
+  /// `Workspace.noteInstruction`).
   var onInstructed: (() -> Void)?
 
   /// Bump the rail's sort key: this session just did something. The one way `updatedAt` moves.
@@ -2237,11 +2253,16 @@ final class AgentSession {
         // The engine marks where a message came from, so this is its own account and not a guess.
         // One from another Claude session is drawn as its body under the sender's name — the
         // content is the engine's wrapper, written for the model, not the words that were sent.
+        // Either is an instruction this window did not send, so it is stamped here as `send`
+        // stamps the composer's — otherwise a session driven from a phone or by another session
+        // keeps the age of its last local send and sinks on the rail while it works.
         if let peer = ClaudeSessionStore.peerMessage(event.payload) {
           append(Transcript.note(Transcript.peerNote(peer.from)))
           appendUserMessage(Transcript.userMessage(peer.body, forkAnchor: lastRecordUUID))
+          noteInstruction()
         } else if Self.isFromElsewhere(event.payload), let text = Self.promptText(event.payload) {
           appendUserMessage(Transcript.userMessage(text, forkAnchor: lastRecordUUID))
+          if !Self.isTaskNotification(event.payload) { noteInstruction() }
         }
         userMessages.append((anchor: lastRecordUUID, uuid: uuid))
       }
