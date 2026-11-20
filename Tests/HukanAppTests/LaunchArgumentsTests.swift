@@ -30,12 +30,14 @@ final class LaunchArgumentsTests: XCTestCase {
     let arguments = ClaudeSession.launchArguments(id: UUID())
     XCTAssertEqual(
       flag("--append-system-prompt", in: arguments),
-      ClaudeSession.worktreeInstruction + "\n" + ClaudeSession.tagInstruction)
+      ClaudeSession.worktreeInstruction + "\n" + ClaudeSession.tagInstruction + "\n"
+        + ClaudeSession.sessionsInstruction)
     XCTAssertTrue(ClaudeSession.worktreeInstruction.contains("EnterWorktree"))
     XCTAssertTrue(ClaudeSession.worktreeInstruction.contains("ExitWorktree"))
   }
 
-  /// The engine rebuilds its system prompt on every launch and remembers nothing of this one,
+  /// Passed on every launch: a resume reads the prompt the conversation was begun with
+  /// (`prompt_snapshot`), but an engine with no snapshot to resume on reads this one,
   /// so a resume carries it too — unlike `--model`, which a resume leaves to the engine.
   func testTheInstructionRidesAResumeAsWell() {
     let arguments = ClaudeSession.launchArguments(id: UUID(), model: "opus", resume: true)
@@ -54,6 +56,14 @@ final class LaunchArgumentsTests: XCTestCase {
     XCTAssertFalse(
       ClaudeSession.tagInstruction.replacingOccurrences(of: tool, with: "").lowercased()
         .contains("hukan"))
+    // So does the section on starting sessions, and the side session's own.
+    XCTAssertFalse(
+      ClaudeSession.sessionsInstruction
+        .replacingOccurrences(of: "mcp__hukan__start_session", with: "")
+        .replacingOccurrences(of: "mcp__hukan__hand_off_to_session", with: "")
+        .lowercased().contains("hukan"))
+    XCTAssertFalse(
+      ClaudeSession.sideSessionInstruction(notes: nil).lowercased().contains("hukan"))
   }
 
   /// The tool the line names is one the server actually lists — a renamed tool would leave the

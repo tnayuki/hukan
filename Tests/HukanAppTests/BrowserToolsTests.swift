@@ -139,7 +139,9 @@ final class BrowserToolsTests: XCTestCase {
     XCTAssertEqual(
       tools.map { $0["name"] as? String },
       [
-        "set_tags", "new_session", "browser_tabs", "browser_open", "browser_read",
+        "set_tags", "start_session", "hand_off_to_session", "detach_session", "browser_tabs",
+        "browser_open",
+        "browser_read",
         "browser_navigate",
         "browser_screenshot", "browser_run", "vm_create", "vm_start", "vm_suspend", "vm_delete",
         "vm_list",

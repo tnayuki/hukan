@@ -26,6 +26,9 @@ final class RailNode: NSObject {
   /// Another live process owns this session (see `AgentSession.heldByPID`): the row greys and
   /// cannot be started, but stays selectable so its transcript still reads and searches.
   var heldElsewhere: Bool
+  /// A folded family's row stands for a side session under it that is working (see `families`),
+  /// so it pulses though its own session is not.
+  var workingInside = false
   private(set) var worktree: Worktree?
   private(set) var session: AgentSession?
   var children: [RailNode]
@@ -49,6 +52,7 @@ final class RailNode: NSObject {
     state = other.state
     isDetached = other.isDetached
     heldElsewhere = other.heldElsewhere
+    workingInside = other.workingInside
     worktree = other.worktree
     session = other.session
     for (mine, theirs) in zip(children, other.children) { mine.adopt(theirs) }
@@ -226,6 +230,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// A file row folded into the rail was picked (a single click): open it as a preview tab, the one
   /// reused by the next pick so tabs do not pile up.
   var onStartSession: ((AgentSession) -> Void)?
+  /// Move a side session to top level (see `SessionOrigin`).
+  var onDetachSession: ((AgentSession) -> Void)?
   /// Delete a session for good — the rail has already confirmed, so the window just does it.
   var onDeleteSession: ((AgentSession) -> Void)?
   /// Replace a session's tags with what was typed into the rail's editor.
@@ -309,6 +315,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// same way.
   private struct Arrangement: Equatable {
     var groups: Set<String>
+    var families: Set<String>
     var repositories: Set<String>
     var archives: Set<String>
     var results: Set<UUID>
@@ -320,7 +327,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   private var lastArrangement: Arrangement?
   private var arrangement: Arrangement {
     Arrangement(
-      groups: workspace?.collapsedGroups ?? [], repositories: collapsedRepositories,
+      groups: workspace?.collapsedGroups ?? [], families: workspace?.collapsedFamilies ?? [],
+      repositories: collapsedRepositories,
       archives: expandedArchives, results: collapsedResultSessions, searching: isSearching)
   }
   /// reloadData() clears the selection, and restoring it fires the selection-changed
@@ -904,11 +912,11 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
         // No "Sessions" label over the plain rows — a repository's rows *are* its sessions, so the
         // label would name the obvious and charge an indent for it. The section below them names
         // something the rows do not say, which is the difference.
-        var children = repo.sessions.map(node(for:))
+        var children = families(repo.sessions, node: node(for:))
         if !repo.archived.isEmpty {
           children.append(
             RailNode(
-              title: "Archived", children: repo.archived.map(node(for:)),
+              title: "Archived", children: families(repo.archived, node: node(for:)),
               section: .archived, sectionKey: repo.repositoryID))
         }
         return RailNode(
@@ -1074,6 +1082,63 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   /// The search-results tree: one header per matched session (recency order, the normal session
   /// row) expanding to a row per hit — the snippet, carrying the offset a click jumps to. A
   /// session that matched on its title alone has no hits, so it shows as a bare header.
+  /// Rows with each side session under the session that started it, as deep as the starts go:
+  /// a report climbs the same tree — a side session's own side sessions report to it, not to the
+  /// top — so a rail that flattened the family would hide who answers to whom. A side session
+  /// whose starter is not among `entries` (in the other section, or gone) stands on its own. The
+  /// order among siblings is the rail's order, read off `entries`, and a family moves with its
+  /// top row.
+  private func families(
+    _ entries: [Workspace.RailEntry], node: (Workspace.RailEntry) -> RailNode
+  ) -> [RailNode] {
+    let ids = Set(entries.map(\.session.id))
+    var children: [UUID: [Workspace.RailEntry]] = [:]
+    var tops: [Workspace.RailEntry] = []
+    for entry in entries {
+      if let origin = entry.session.origin, !origin.detached, ids.contains(origin.parentID),
+        origin.parentID != entry.session.id
+      {
+        children[origin.parentID, default: []].append(entry)
+      } else {
+        tops.append(entry)
+      }
+    }
+    // A cycle cannot be made through `start_session` — a session's starter exists before it — but
+    // a hand-edited saved state could hold one, and its rows must still be drawn somewhere.
+    var placed = Set<UUID>()
+    func build(_ entry: Workspace.RailEntry) -> RailNode {
+      placed.insert(entry.session.id)
+      let row = node(entry)
+      row.children = (children[entry.session.id] ?? [])
+        .filter { !placed.contains($0.session.id) }
+        .map(build)
+      return row
+    }
+    var rows = tops.map(build)
+    for entry in entries where !placed.contains(entry.session.id) { rows.append(build(entry)) }
+    // A folded family's row says the loudest state inside it — needing you over working — as a
+    // folded group's heading does, since a fold that hid a pulsing row is the one thing the rail
+    // must not do. Its own state shows when it is the loudest.
+    func louden(_ row: RailNode) {
+      row.children.forEach(louden)
+      guard let session = row.session, !row.children.isEmpty,
+        workspace?.collapsedFamilies.contains(session.id.uuidString) == true
+      else { return }
+      func all(_ node: RailNode) -> [RailNode] { node.children.flatMap { [$0] + all($0) } }
+      let below = all(row).compactMap(\.session)
+      if row.state != .needsAttention, below.contains(where: { $0.state == .needsAttention }) {
+        row.state = .needsAttention
+      } else if row.state != .needsAttention, !session.isWorking,
+        below.contains(where: { $0.state == .running && $0.isWorking })
+      {
+        row.state = .running
+        row.workingInside = true
+      }
+    }
+    rows.forEach(louden)
+    return rows
+  }
+
   private func resultsNodes(_ makeSessionRow: (Workspace.RailEntry) -> RailNode) -> [RailNode] {
     guard let workspace, let matches else { return [] }
     let matched = workspace.sessions
@@ -1554,7 +1619,7 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     let dot = Self.statusDot(
       symbol: symbol, tint: tint, label: axLabel,
       thinking: !node.isDetached && !node.heldElsewhere && node.state == .running
-        && node.session?.isWorking == true)
+        && (node.session?.isWorking == true || node.workingInside))
 
     let name = NSTextField(labelWithString: node.title)
     name.font = .systemFont(ofSize: 13)
@@ -1591,6 +1656,38 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       disclose.identifier = NSUserInterfaceItemIdentifier(session.id.uuidString)
       disclose.target = self
       disclose.action = #selector(toggleResultSession(_:))
+      disclose.setContentHuggingPriority(.required, for: .horizontal)
+      disclose.widthAnchor.constraint(equalToConstant: 16).isActive = true
+      disclose.heightAnchor.constraint(equalToConstant: 16).isActive = true
+      trailing.append(disclose)
+    }
+    // A session with side sessions under it carries the same chevron, and folded, how many are
+    // inside — the count a results header carries, for the same reason: a folded row should say
+    // what it holds.
+    if !isSearching, !node.children.isEmpty, let session = node.session {
+      let collapsed = workspace?.collapsedFamilies.contains(session.id.uuidString) == true
+      if collapsed {
+        func count(_ node: RailNode) -> Int { node.children.reduce(0) { $0 + 1 + count($1) } }
+        let label = NSTextField(labelWithString: "\(count(node))")
+        label.font = .systemFont(ofSize: 10, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        trailing.append(label)
+      }
+      let disclose = NSButton()
+      disclose.translatesAutoresizingMaskIntoConstraints = false
+      disclose.isBordered = false
+      disclose.bezelStyle = .regularSquare
+      disclose.imagePosition = .imageOnly
+      disclose.image = NSImage(
+        systemSymbolName: collapsed ? "chevron.forward" : "chevron.down",
+        accessibilityDescription: collapsed ? "Expand" : "Collapse")
+      disclose.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+      disclose.contentTintColor = .tertiaryLabelColor
+      disclose.toolTip = collapsed ? "Show side sessions" : "Hide side sessions"
+      disclose.identifier = NSUserInterfaceItemIdentifier(session.id.uuidString)
+      disclose.target = self
+      disclose.action = #selector(toggleFamily(_:))
       disclose.setContentHuggingPriority(.required, for: .horizontal)
       disclose.widthAnchor.constraint(equalToConstant: 16).isActive = true
       disclose.heightAnchor.constraint(equalToConstant: 16).isActive = true
@@ -1975,6 +2072,11 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
           rename.toolTip = "Start the session to rename it."
         }
         copy("Edit Tags…", #selector(editClickedTags(_:)))
+        // A side session worth keeping past the work that started it is moved out from under
+        // that session rather than archived with it (see `SessionOrigin`).
+        if let origin = sessions.first?.origin, !origin.detached {
+          copy("Detach to Top Level", #selector(detachClickedSession(_:)))
+        }
       }
       copy(
         count == 1 ? "Copy Transcript Path" : "Copy \(count) Transcript Paths",
@@ -2197,6 +2299,11 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
     reload()
   }
 
+  @objc private func detachClickedSession(_ sender: NSMenuItem) {
+    guard let session = (sender.representedObject as? [AgentSession])?.first else { return }
+    onDetachSession?(session)
+  }
+
   @objc private func startClickedSessions(_ sender: NSMenuItem) {
     guard let sessions = sender.representedObject as? [AgentSession] else { return }
     for session in sessions where !session.isRunning { onStartSession?(session) }
@@ -2324,6 +2431,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       }
     } else if let id = node.groupID, let workspace {
       write(&workspace.collapsedGroups, id, collapsed)
+    } else if let session = node.session, !node.children.isEmpty, let workspace {
+      write(&workspace.collapsedFamilies, session.id.uuidString, collapsed)
     } else if node.isRepositoryHeading, let repositoryID = node.repositoryID {
       write(&collapsedRepositories, repositoryID, collapsed)
     } else if node.section == .archived, let key = node.sectionKey {
@@ -2345,6 +2454,9 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       return node.session.map { collapsedResultSessions.contains($0.id) } ?? false
     }
     if let id = node.groupID { return workspace?.collapsedGroups.contains(id) ?? false }
+    if let session = node.session, !node.children.isEmpty {
+      return workspace?.collapsedFamilies.contains(session.id.uuidString) ?? false
+    }
     if node.isRepositoryHeading, let repositoryID = node.repositoryID {
       return collapsedRepositories.contains(repositoryID)
     }
@@ -2509,6 +2621,17 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
 
   /// A matched session's disclosure in the result list. Folds its hit rows away, leaving the
   /// session row and its count.
+  /// A family's chevron: fold a session's side sessions under it, or open them.
+  @objc private func toggleFamily(_ sender: NSButton) {
+    guard let id = sender.identifier?.rawValue, let workspace else { return }
+    if workspace.collapsedFamilies.contains(id) {
+      workspace.collapsedFamilies.remove(id)
+    } else {
+      workspace.collapsedFamilies.insert(id)
+    }
+    reloadAfterFold()
+  }
+
   @objc private func toggleResultSession(_ sender: NSButton) {
     guard let raw = sender.identifier?.rawValue, let id = UUID(uuidString: raw) else { return }
     if collapsedResultSessions.contains(id) {
