@@ -495,8 +495,9 @@ is turned off, which leaves all of it out.
 The install itself needs no network: what the ISO lacks — 24.04.5's kernel, and Japanese input —
 is fetched from Ubuntu's archive and checked as the last part of the ISO's download, so making a
 template again needs no connection; if that part fails, the ISO is not kept either. The kernel is Ubuntu's for a virtual machine
-(`linux-virtual`): the release's own rather than a later one, with its headers, kept up to date by
-apt like the rest, and without the firmware for real hardware. It runs inside hukan like a
+(`linux-virtual`): the release's own rather than a later one, with its headers, updated by apt
+with the rest, and without the firmware for real hardware. Nothing updates by itself — apt,
+snaps, Software Updater and a new release all wait to be asked. It runs inside hukan like a
 macOS machine and is saved and resumed the same way, with no limit on how many run at once; the
 worktree is `/worktree`, and moves with the session. The agent's commands run in a login bash, and
 its screenshots, clicks, typing and keys go through a GNOME Shell extension the agent puts in

@@ -110,6 +110,13 @@ and the reasoning behind it; read the file before changing the area it covers.
   started by the desktop session and a template is finished only once both halves say hello;
   `loginctl enable-linger` runs from cloud-init once the account exists, which is the earliest
   it can. A server's screen tools are refused by hukan rather than left to fail inside the guest.
+- **Nothing in a Linux guest updates by itself**, as in a Windows one: apt's daily refresh and
+  unattended upgrades are off (a later file than Ubuntu's `20auto-upgrades`), no new release is
+  offered, update-notifier — Software Updater's window, and a crash report's question, over the
+  screen — does not start, and every snap is held, which snapd takes only while it runs, so at
+  the template's first boot (Ubuntu's App Center is a snap, and there is no GNOME Software). apt
+  and snap by hand work. Measured on 24.04: nothing ran by itself, and no window came up after an
+  `apt-get update` by hand.
   **When the install layer lacks a kernel, the template gets `linux-virtual`**: the release's own
   kernel (GA), not the later one its point releases default to (HWE) — 24.04.5's installer would
   put 26.04's 7.0 on a 24.04 machine, and nothing recorded asked for it — through Ubuntu's meta

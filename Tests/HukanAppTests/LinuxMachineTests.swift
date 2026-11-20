@@ -82,6 +82,19 @@ final class LinuxMachineTests: XCTestCase {
     XCTAssertTrue(script.contains("softdep virtio_gpu post: hukan_gpu_align"))
   }
 
+  func testNothingInTheGuestUpdatesByItself() {
+    let script = LinuxTemplateBuilder.setupScript
+    for line in [
+      "APT::Periodic::Update-Package-Lists \"0\";",
+      "APT::Periodic::Unattended-Upgrade \"0\";",
+      "sed -i 's/^Prompt=.*/Prompt=never/' \"$T/etc/update-manager/release-upgrades\"",
+      "echo 'X-GNOME-Autostart-enabled=false' >> \"$T/etc/xdg/autostart/update-notifier.desktop\"",
+      "if command -v snap >/dev/null; then snap refresh --hold; fi",
+    ] {
+      XCTAssertTrue(script.contains(line), line)
+    }
+  }
+
   func testAServerInstallsTheServerAndLingersForTheAgent() {
     let builder = LinuxTemplateBuilder(
       request: .init(

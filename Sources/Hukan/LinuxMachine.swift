@@ -820,6 +820,17 @@ final class LinuxTemplateBuilder {
     # leave retries for ordinary apt use after the template has been made.
     rm -f "$T/etc/apt/apt.conf.d/94curtin-config"
     printf 'Acquire::Retries "5";\n' > "$T/etc/apt/apt.conf.d/80hukan-retries"
+    # Nothing updates by itself: a machine an agent drives is changed, or has a window put over its
+    # work, by nobody's choice. apt refreshes nothing and upgrades nothing on its own (a later file
+    # than 20auto-upgrades, which says otherwise), and no new release is offered; apt by hand works.
+    cat > "$T/etc/apt/apt.conf.d/99hukan-no-auto-upgrades" <<'EOF'
+    APT::Periodic::Update-Package-Lists "0";
+    APT::Periodic::Download-Upgradeable-Packages "0";
+    APT::Periodic::Unattended-Upgrade "0";
+    EOF
+    if [ -f "$T/etc/update-manager/release-upgrades" ]; then
+    sed -i 's/^Prompt=.*/Prompt=never/' "$T/etc/update-manager/release-upgrades"
+    fi
     rm -f "$T"/var/lib/apt/lists/*cdrom* "$T"/var/lib/apt/lists/*hukan*
     # The installer is deliberately offline. Normal DHCP starts on the installed first boot, by
     # whichever renderer the system has: a server has networkd and no NetworkManager. The offline
@@ -909,6 +920,10 @@ final class LinuxTemplateBuilder {
     sleep-inactive-ac-type='nothing'
     EOF
     chroot "$T" dconf update
+    # update-notifier is what puts Software Updater, and a crash report's question, over the screen.
+    if [ -f "$T/etc/xdg/autostart/update-notifier.desktop" ]; then
+    echo 'X-GNOME-Autostart-enabled=false' >> "$T/etc/xdg/autostart/update-notifier.desktop"
+    fi
     fi
     cat > "$T/usr/local/libexec/hukan-finish-template" <<'EOF'
     #!/bin/sh
@@ -921,6 +936,8 @@ final class LinuxTemplateBuilder {
     touch /etc/cloud/cloud-init.disabled
     cloud-init clean --logs --machine-id
     rm -f /etc/netplan/50-cloud-init.yaml
+    # Snaps refresh themselves several times a day; held for good, which snapd takes only running.
+    if command -v snap >/dev/null; then snap refresh --hold; fi
     apt-get clean
     shutdown -h now
     EOF
