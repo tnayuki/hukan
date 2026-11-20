@@ -1513,14 +1513,6 @@ final class WorktreeDeskViewController: NSViewController {
         completion(.text("\(pane.machineTitle) is not running."))
         return
       }
-      guard !pane.hasGPU else {
-        completion(
-          .error(
-            "\(pane.machineTitle) has a GPU, whose state cannot be saved, so it cannot be suspended."
-              + " Shut it down from inside the guest (guest_exec `sudo poweroff`) if it has to stop."
-          ))
-        return
-      }
       session.requestGrant(
         tabID: id, title: pane.machineTitle, url: "", level: .drive, machine: true, stopping: true
       ) { granted in
@@ -2767,12 +2759,7 @@ final class WorktreeDeskViewController: NSViewController {
         keyEquivalent: "")
       power.target = self
       power.representedObject = id
-      power.isEnabled = stopped || (pane.isRunning && !pane.hasGPU)
-      if !stopped, pane.hasGPU {
-        power.toolTip =
-          "This machine has a GPU, whose state cannot be saved, so it cannot be suspended."
-          + " Shut it down from inside the guest."
-      }
+      power.isEnabled = stopped || pane.isRunning
       let save = menu.addItem(
         withTitle: "Save as Template…", action: #selector(saveMachineAsTemplate(_:)),
         keyEquivalent: "")

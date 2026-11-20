@@ -317,10 +317,9 @@ struct MachineManifest: Codable, Equatable {
   /// whatever the installed QEMU is newest at. A saved state only loads into the hardware it was
   /// saved from, and a versioned type is QEMU's promise that a later QEMU still builds that.
   var qemuMachine: String? = nil
-  /// Linux: whether the machine has a GPU (`VirglGPU`) — its OpenGL run on this Mac's, its screen
-  /// drawn by that GPU. Chosen when the template is made and kept by every copy, since the guest is
-  /// set up for it then. Such a machine cannot be suspended, and is shut down where another is
-  /// saved.
+  /// Linux: whether the machine has a GPU (`GPUDevice`) — its OpenGL and Vulkan run on this Mac's,
+  /// its screen drawn by that GPU. Chosen when the template is made and kept by every copy, since
+  /// the guest is set up for it then.
   var gpu: Bool? = nil
   /// Linux: whether the machine is set up for Rosetta (nil means yes — every template before this
   /// was). Chosen when the template is made, since the guest's binfmt and amd64 packages are set

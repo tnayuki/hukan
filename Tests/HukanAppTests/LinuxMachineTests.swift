@@ -66,6 +66,22 @@ final class LinuxMachineTests: XCTestCase {
     XCTAssertEqual(VirtualMachinesWindowController.imageTitle(server), "Ubuntu 24.04.5 Server")
   }
 
+  func testAGPUTemplateBuildsTheAlignmentModuleWithDKMS() {
+    let builder = LinuxTemplateBuilder(
+      request: .init(
+        title: "Ubuntu", image: URL(fileURLWithPath: "/x.iso"), diskSize: 1, cpuCount: nil,
+        memorySize: nil, username: "someone", gpu: true))
+    XCTAssertTrue(builder.userData().contains("rosetta desktop gpu && umount"))
+    let script = LinuxTemplateBuilder.setupScript
+    XCTAssertTrue(script.contains("if [ \"$5\" = gpu ]; then"))
+    // The answers disc lowercases names, and Kbuild reads only `Makefile`.
+    XCTAssertTrue(script.contains("/makefile\" \"$T/usr/src/hukan-gpu-align-1/Makefile\""))
+    // DKMS and make need /dev, /proc and /sys in the installed system, and they are let go again.
+    XCTAssertTrue(script.contains("for d in dev proc sys; do mount --bind \"/$d\" \"$T/$d\"; done"))
+    XCTAssertTrue(script.contains("for d in sys proc dev; do umount \"$T/$d\"; done"))
+    XCTAssertTrue(script.contains("softdep virtio_gpu post: hukan_gpu_align"))
+  }
+
   func testAServerInstallsTheServerAndLingersForTheAgent() {
     let builder = LinuxTemplateBuilder(
       request: .init(
@@ -75,13 +91,13 @@ final class LinuxMachineTests: XCTestCase {
     XCTAssertTrue(server.contains("    id: ubuntu-server\n"))
     XCTAssertFalse(server.contains("codecs:"))
     XCTAssertTrue(server.contains("  drivers:\n"))
-    XCTAssertTrue(server.contains("rosetta server && umount"))
+    XCTAssertTrue(server.contains("rosetta server no-gpu && umount"))
     XCTAssertTrue(server.contains("    runcmd:\n      - [loginctl, enable-linger, someone]\n"))
     XCTAssertTrue(server.contains("plain_text_passwd: \(builder.password)\n    runcmd:"))
     XCTAssertFalse(server.contains("\t"))
     let desktop = builder.userData()
     XCTAssertTrue(desktop.contains("  codecs:\n    install: false\n  drivers:\n"))
-    XCTAssertTrue(desktop.contains("rosetta desktop && umount"))
+    XCTAssertTrue(desktop.contains("rosetta desktop no-gpu && umount"))
     XCTAssertFalse(desktop.contains("runcmd"))
     XCTAssertTrue(desktop.contains("plain_text_passwd: \(builder.password)\n  shutdown: poweroff"))
     // The user half starts with the user manager on a server, with the session on a desktop.

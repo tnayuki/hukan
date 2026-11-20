@@ -1,8 +1,10 @@
-//! What Linux adds to the shared agent: the JIS keys VZ drops (keyboard.zig), for the root half,
-//! and the screen, through hukan's GNOME Shell extension (shell.zig), for the user half.
+//! What Linux adds to the shared agent: the JIS keys VZ drops (keyboard.zig) and the GPU's driver
+//! (gpu.zig), for the root half, and the screen, through hukan's GNOME Shell extension
+//! (shell.zig), for the user half.
 
 const std = @import("std");
 const agent = @import("../agent.zig");
+const gpu = @import("gpu.zig");
 const keyboard = @import("keyboard.zig");
 const shell = @import("shell.zig");
 
@@ -15,6 +17,7 @@ pub fn startup(served: *const agent.Agent) void {
     if (std.mem.eql(u8, served.mode, "root")) {
         keyboard.startup(served.io);
         shell.install(served.io);
+        gpu.install(served);
     } else {
         shell.enable(served);
     }

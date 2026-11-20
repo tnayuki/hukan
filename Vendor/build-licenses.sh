@@ -2,7 +2,7 @@
 # Write Resources/Licenses for what reaches the app without a Vendor script of its own fetching
 # it: the Swift packages linked into the executable, at the commits Package.resolved pins, and
 # Zig's standard library, which is compiled into the guest agents, at GuestAgent/zig-version.
-# The vendored archives write their own (libgit2, virglrenderer, the tree-sitter grammars).
+# The vendored archives write their own (libgit2, gfxstream, Mesa, the tree-sitter grammars).
 #
 # Run by hand after a package or Zig bump, like the other scripts here. Needs network and jq.
 set -eu

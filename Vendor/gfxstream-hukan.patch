@@ -1,0 +1,378 @@
+diff --git a/host/meson.build b/host/meson.build
+index 0bd599e..a224235 100644
+--- a/host/meson.build
++++ b/host/meson.build
+@@ -168,6 +168,24 @@ elif host_machine.system() == 'qnx'
+   ]
+ endif
+ 
++# The virtio-gpu frontend's snapshots (stream_renderer_snapshot/restore) are protobufs.
++protoc = find_program('protoc')
++gen_snapshot_protos = generator(protoc,
++  output: ['@BASENAME@.pb.cc', '@BASENAME@.pb.h'],
++  arguments: ['--proto_path=@CURRENT_SOURCE_DIR@', '--cpp_out=@BUILD_DIR@', '@INPUT@'])
++files_lib_gfxstream_backend += gen_snapshot_protos.process(
++  'virtio_gpu_context_snapshot.proto',
++  'virtio_gpu_frontend_snapshot.proto',
++  'virtio_gpu_resource_snapshot.proto',
++  'virtio_gpu_ring_blob_snapshot.proto',
++  'virtio_gpu_timelines_snapshot.proto',
++)
++deps_gfxstream_backend += dependency('protobuf', static: true)
++gfxstream_backend_cpp_args += [
++  '-DGFXSTREAM_BUILD_WITH_SNAPSHOT_SUPPORT=1',
++  '-DGFXSTREAM_BUILD_WITH_SNAPSHOT_FRONTEND_SUPPORT=1',
++]
++
+ gfxstream_backend = library(
+   'gfxstream_backend',
+   files_lib_gfxstream_backend,
+diff --git a/host/virtio_gpu_frontend.cpp b/host/virtio_gpu_frontend.cpp
+index 03bdd9d..cda2de8 100644
+--- a/host/virtio_gpu_frontend.cpp
++++ b/host/virtio_gpu_frontend.cpp
+@@ -37,6 +37,7 @@
+ #include "gfxstream/host/address_space_operations.h"
+ #include "gfxstream/host/framework_formats.h"
+ #include "vulkan/vk_common_operations.h"
++#include "vulkan/vk_decoder_global_state.h"
+ // TODO: remove after moving save/load interface to ops.
+ #include "gfxstream/common/logging.h"
+ #include "gfxstream/host/address_space_graphics.h"
+@@ -324,6 +325,13 @@ int VirtioGpuFrontend::processCommand(const struct stream_renderer_command* cmd)
+ 
+             uint64_t fence_handle =
+                 convert32to64(exportSyncVK.fenceHandleLo, exportSyncVK.fenceHandleHi);
++#ifdef __APPLE__
++            // A semaphore exported for a sync fd names its syncId here, not a fence.
++            if (auto semaphoreFence =
++                    vk::VkDecoderGlobalState::get()->takeSemaphoreSyncFence(fence_handle)) {
++                fence_handle = *semaphoreFence;
++            }
++#endif
+ 
+             D("wait for gpu ring %s", to_string(ring).c_str());
+             auto taskId = mVirtioGpuTimelines->enqueueTask(ring);
+diff --git a/host/virtio_gpu_ring_blob.h b/host/virtio_gpu_ring_blob.h
+index f609593..590c7c1 100644
+--- a/host/virtio_gpu_ring_blob.h
++++ b/host/virtio_gpu_ring_blob.h
+@@ -15,6 +15,9 @@
+ #pragma once
+ 
+ #include <memory>
++#ifdef __APPLE__
++#include <sys/mman.h>
++#endif
+ #include <variant>
+ 
+ #ifdef GFXSTREAM_BUILD_WITH_SNAPSHOT_FRONTEND_SUPPORT
+@@ -28,16 +31,30 @@ namespace host {
+ 
+ // LINT.IfChange(virtio_gpu_ring_blob)
+ 
++// On macOS the memory is mmap'ed rather than taken from the heap: a VMM built on
++// Virtualization.framework hands it to VZVirtioSharedMemoryRegion, which wraps it as XPC shared
++// memory and refuses anything malloc owns.
+ struct AlignedMemory {
+     void* addr = nullptr;
+-
++#ifdef __APPLE__
++    size_t mappedSize = 0;
++    AlignedMemory(size_t align, size_t size) {
++        mappedSize = (size + 16383) & ~size_t(16383);
++        void* p = mmap(nullptr, mappedSize, PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED, -1, 0);
++        addr = p == MAP_FAILED ? nullptr : p;
++        (void)align;  // mmap returns page-aligned memory, which covers any alignment asked for
++    }
++    ~AlignedMemory() {
++        if (addr) munmap(addr, mappedSize);
++    }
++#else
+     AlignedMemory(size_t align, size_t size) : addr(gfxstream::aligned_buf_alloc(align, size)) {}
+-
+     ~AlignedMemory() {
+         if (addr != nullptr) {
+             gfxstream::aligned_buf_free(addr);
+         }
+     }
++#endif
+ 
+     // AlignedMemory is neither copyable nor movable.
+     AlignedMemory(const AlignedMemory& other) = delete;
+diff --git a/host/vulkan/vk_common_operations.cpp b/host/vulkan/vk_common_operations.cpp
+index 71eccae..5e433ed 100644
+--- a/host/vulkan/vk_common_operations.cpp
++++ b/host/vulkan/vk_common_operations.cpp
+@@ -2106,7 +2106,15 @@ MTLResource_id VkEmulation::getMtlResourceFromVkDeviceMemory(VulkanDispatch* vk,
+     };
+ 
+     MTLResource_id outputHandle = nullptr;
+-    vk->vkGetMemoryMetalHandleEXT(mDevice, &getMetalHandleInfo, &outputHandle);
++    // A device extension's entry point comes from the device's dispatch: an instance-level
++    // lookup returns it on MoltenVK but not on a Mesa driver such as KosmicKrisp.
++    auto getHandle = mDvk && mDvk->vkGetMemoryMetalHandleEXT ? mDvk->vkGetMemoryMetalHandleEXT
++                                                             : vk->vkGetMemoryMetalHandleEXT;
++    if (!getHandle) {
++        GFXSTREAM_ERROR("vkGetMemoryMetalHandleEXT is not available");
++        return nullptr;
++    }
++    getHandle(mDevice, &getMetalHandleInfo, &outputHandle);
+     if (outputHandle == nullptr) {
+         GFXSTREAM_ERROR("vkGetMemoryMetalHandleEXT returned null");
+     }
+@@ -2338,8 +2346,12 @@ bool VkEmulation::allocExternalMemory(VulkanDispatch* vk, VkEmulation::ExternalM
+         const bool swiftshader =
+             (gfxstream::base::getEnvironmentVariable("ANDROID_EMU_VK_ICD").compare("swiftshader") ==
+              0);
+-        if (!swiftshader) {
+-            vk->vkGetMemoryHostPointerPropertiesEXT(
++        // As above: the device's dispatch has it where the instance-level one may not.
++        auto getHostPointerProps =
++            mDvk && mDvk->vkGetMemoryHostPointerPropertiesEXT ? mDvk->vkGetMemoryHostPointerPropertiesEXT
++                                                              : vk->vkGetMemoryHostPointerPropertiesEXT;
++        if (!swiftshader && getHostPointerProps) {
++            getHostPointerProps(
+                 mDevice, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, hostAllocation,
+                 &memoryHostPointerProperties);
+             uint32_t requestedBits = (1u << allocInfo.memoryTypeIndex);
+@@ -5911,6 +5923,15 @@ VkEmulation::findRepresentativeColorBufferMemoryTypeIndexLocked() {
+                                    GfxstreamFormat::R8G8B8A8_UNORM,
+                                    kArbitraryHandle, true, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                    kArbitraryMipLevels)) {
++        // A driver with a single memory type needs no test image to say which type a ColorBuffer
++        // takes; KosmicKrisp is one, and cannot make the test image with host-allocated memory.
++        if (mDeviceInfo.memProps.memoryTypeCount == 1) {
++            EmulatedPhysicalDeviceMemoryProperties only(mDeviceInfo.memProps, 0, mFeatures);
++            return RepresentativeColorBufferMemoryTypeInfo{
++                .hostMemoryTypeIndex = 0,
++                .guestMemoryTypeIndex = only.getGuestColorBufferMemoryTypeIndex(),
++            };
++        }
+         GFXSTREAM_ERROR("Failed to setup memory type index test ColorBuffer.");
+         return std::nullopt;
+     }
+diff --git a/host/vulkan/vk_decoder_global_state.cpp b/host/vulkan/vk_decoder_global_state.cpp
+index 0ac4480..4da9e16 100644
+--- a/host/vulkan/vk_decoder_global_state.cpp
++++ b/host/vulkan/vk_decoder_global_state.cpp
+@@ -502,6 +502,25 @@ class VkDecoderGlobalState::Impl {
+                 stream->putBe64(reinterpret_cast<uint64_t>(semaphoreInfo.boxed));
+             }
+         }
++        // hukan: a timeline semaphore comes back at its counter's value, not at its initial one,
++        // or a guest waiting on a value it had reached waits for good after a restore.
++        std::vector<std::pair<uint64_t, uint64_t>> timelines;
++        for (const auto& [semaphore, semaphoreInfo] : mSemaphoreInfo) {
++            if (!semaphoreInfo.isTimelineSemaphore) continue;
++            auto* deviceInfo = gfxstream::base::find(mDeviceInfo, semaphoreInfo.device);
++            if (!deviceInfo) continue;
++            uint64_t value = 0;
++            if (dispatch_VkDevice(deviceInfo->boxed)->vkGetSemaphoreCounterValue(semaphoreInfo.device, semaphore,
++                                                                 &value) != VK_SUCCESS) {
++                continue;
++            }
++            timelines.emplace_back(reinterpret_cast<uint64_t>(semaphoreInfo.boxed), value);
++        }
++        stream->putBe32(static_cast<uint32_t>(timelines.size()));
++        for (const auto& [boxed, value] : timelines) {
++            stream->putBe64(boxed);
++            stream->putBe64(value);
++        }
+     }
+ 
+     void loadSemaphores(gfxstream::Stream* stream) REQUIRES(mMutex) {
+@@ -517,6 +536,27 @@ class VkDecoderGlobalState::Impl {
+             signalSemaphore(&stateBlock, unboxed_semaphore);
+             releaseSnapshotStateBlock(&stateBlock);
+         }
++        const uint32_t timelines = stream->getBe32();
++        for (uint32_t i = 0; i < timelines; ++i) {
++            const VkSemaphore boxed_semaphore = reinterpret_cast<VkSemaphore>(stream->getBe64());
++            const uint64_t value = stream->getBe64();
++            const VkSemaphore unboxed_semaphore = unbox_VkSemaphore(boxed_semaphore);
++            auto* semaphoreInfo = gfxstream::base::find(mSemaphoreInfo, unboxed_semaphore);
++            if (!semaphoreInfo) continue;
++            semaphoreInfo->lastSignalValue = value;
++            auto* deviceInfo = gfxstream::base::find(mDeviceInfo, semaphoreInfo->device);
++            if (!deviceInfo || value == 0) continue;
++            uint64_t now = 0;
++            dispatch_VkDevice(deviceInfo->boxed)->vkGetSemaphoreCounterValue(semaphoreInfo->device,
++                                                             unboxed_semaphore, &now);
++            if (now >= value) continue;
++            const VkSemaphoreSignalInfo signalInfo = {
++                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
++                .semaphore = unboxed_semaphore,
++                .value = value,
++            };
++            dispatch_VkDevice(deviceInfo->boxed)->vkSignalSemaphore(semaphoreInfo->device, &signalInfo);
++        }
+     }
+ 
+     void processEventsForSubmittedCommandBuffer(VkQueue queue, VkCommandBuffer commandBuffer) {
+@@ -3030,8 +3070,6 @@ class VkDecoderGlobalState::Impl {
+         deviceInfo.useAstcCpuDecompression =
+             m_vkEmulation->getAstcLdrEmulationMode() == AstcEmulationMode::Cpu &&
+             AstcCpuDecompressor::get().available();
+-        deviceInfo.decompPipelines =
+-            std::make_unique<GpuDecompressionPipelineManager>(m_vk, *pDevice);
+         getSupportedFenceHandleTypes(vk, physicalDevice, &supportedFenceHandleTypes);
+         getSupportedSemaphoreHandleTypes(vk, physicalDevice, &supportedBinarySemaphoreHandleTypes);
+ 
+@@ -3062,6 +3100,10 @@ class VkDecoderGlobalState::Impl {
+ 
+         VulkanDispatch* dispatch = dispatch_VkDevice(boxedDevice);
+         init_vulkan_dispatch_from_device(vk, *pDevice, dispatch);
++        // hukan: the device's own dispatch, not the loader's: a driver loaded directly, with no
++        // loader, has no device functions in the latter.
++        deviceInfo.decompPipelines =
++            std::make_unique<GpuDecompressionPipelineManager>(dispatch, *pDevice);
+ 
+         if (mLogging) {
+             GFXSTREAM_INFO("%s: init vulkan dispatch from device (end)", __func__);
+@@ -3496,7 +3538,7 @@ class VkDecoderGlobalState::Impl {
+         // Run the underlying API call.
+         {
+             AutoLock lock(*graphicsDriverLock());
+-            m_vk->vkDestroyDevice(device, nullptr);
++            dispatch_VkDevice(deviceInfo.boxed)->vkDestroyDevice(device, nullptr);
+         }
+ 
+         GFXSTREAM_INFO("Destroyed VkDevice:%p", device);
+@@ -3719,6 +3761,21 @@ class VkDecoderGlobalState::Impl {
+         auto device = unbox_VkDevice(boxed_device);
+         auto vk = dispatch_VkDevice(boxed_device);
+ 
++        const auto* externalMemory = vk_find_struct<VkExternalMemoryImageCreateInfo>(pCreateInfo);
++#ifdef __APPLE__
++        // A guest image that takes in external memory is bound to a ColorBuffer's, which gfxstream
++        // creates MUTABLE_FORMAT; on Metal that flag also turns lossless compression off, so an
++        // image made without it is laid out (and sized) differently from the memory it is bound to.
++        VkImageCreateInfo mutableCreateInfo;
++        if (externalMemory && externalMemory->handleTypes &&
++            pCreateInfo->tiling == VK_IMAGE_TILING_OPTIMAL &&
++            !(pCreateInfo->flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT)) {
++            mutableCreateInfo = *pCreateInfo;
++            mutableCreateInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
++            pCreateInfo = &mutableCreateInfo;
++        }
++#endif
++
+         if (pCreateInfo->format == VK_FORMAT_UNDEFINED) {
+             // VUID-VkImageCreateInfo-pNext-01975:
+             // If the pNext chain does not include a VkExternalFormatANDROID structure, or does
+@@ -3805,7 +3862,7 @@ class VkDecoderGlobalState::Impl {
+             cmpInfo->createCompressedMipmapImages(vk, *pCreateInfo);
+ 
+             if (deviceInfo->useAstcCpuDecompression && cmpInfo->isAstc()) {
+-                cmpInfo->initAstcCpuDecompression(m_vk, deviceInfo->physicalDevice);
++                cmpInfo->initAstcCpuDecompression(vk, deviceInfo->physicalDevice);
+             }
+         }
+ 
+@@ -5108,11 +5165,68 @@ class VkDecoderGlobalState::Impl {
+         return result;
+     }
+ 
++#ifdef __APPLE__
++    // There is no sync fd on macOS to export a semaphore as, so the guest's sync for it is a fence
++    // here: an empty submit waits on the semaphore and signals a fence, and the guest's export of
++    // syncId (GFXSTREAM_CREATE_EXPORT_SYNC_VK) waits on that fence instead of on an OS handle.
++    std::mutex mSemaphoreSyncMutex;
++    std::unordered_map<uint64_t, uint64_t> mSemaphoreSyncFences;  // syncId -> boxed VkFence
++
++    VkResult signalFenceForSemaphore(gfxstream::base::BumpPool* pool, VkDevice boxed_device,
++                                     VkSemaphore semaphore, uint64_t syncId) {
++        (void)semaphore;
++        auto vk = dispatch_VkDevice(boxed_device);
++        auto device = unbox_VkDevice(boxed_device);
++        // Waiting on the semaphore from a submit of our own would sit in the queue ahead of the
++        // guest's signal when that arrives later, and Metal runs a queue in order: a deadlock. So
++        // the queue is drained of what it already holds - the work the guest has submitted to
++        // signal it - and the fence handed back is signalled from the start.
++        VkQueue queue = VK_NULL_HANDLE;
++        std::shared_ptr<std::mutex> queueMutex;
++        {
++            std::lock_guard<std::mutex> lock(mMutex);
++            for (auto& [unboxedQueue, queueInfo] : mQueueInfo) {
++                if (queueInfo.device == device) {
++                    queue = unboxedQueue;
++                    queueMutex = queueInfo.queueMutex;
++                    break;
++                }
++            }
++        }
++        if (queue != VK_NULL_HANDLE) {
++            std::lock_guard<std::mutex> qlock(*queueMutex);
++            vk->vkQueueWaitIdle(queue);
++        }
++        const VkFenceCreateInfo fci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr,
++                                       VK_FENCE_CREATE_SIGNALED_BIT};
++        VkFence boxedFence = VK_NULL_HANDLE;
++        VkResult r = on_vkCreateFence(pool, kInvalidSnapshotApiCallHandle, boxed_device, &fci,
++                                      nullptr, &boxedFence);
++        if (r != VK_SUCCESS) return r;
++        std::lock_guard<std::mutex> lock(mSemaphoreSyncMutex);
++        mSemaphoreSyncFences[syncId] = reinterpret_cast<uint64_t>(boxedFence);
++        return VK_SUCCESS;
++    }
++
++    std::optional<uint64_t> takeSemaphoreSyncFence(uint64_t syncId) {
++        std::lock_guard<std::mutex> lock(mSemaphoreSyncMutex);
++        auto it = mSemaphoreSyncFences.find(syncId);
++        if (it == mSemaphoreSyncFences.end()) return std::nullopt;
++        uint64_t fence = it->second;
++        mSemaphoreSyncFences.erase(it);
++        return fence;
++    }
++#endif
++
+     VkResult on_vkGetSemaphoreGOOGLE(gfxstream::base::BumpPool* pool, VkSnapshotApiCallHandle,
+                                      VkDevice boxed_device, VkSemaphore semaphore,
+                                      uint64_t syncId) {
+         if (!m_vkEmulation->getFeatures().VulkanExternalSync.enabled()) {
++#ifdef __APPLE__
++            return signalFenceForSemaphore(pool, boxed_device, semaphore, syncId);
++#else
+             return VK_ERROR_FEATURE_NOT_PRESENT;
++#endif
+         }
+ 
+         auto vk = dispatch_VkDevice(boxed_device);
+@@ -12466,7 +12580,7 @@ class VkDecoderGlobalState::Impl {
+             }
+         }
+ 
+-        m_vk->vkDestroyInstance(instance, nullptr);
++        dispatch_VkInstance(instanceInfo.boxed)->vkDestroyInstance(instance, nullptr);
+         GFXSTREAM_INFO("Destroyed VkInstance:%p for application:'%s' engine:'%s'.", instance,
+                        instanceInfo.applicationName.c_str(), instanceInfo.engineName.c_str());
+ 
+@@ -13241,6 +13355,12 @@ VkResult VkDecoderGlobalState::on_vkGetSemaphoreFdKHR(gfxstream::base::BumpPool*
+     return mImpl->on_vkGetSemaphoreFdKHR(pool, apiCallHandle, device, pGetFdInfo, pFd);
+ }
+ 
++#ifdef __APPLE__
++std::optional<uint64_t> VkDecoderGlobalState::takeSemaphoreSyncFence(uint64_t syncId) {
++    return mImpl->takeSemaphoreSyncFence(syncId);
++}
++#endif
++
+ VkResult VkDecoderGlobalState::on_vkGetSemaphoreGOOGLE(gfxstream::base::BumpPool* pool,
+                                                        VkSnapshotApiCallHandle apiCallHandle,
+                                                        VkDevice device, VkSemaphore semaphore,
+diff --git a/host/vulkan/vk_decoder_global_state.h b/host/vulkan/vk_decoder_global_state.h
+index 5a79fa9..d5ed4fd 100644
+--- a/host/vulkan/vk_decoder_global_state.h
++++ b/host/vulkan/vk_decoder_global_state.h
+@@ -709,6 +709,10 @@ class VkDecoderGlobalState {
+     VkResult on_vkGetSemaphoreFdKHR(gfxstream::base::BumpPool* pool,
+                                     VkSnapshotApiCallHandle apiCallHandle, VkDevice boxed_device,
+                                     const VkSemaphoreGetFdInfoKHR* pGetFdInfo, int* pFd);
++#ifdef __APPLE__
++    // The boxed fence standing in for a semaphore exported as syncId, once (see the .cpp).
++    std::optional<uint64_t> takeSemaphoreSyncFence(uint64_t syncId);
++#endif
+     VkResult on_vkGetSemaphoreGOOGLE(gfxstream::base::BumpPool* pool,
+                                      VkSnapshotApiCallHandle apiCallHandle, VkDevice boxed_device,
+                                      VkSemaphore semaphore, uint64_t syncId);

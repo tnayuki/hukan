@@ -1437,10 +1437,9 @@ private final class NewMacTemplateSheet: NSWindowController {
   private let processorsPopUp = NSPopUpButton()
   private let memoryPopUp = NSPopUpButton()
   private let diskNote = NSTextField(labelWithString: "")
-  /// Linux on macOS 27: whether its machines get a GPU (`VirglGPU`). Off unless asked for, since it
-  /// costs the suspend and only one such machine runs at a time.
+  /// Linux on macOS 27: whether its machines get a GPU (`GPUDevice`). Off unless asked for.
   private let gpuCheckbox = NSButton(
-    checkboxWithTitle: "Run OpenGL on this Mac's GPU", target: nil, action: nil)
+    checkboxWithTitle: "Run OpenGL and Vulkan on this Mac's GPU", target: nil, action: nil)
   private var gpuRow: NSGridRow?
   /// Linux: whether its machines are set up for Rosetta. On unless turned off, since an x86_64
   /// program is often the reason to want Linux here at all.
@@ -1520,8 +1519,6 @@ private final class NewMacTemplateSheet: NSWindowController {
     rosettaCheckbox.state = .on
     rosettaCheckbox.toolTip =
       "Also lets apt install amd64 packages."
-    gpuCheckbox.toolTip =
-      "OpenGL 4.3. Shut down instead of suspended."
     note.textColor = .secondaryLabelColor
     note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))

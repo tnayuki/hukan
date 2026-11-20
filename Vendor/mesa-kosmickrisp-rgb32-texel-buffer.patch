@@ -1,0 +1,216 @@
+# KosmicKrisp's RGB32 texel buffers on a GPU whose own have none (before Apple family 11), hukan's:
+# such a view is made an R32 one three times as wide, flagged in its 16-byte descriptor, and the
+# shader reads its three texels and puts them together. RGB32 texture buffers are core GL from 4.0
+# (ARB_texture_buffer_object_rgb32), and the guest's Zink offers 4.0 and up only with them.
+# Applied by Vendor/build-mesa.sh over the pinned Mesa commit.
+diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
+index a25e703..be23cf9 100644
+--- a/src/kosmickrisp/vulkan/kk_buffer_view.c
++++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
+@@ -20,6 +20,24 @@
+ 
+ #include "vk_format.h"
+ 
++/* The R32 format whose texels an RGB32 one is made of, for a GPU whose texel buffers have no RGB32
++ * (before Apple family 11): read three at a time by the shader instead (hukan). */
++static enum pipe_format
++kk_rgb32_as_r32(const struct kk_physical_device *pdev, enum pipe_format format)
++{
++   enum pipe_format r32;
++   switch (format) {
++   case PIPE_FORMAT_R32G32B32_FLOAT: r32 = PIPE_FORMAT_R32_FLOAT; break;
++   case PIPE_FORMAT_R32G32B32_UINT: r32 = PIPE_FORMAT_R32_UINT; break;
++   case PIPE_FORMAT_R32G32B32_SINT: r32 = PIPE_FORMAT_R32_SINT; break;
++   default: return PIPE_FORMAT_NONE;
++   }
++   const struct kk_va_format *native = kk_get_va_format(format);
++   if (native && pdev->info.gpu_apple_family >= native->gpu_family)
++      return PIPE_FORMAT_NONE;
++   return r32;
++}
++
+ VkFormatFeatureFlags2
+ kk_get_buffer_format_features(struct kk_physical_device *pdev,
+                               VkFormat vk_format)
+@@ -30,6 +48,9 @@ kk_get_buffer_format_features(struct kk_physical_device *pdev,
+    if (p_format == PIPE_FORMAT_NONE)
+       return 0;
+ 
++   if (kk_rgb32_as_r32(pdev, p_format) != PIPE_FORMAT_NONE)
++      features |= VK_FORMAT_FEATURE_2_UNIFORM_TEXEL_BUFFER_BIT;
++
+    const struct kk_va_format *format = kk_get_va_format(p_format);
+    if (format && pdev->info.gpu_apple_family >= format->gpu_family) {
+       if (format->texel_buffer.read)
+@@ -64,6 +85,14 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+       return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
+ 
+    enum pipe_format p_format = vk_format_to_pipe_format(view->vk.format);
++   uint32_t width_px = view->vk.elements;
++   struct kk_physical_device *pdev = kk_device_physical(dev);
++   enum pipe_format r32 = kk_rgb32_as_r32(pdev, p_format);
++   view->rgb32_as_r32 = r32 != PIPE_FORMAT_NONE;
++   if (view->rgb32_as_r32) {
++      p_format = r32;
++      width_px *= 3u;
++   }
+    const struct kk_va_format *supported_format = kk_get_va_format(p_format);
+ 
+    /* If we reached here, we support reading at least */
+@@ -72,12 +101,12 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+       usage |= MTL_TEXTURE_USAGE_SHADER_WRITE;
+ 
+    /* Only these formats allow atomics for texel buffers */
+-   if (view->vk.format == VK_FORMAT_R32_UINT ||
+-       view->vk.format == VK_FORMAT_R32_SINT)
++   if (!view->rgb32_as_r32 && (view->vk.format == VK_FORMAT_R32_UINT ||
++                               view->vk.format == VK_FORMAT_R32_SINT))
+       usage |= MTL_TEXTURE_USAGE_SHADER_ATOMIC;
+ 
+    struct kk_image_layout layout = {
+-      .width_px = view->vk.elements,
++      .width_px = width_px,
+       .height_px = 1u,
+       .depth_px = 1u,
+       .layers = 1u,
+diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.h b/src/kosmickrisp/vulkan/kk_buffer_view.h
+index 8a995ea..cd3a843 100644
+--- a/src/kosmickrisp/vulkan/kk_buffer_view.h
++++ b/src/kosmickrisp/vulkan/kk_buffer_view.h
+@@ -23,6 +23,8 @@ struct kk_buffer_view {
+    struct vk_buffer_view vk;
+    mtl_texture *mtl_texel_buffer_handle;
+    uint64_t texel_buffer_gpu_id;
++   /* An RGB32 format made as R32, three texels a texel (kk_texel_buffer_descriptor). */
++   bool rgb32_as_r32;
+ };
+ 
+ VK_DEFINE_NONDISP_HANDLE_CASTS(kk_buffer_view, vk.base, VkBufferView,
+diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set.c b/src/kosmickrisp/vulkan/kk_descriptor_set.c
+index c817d18..2f00bae 100644
+--- a/src/kosmickrisp/vulkan/kk_descriptor_set.c
++++ b/src/kosmickrisp/vulkan/kk_descriptor_set.c
+@@ -229,7 +229,7 @@ write_buffer_view_desc(struct kk_descriptor_set *set,
+                        const VkBufferView bufferView, uint32_t binding,
+                        uint32_t elem)
+ {
+-   struct kk_storage_image_descriptor desc = {};
++   struct kk_texel_buffer_descriptor desc = {};
+    if (bufferView != VK_NULL_HANDLE) {
+       VK_FROM_HANDLE(kk_buffer_view, view, bufferView);
+ 
+@@ -237,6 +237,7 @@ write_buffer_view_desc(struct kk_descriptor_set *set,
+       assert(view->texel_buffer_gpu_id);
+ 
+       desc.image_gpu_resource_id = view->texel_buffer_gpu_id;
++      desc.rgb32_as_r32 = view->rgb32_as_r32;
+    }
+    write_desc(set, binding, elem, &desc, sizeof(desc));
+ }
+diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set_layout.c b/src/kosmickrisp/vulkan/kk_descriptor_set_layout.c
+index 74f9d5e..552b2d2 100644
+--- a/src/kosmickrisp/vulkan/kk_descriptor_set_layout.c
++++ b/src/kosmickrisp/vulkan/kk_descriptor_set_layout.c
+@@ -44,6 +44,9 @@ kk_descriptor_stride_align_for_type(
+ 
+    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
++      *stride = *alignment = sizeof(struct kk_texel_buffer_descriptor);
++      break;
++
+    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+       *stride = *alignment = sizeof(struct kk_storage_image_descriptor);
+       break;
+diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
+index 3c0f8b8..0197727 100644
+--- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
++++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
+@@ -41,6 +41,19 @@ struct kk_storage_image_descriptor {
+ static_assert(sizeof(struct kk_storage_image_descriptor) == 8,
+               "kk_storage_image_descriptor has no holes");
+ 
++/* A texel buffer's view. An RGB32 format on a GPU whose texel buffers have none is made as the
++ * R32 format of its channels, three texels to one of the view's, and the shader told so here: it
++ * reads the three and counts a third of the texels (hukan).
++ */
++struct kk_texel_buffer_descriptor {
++   uint64_t image_gpu_resource_id;
++   uint32_t rgb32_as_r32;
++   uint32_t pad;
++};
++
++static_assert(sizeof(struct kk_texel_buffer_descriptor) == 16,
++              "kk_texel_buffer_descriptor has no holes");
++
+ /* This has to match nir_address_format_64bit_bounded_global */
+ struct kk_buffer_address {
+    uint64_t base_addr;
+diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
+index c09da5b..4ef52c2 100644
+--- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
++++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
+@@ -468,6 +468,53 @@ try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
+    }
+ }
+ 
++/* An RGB32 texel buffer made as R32 (kk_texel_buffer_descriptor): which one a buffer texture is,
++ * is known only once its descriptor is read, so a fetch reads the R32 texels a texel would be
++ * made of as well and keeps them when the descriptor says so, and a size is a third of the R32
++ * texels. Both are selects rather than a branch, which this pass cannot add (hukan).
++ */
++static void
++lower_rgb32_texel_buffer(nir_builder *b, nir_tex_instr *tex, nir_def *texture,
++                         const struct lower_descriptors_ctx *ctx)
++{
++   b->cursor = nir_before_instr(&tex->instr);
++   nir_def *flag = load_resource_deref_desc(
++      b, 1, 32, nir_src_as_deref(nir_src_for_ssa(texture)),
++      offsetof(struct kk_texel_buffer_descriptor, rgb32_as_r32), ctx);
++   nir_def *rgb32 = nir_ine_imm(b, flag, 0);
++
++   b->cursor = nir_after_instr(&tex->instr);
++   nir_def *result;
++   if (tex->op == nir_texop_txs) {
++      nir_def *size = nir_channel(b, &tex->def, 0);
++      nir_def *third = nir_udiv_imm(b, size, 3);
++      result = nir_vector_insert_imm(b, &tex->def, nir_bcsel(b, rgb32, third, size), 0);
++   } else {
++      int coord_index = nir_tex_instr_src_index(tex, nir_tex_src_coord);
++      assert(coord_index >= 0);
++      nir_def *coord = tex->src[coord_index].src.ssa;
++      nir_def *first = nir_imul_imm(b, coord, 3);
++      nir_def *channels[4];
++      for (unsigned i = 0; i < 3; i++) {
++         nir_tex_instr *fetch =
++            nir_instr_as_tex(nir_instr_clone(b->shader, &tex->instr));
++         nir_builder_instr_insert(b, &fetch->instr);
++         b->cursor = nir_before_instr(&fetch->instr);
++         nir_src_rewrite(&fetch->src[coord_index].src, nir_iadd_imm(b, first, i));
++         b->cursor = nir_after_instr(&fetch->instr);
++         channels[i] = nir_channel(b, &fetch->def, 0);
++      }
++      const unsigned bits = tex->def.bit_size;
++      channels[3] = nir_alu_type_get_base_type(tex->dest_type) == nir_type_float
++                       ? nir_imm_floatN_t(b, 1.0, bits)
++                       : nir_imm_intN_t(b, 1, bits);
++      nir_def *emulated = nir_vec(b, channels, tex->def.num_components);
++      result = nir_bcsel(b, rgb32, emulated, &tex->def);
++   }
++   nir_def_rewrite_uses_after(&tex->def, result);
++   b->cursor = nir_before_instr(&tex->instr);
++}
++
+ static bool
+ lower_tex(nir_builder *b, nir_tex_instr *tex,
+           const struct lower_descriptors_ctx *ctx)
+@@ -566,6 +613,10 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+             .image_dim = tex->sampler_dim, .image_array = tex->is_array);
+       }
+       nir_tex_instr_add_src(tex, nir_tex_src_texture_handle, handle);
++
++      if (tex->sampler_dim == GLSL_SAMPLER_DIM_BUF &&
++          (tex->op == nir_texop_txf || tex->op == nir_texop_txs))
++         lower_rgb32_texel_buffer(b, tex, texture, ctx);
+    }
+ 
+    if (sampler != NULL) {

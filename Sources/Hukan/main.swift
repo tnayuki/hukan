@@ -543,9 +543,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 }
 
 // Started by a GPU machine as its renderer, the executable is not the app either: it plays one
-// guest's OpenGL on this Mac's (see `VirglLink`).
-if CommandLine.arguments.dropFirst().first == VirglLink.launchArgument {
-  if #available(macOS 27, *) { VirglRendererProcess.run() } else { exit(64) }
+// guest's Vulkan on this Mac's (see `GPULink`).
+if CommandLine.arguments.dropFirst().first == GPULink.launchArgument {
+  if #available(macOS 27, *) { GPURendererProcess.run() } else { exit(64) }
 }
 
 // Started by the Claude desktop app as its MCP server, the executable is not the app at all: it

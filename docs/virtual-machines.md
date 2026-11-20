@@ -149,64 +149,65 @@ and the reasoning behind it; read the file before changing the area it covers.
   framework gives a Linux guest a screen and nothing to render with**, so without the GPU below
   drawing is llvmpipe on the CPU. The account takes this Mac's user id,
   so what either side writes in the shared worktree is the same user's.
-- **A Linux machine can have a GPU, and it is virgl on Mesa's Zink over KosmicKrisp.** From
-  macOS 27 a process can implement a virtio device of its own (`VZCustomVirtioDeviceConfiguration`),
-  so hukan implements a virtio-gpu: the guest's stock kernel driver and Mesa's `virgl` send its
-  OpenGL down it, and virglrenderer replays that on an OpenGL of this Mac's — Zink, Mesa's OpenGL
-  on Vulkan, over KosmicKrisp, Mesa's Vulkan on Metal — in surfaceless EGL contexts hukan hands it,
-  and the guest gets **OpenGL 4.3 core**. **Not macOS's own OpenGL**, which it ran on first: that
-  stops at 4.1, with no compute shaders, so Unity's GPU skinning and its sRGB writes in a
-  linear-space project failed, and Unity's announced move to a 4.3 minimum would have stopped its
-  editor starting at all; it is also an API Apple deprecated. **Not ANGLE**, the road UTM takes: it
-  is GLES, which caps a guest's desktop GL below the 3.2 core Unity's editor needs. What Zink can
-  honestly offer is what the Vulkan driver beneath has, and Metal has no geometry shaders or
-  transform feedback: on MoltenVK, or on KosmicKrisp as released, that is GL 2.1. KosmicKrisp
-  builds both from compute, as Asahi does for Apple's GPUs under Linux — geometry shaders on Mesa's
-  main branch, transform feedback in a merge request applied here — and with them Zink reaches
-  4.6 but for one extension, RGB32 texel buffers, a format Metal lacks before Apple family 11.
-  That one is claimed with an extension override and honoured in vrend instead: an RGB32 view is
-  bound as R32 over the same bytes and the shader reads three texels (a guest that used one
-  before aborted the renderer on a Metal assertion). Measured end to end through Mesa's virgl
-  driver over virglrenderer's vtest socket on this Mac, compute, image stores, sRGB writes,
-  geometry shaders, transform feedback, fp64 and RGB32 texel buffers all give the right answers,
-  and that virgl offers 4.3 of the 4.6 the host has; in a machine, Ubuntu 24.04's Mesa 25.2
-  reports 4.3 core and 4.3 compatibility, and Unity 6.3's editor opens on `<OpenGL 4.3>`.
-  **EGL is stricter about threads than CGL was**, and the renderer runs on a serial queue whose
-  blocks land on any thread: a context still current on one thread cannot be made current on
-  another, so every block lets go of its context when done; the API a context is made for is per
-  thread, so it is bound before each one is made; and a destroyed context is no share, so the one
-  vrend makes only to probe the version is not remembered as the share group's. **vrend assumes a
-  Linux host**, and its own two changes are patched in (`Vendor/virglrenderer-hukan.patch`, which
-  says why hunk by hunk); it is built with GL errors non-fatal. **The renderer is a process of its own, one per machine**: this executable started
-  again with `--virgl-renderer`. virglrenderer is one renderer per process — its resource and
-  context ids are global, and a guest writes them into its command stream, so two guests in one
-  process collide on them, and remapping them would mean parsing every command. The device in
-  this process only forwards requests, over a socket; guest RAM goes to the renderer once, as a
-  Mach memory entry handed over through a bootstrap name only it is told (the rendezvous Chromium
-  uses), so its transfers touch the guest's pages directly. **The guest's screen is the GPU's,
-  read back by the GPU into the IOSurfaces it is shown from**: each of two IOSurfaces, taken in
-  turn, has its pages pinned as a GL buffer (GL_AMD_pinned_memory) and the scanout is read into it
-  there, so no pixel crosses the CPU; a fence, polled, says when a frame may be handed over, and the
-  tab's layer shows it, with no GL in this process at all. Nothing shares more directly:
-  KosmicKrisp exchanges memory with the outside as a Metal heap or a host pointer only, and an
-  IOSurface's texture cannot live in a heap. A 1920×1200 frame costs about half a millisecond of
-  CPU this way (macOS's own OpenGL, by contrast, had made a plain readback cost 59% of a core).
-  **VZ's own screen stays, for input only**:
+- **A Linux machine can have a GPU, and it is gfxstream's Vulkan over KosmicKrisp, with the
+  guest's own Zink on top.** From macOS 27 a process can implement a virtio device of its own
+  (`VZCustomVirtioDeviceConfiguration`), so hukan implements a virtio-gpu that speaks gfxstream:
+  the guest's stock kernel driver carries the Vulkan of Mesa's gfxstream driver down it, and
+  gfxstream's host half (`Vendor/build-gfxstream.sh`) replays it on KosmicKrisp, Mesa's Vulkan on
+  Metal. The guest's OpenGL is Ubuntu's own Zink on that Vulkan, chosen for the device by a drirc,
+  so every program gets it with nothing in its environment: **OpenGL 4.6 core, and Vulkan**.
+  **Not virgl**, which it was first: virglrenderer replays a guest's OpenGL on the host's — Zink
+  over KosmicKrisp, in the renderer — and offered 4.3 of the 4.6 that host had, and the GPU's
+  state lived in host GL contexts nothing can save, so such a machine could not be suspended.
+  **Not macOS's own OpenGL**, which virgl ran on before that: it stops at 4.1, with no compute
+  shaders, so Unity's GPU skinning and its sRGB writes in a linear-space project failed, and
+  Unity's announced move to a 4.3 minimum would have stopped its editor starting at all; it is
+  also an API Apple deprecated. **Not ANGLE**, the road UTM takes: it is GLES, which caps a guest's
+  desktop GL below the 3.2 core Unity's editor needs. What Zink can honestly offer is what the
+  Vulkan driver beneath has, and Metal has no geometry shaders or transform feedback: on MoltenVK,
+  or on KosmicKrisp as released, that is GL 2.1. KosmicKrisp builds both from compute, as Asahi
+  does for Apple's GPUs under Linux — geometry shaders on Mesa's main branch, transform feedback in
+  a merge request applied here — and the one extension still missing for 4.6, RGB32 texel buffers,
+  a format Metal lacks before Apple family 11, is patched into KosmicKrisp
+  (`Vendor/mesa-kosmickrisp-rgb32-texel-buffer.patch`): such a view is bound as R32 over the same
+  bytes, three times as wide, and the shader reads three texels.
+  **The guest's Vulkan driver is hukan's, carried in the agent**: Ubuntu's Mesa has a gfxstream
+  driver too, but one too old for Zink and without what a buffer shared with the desktop needs, so
+  one built from a pinned Mesa commit (`Vendor/build-guest-gpu.sh`) is put in place by the agent's
+  root half at each start, on a machine with the device only, and Ubuntu's manifest for its own is
+  diverted, which apt keeps across upgrades. A new driver needs a new agent, not a new template.
+  **It comes in two architectures**, since what Rosetta runs loads Mesa of its own: Unity's editor
+  is x86_64, and with only an arm64 driver its Zink found no device and it drew on llvmpipe, at GL
+  4.5. The manifest names the driver without a directory, so each architecture's loader takes the
+  one in its own library directory.
+  **A blob the guest maps is a Metal heap of KosmicKrisp's**, which it hands out only when built
+  for the macOS platform; the renderer passes it to this process as a Mach memory entry, and the
+  device maps it into its shared memory region at the place the guest chose. That region is
+  mapped in the host's 16K pages and virtio_gpu places blobs on the guest's 4K, so a template made
+  with a GPU builds a module with DKMS (`Resources/hukan-gpu-align`) that has virtio_gpu place them
+  on 64K; DKMS builds it again for each kernel apt brings.
+  **The renderer is a process of its own, one per machine**: this executable started again with
+  `--gpu-renderer`. gfxstream's renderer is one per process, and the Vulkan driver it loads is
+  KosmicKrisp, by path, with no Vulkan loader between them (a few calls of gfxstream's that went
+  through the loader's table are patched, `Vendor/gfxstream-hukan.patch`, which says why hunk by
+  hunk). The device in this process only forwards requests, over a socket; guest RAM goes to the
+  renderer once, as a Mach memory entry handed over through a bootstrap name only it is told (the
+  rendezvous Chromium uses). **The guest's screen is read back into two IOSurfaces**, taken in
+  turn, which the tab's layer shows. **VZ's own screen stays, for input only**:
   `VZVirtualMachineView` hands the keyboard and pointer to a guest only through a screen of VZ's,
   so it is kept, left alone by the guest — mutter is told by udev tags at each boot to take the
-  GPU's card as its primary and ignore VZ's — and the GPU follows its size, which keeps fit, fixed and agent-set resolutions working unchanged.
-  Socket writes are queued and nonblocking on both ends: a full socket must leave the queue free
-  to read replies and handle a reset or stop. Guest fence ids stay opaque 64-bit values in replies;
-  vrend gets a separate 32-bit sequence, and only one fence poll is scheduled at a time. A reset
-  replaces the renderer; releasing the VM owner also shuts its GPU down permanently, so a late
-  DRIVER_OK cannot start it again. The renderer watches its parent's exit independently of GL and
-  socket handling. GPU lifecycle logs include a device identity to distinguish a reboot's renderer
-  replacements from separate devices; fences pending for five seconds are logged by the renderer.
+  GPU's card as its primary and ignore VZ's — and the GPU follows its size, which keeps fit, fixed
+  and agent-set resolutions working unchanged. Socket writes are queued and nonblocking on both
+  ends: a full socket must leave the queue free to read replies and handle a reset or stop. A
+  reset replaces the renderer; releasing the VM owner also shuts its GPU down permanently, so a
+  late DRIVER_OK cannot start it again. The renderer watches its parent's exit on its own.
+  **Such a machine suspends like any other.** gfxstream snapshots its Vulkan state, captured from
+  the renderer's start, beside the machine's own state; the device saves which blobs were mapped
+  where, and a restored machine resumes only once the new renderer has handed each of them over
+  again and they are mapped. gfxstream does not save a timeline semaphore's value, which left a
+  restored guest's frames waiting on one forever, so the patch saves and signals it. A restore
+  needs the machine identifier and MAC address it was saved with, which a machine keeps.
   **Chosen when the template is made**, and kept by its copies, since the guest is set up then.
-  **Such a machine cannot be suspended**: its state lives in this Mac's GPU and is not saved, so
-  a resumed guest would wake with every context gone. Its Suspend is off rather than renamed —
-  a shutdown cannot be carried on from, and an item in Suspend's place reads as one that can —
-  and what saves a machine on the way out (a quit, its session going) shuts it down instead.
 - **A Windows machine runs in QEMU from Homebrew, because Virtualization.framework cannot run
   Windows.** It is the one kind of machine that is not in this process. QEMU is a dependency of
   the cask, as ripgrep is: hukan is built for one person, who uses Windows guests, so the size it

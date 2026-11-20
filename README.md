@@ -510,12 +510,11 @@ shares and Rosetta; nobody signs in, and the account's own half of the agent sta
 machines are given commands only: the agent's screen tools answer that there is no desktop, and
 the sheet offers no GPU. Its kernel is fetched the same way, as the desktop's is.
 
-On macOS 27 a Linux template can be made with a GPU (the sheet's GPU checkbox, “Run OpenGL on
-this Mac's GPU”): its machines' OpenGL runs on this Mac's GPU, 4.3 core — compute shaders
-included — and their desktop is drawn by it, enough for Unity's editor on its default OpenGL.
-Such a machine cannot be
-suspended — its GPU's state is not saved — so its Suspend is off and hukan quitting shuts it
-down. Each such machine renders in a process of its own, so several can run at once.
+On macOS 27 a Linux template can be made with a GPU (the sheet's GPU checkbox, “Run OpenGL and
+Vulkan on this Mac's GPU”): its machines' OpenGL 4.6 core and Vulkan run on this Mac's GPU, and
+their desktop is drawn by it — programs Rosetta runs included, so Unity's editor draws on it with
+its default OpenGL. Such a machine suspends and resumes like any other. Each renders in a process
+of its own, so several can run at once.
 
 ### Session lifetime
 

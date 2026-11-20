@@ -312,9 +312,16 @@ enum UbuntuPackages {
         ?? (try isoFile(iso, "casper/minimal.manifest"))
       baseline = manifest(String(decoding: manifestData, as: UTF8.self))
     }
-    // Japanese input is for a desktop; a server has nothing to type into.
-    let extras = server ? [] : ["ibus-mozc"]
     let kernel = baseline.keys.filter(isKernelImage).sorted().first
+    // Japanese input is for a desktop; a server has nothing to type into. So is a GPU, and what its
+    // machine needs: DKMS and the running kernel's headers, for the module that aligns the GPU's
+    // blobs (Resources/hukan-gpu-align). The headers come with `linux-virtual`; a kernel the
+    // install layer brings is named here.
+    let extras =
+      server
+      ? []
+      : ["ibus-mozc", "dkms"]
+        + (kernel.map { ["linux-headers-" + $0.dropFirst("linux-image-".count)] } ?? [])
     // Hash the actual ISO, not its filename: a rebuilt point release must never share a snapshot.
     // A template's check goes by what the download or the add kept on the ISO; those two hash it.
     let identity: String

@@ -268,7 +268,7 @@ final class LinuxTemplateBuilder {
     var cpuCount: Int?
     var memorySize: UInt64?
     var username: String
-    /// Give its machines a GPU (`VirglGPU`). macOS 27 and later.
+    /// Give its machines a GPU (`GPUDevice`). macOS 27 and later.
     var gpu = false
     /// Set its machines up for Rosetta: the share, the binfmt registration, amd64 packages.
     var rosetta = true
@@ -530,6 +530,13 @@ final class LinuxTemplateBuilder {
       throw MachineError("The Linux guest agent is missing from this build of hukan.")
     }
     try manager.copyItem(at: agent, to: directory.appendingPathComponent("hukan-guest-agent"))
+    // The GPU's alignment module, built by DKMS in the installed system.
+    if request.gpu {
+      guard let module = Bundle.main.url(forResource: "hukan-gpu-align", withExtension: nil) else {
+        throw MachineError("The GPU's kernel module is missing from this build of hukan.")
+      }
+      try manager.copyItem(at: module, to: directory.appendingPathComponent("hukan-gpu-align"))
+    }
     // Rosetta's MAP_32BIT, preloaded into x86_64 programs, and the empty arm64 library under the
     // same name that keeps arm64 ones from reporting it missing (Vendor/rosetta-low32).
     if request.rosetta {
@@ -603,7 +610,7 @@ final class LinuxTemplateBuilder {
         drivers:
           install: false
         late-commands:
-          - sh -exc 'exec >/dev/hvc0 2>&1; trap "echo hukan-late exit=\\$?" EXIT; sh /run/hukan/hukan-setup /target \(user) \(request.rosetta ? "rosetta" : "no-rosetta") \(server ? "server" : "desktop") && umount /run/hukan'
+          - sh -exc 'exec >/dev/hvc0 2>&1; trap "echo hukan-late exit=\\$?" EXIT; sh /run/hukan/hukan-setup /target \(user) \(request.rosetta ? "rosetta" : "no-rosetta") \(server ? "server" : "desktop") \(request.gpu ? "gpu" : "no-gpu") && umount /run/hukan'
         user-data:
           hostname: hukan
           users:
@@ -775,6 +782,36 @@ final class LinuxTemplateBuilder {
     chroot "$T" apt-get -o Dir::Etc::sourcelist=sources.list.d/hukan.list -o Dir::Etc::sourceparts=- update || exit 1
     if [ "$4" != server ]; then
     chroot "$T" apt-get -o Dir::Etc::sourcelist=sources.list.d/hukan.list -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 --no-install-recommends install -y ibus-mozc || exit 1
+    fi
+    # A GPU's blobs are mapped by the host in its own 16K pages, and virtio_gpu places them on the
+    # guest's 4K: a module, built by DKMS for every kernel the machine gets, puts them on 64K
+    # (Resources/hukan-gpu-align). It needs DRM to be there, so it is loaded after virtio_gpu, and
+    # at boot as well for a virtio_gpu the initramfs loaded before the module could follow it.
+    if [ "$5" = gpu ]; then
+    headers=
+    for k in "$T"/lib/modules/*; do headers="$headers linux-headers-$(basename "$k")"; done
+    chroot "$T" apt-get -o Dir::Etc::sourcelist=sources.list.d/hukan.list -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 --no-install-recommends install -y dkms $headers || exit 1
+    cp -R /run/hukan/hukan-gpu-align "$T/usr/src/hukan-gpu-align-1"
+    # The answers disc is read by its ISO9660 names, which Linux lowercases; Kbuild wants its own.
+    if [ -f "$T/usr/src/hukan-gpu-align-1/makefile" ]; then
+      mv "$T/usr/src/hukan-gpu-align-1/makefile" "$T/usr/src/hukan-gpu-align-1/Makefile"
+    fi
+    # DKMS and the kernel's make need /dev, /proc and /sys, which the installed system has none of
+    # until it boots.
+    for d in dev proc sys; do mount --bind "/$d" "$T/$d"; done
+    built=1
+    chroot "$T" dkms add hukan-gpu-align/1 || built=0
+    for k in "$T"/lib/modules/*; do
+      [ "$built" = 1 ] || break
+      chroot "$T" dkms install hukan-gpu-align/1 -k "$(basename "$k")" || {
+        cat "$T/var/lib/dkms/hukan-gpu-align/1/build/make.log"
+        built=0
+      }
+    done
+    for d in sys proc dev; do umount "$T/$d"; done
+    [ "$built" = 1 ] || exit 1
+    echo hukan_gpu_align > "$T/etc/modules-load.d/hukan-gpu-align.conf"
+    echo 'softdep virtio_gpu post: hukan_gpu_align' > "$T/etc/modprobe.d/hukan-gpu-align.conf"
     fi
     umount "$T/cdrom/hukan"
     rm -f "$T/etc/apt/sources.list.d/hukan.list"

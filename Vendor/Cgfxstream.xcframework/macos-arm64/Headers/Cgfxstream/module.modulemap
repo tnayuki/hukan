@@ -1,0 +1,4 @@
+module Cgfxstream {
+  header "Cgfxstream.h"
+  export *
+}

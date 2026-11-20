@@ -16,15 +16,14 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
   private(set) var vm: VZVirtualMachine? {
     didSet { if vm == nil { releaseGPU() } }
   }
-  /// A Linux machine's GPU (`VirglGPU`), typed as `AnyObject` so the rest of this builds against the
+  /// A Linux machine's GPU (`GPUDevice`), typed as `AnyObject` so the rest of this builds against the
   /// systems before macOS 27, which have no custom virtio devices. Present for as long as `vm` is.
   private(set) var gpu: AnyObject?
-  /// Whether this machine has a GPU. Its state cannot be saved, so it is shut down where another
-  /// machine is suspended.
+  /// Whether this machine has a GPU.
   var hasGPU: Bool { machine.manifest.kind == .linux && machine.manifest.gpu == true }
 
   private func releaseGPU() {
-    if #available(macOS 27, *), let gpu = gpu as? VirglGPU { gpu.shutDown() }
+    if #available(macOS 27, *), let gpu = gpu as? GPUDevice { gpu.shutDown() }
     gpu = nil
   }
   /// The worktree the guest sees as `/Volumes/My Shared Files/worktree`, or on Linux `/worktree`.
@@ -98,9 +97,12 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
           throw MachineError(
             "\(machine.manifest.title) has a GPU, which needs macOS 27 or later.")
         }
-        let (device, gpu) = VirglGPU.make(
+        // gfxstream's snapshot, saved beside the machine's state and spent with it.
+        let (device, gpu) = GPUDevice.make(
           width: machine.manifest.display.width, height: machine.manifest.display.height,
-          memorySize: machine.manifest.memorySize)
+          memorySize: machine.manifest.memorySize,
+          snapshot: machine.stateURL.deletingLastPathComponent().appendingPathComponent(
+            "gpu-snapshot"))
         self.gpu = gpu
         configuration.customVirtioDevices = [device]
       }
@@ -134,10 +136,25 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
         self?.coldStart(vm, provisioning: nil, recovery: false, completion: finished)
         return
       }
-      vm.resume { result in
-        if case .success = result { self?.resumedFromSave = true }
-        if case .failure(let error) = result { finished(error) } else { finished(nil) }
+      // A GPU's blobs go back into the guest after the restore, as the renderer hands them over;
+      // the guest resumes once they are all there.
+      let resume = {
+        vm.resume { result in
+          if case .success = result { self?.resumedFromSave = true }
+          if case .failure(let error) = result { finished(error) } else { finished(nil) }
+        }
       }
+      let deadline = Date().addingTimeInterval(10)
+      func resumeOnceRemapped() {
+        if #available(macOS 27, *), let gpu = self?.gpu as? GPUDevice, !gpu.remapped,
+          Date() < deadline
+        {
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.01, execute: resumeOnceRemapped)
+          return
+        }
+        resume()
+      }
+      resumeOnceRemapped()
     }
   }
 
@@ -165,16 +182,11 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
   }
 
   /// Pause and write the state beside the disk, then stop — so the next start resumes here. A
-  /// machine with a GPU is shut down instead: its GPU's state lives in this Mac's OpenGL and is
-  /// not saved, so a resumed guest would wake with a desktop whose every GL context was gone.
+  /// machine with a GPU saves its GPU's state with it (`GPUDevice`).
   func save(completion: @escaping () -> Void) {
     guard let vm, vm.state == .running || vm.state == .paused else {
       self.vm = nil
       completion()
-      return
-    }
-    if hasGPU {
-      shutDown(vm, completion: completion)
       return
     }
     let state = machine.stateURL
