@@ -941,8 +941,8 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   private static func symbol(_ kind: MachineKind) -> String {
     switch kind {
     case .macOS: "apple.logo"
-    case .windows: "pc"
-    case .linux: "terminal"
+    case .windows: "squareshape.split.2x2"
+    case .linux: MachineGlyphs.penguin
     }
   }
 
@@ -1078,7 +1078,7 @@ private final class MachineRowView: NSTableCellView {
   init(symbol: String, title: String, subtitle: String, progress: Double? = nil, indent: Int = 0) {
     super.init(frame: .zero)
     let icon = NSImageView(
-      image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
+      image: MachineGlyphs.image(symbol, side: 19) ?? NSImage())
     icon.symbolConfiguration = .init(pointSize: 16, weight: .regular)
     icon.contentTintColor = .secondaryLabelColor
     icon.widthAnchor.constraint(equalToConstant: 22).isActive = true
@@ -1224,7 +1224,7 @@ private final class MachineDetailView: NSView {
   ) {
     content.isHidden = false
     placeholder.isHidden = true
-    icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+    icon.image = MachineGlyphs.image(symbol, side: 34)
     self.title.stringValue = title
     self.status.stringValue = status ?? ""
     self.status.isHidden = status == nil

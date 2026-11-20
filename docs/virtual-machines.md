@@ -29,6 +29,11 @@ and the reasoning behind it; read the file before changing the area it covers.
   older hukan, which also took files and addresses — is never replaced, only let go that way.
   **Only the latest macOS**: an older one was an address the person brought, since nothing lists
   them but third parties, and the cache has no place for an image nobody will fetch again.
+  **A kind of machine is shown by a glyph, never a company's logo**: Windows by SF Symbols' four
+  panes, which reads as Windows without being Microsoft's mark, and Linux by a penguin of hukan's
+  own, drawn as a template in `MachineGlyphs` since SF Symbols has none. UTM bundles the logos
+  themselves; that is tolerated rather than permitted, and the monochrome sidebar has no place for
+  them anyway.
   **The agent reaches the guest through an agent of hukan's, over vsock**, and tools named for
   where they run: `vm_` acts on the machine from here, `guest_` runs inside it. Creating, first use,
   suspending, saving a template and deleting are each a card. The guest agent is replaced at boot when it
