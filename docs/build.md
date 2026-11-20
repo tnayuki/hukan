@@ -36,7 +36,10 @@ query files under `Resources/TreeSitter/` are committed static assets; regenerat
 step, not part of the build. `Resources/hukan-rosetta-low32-*.so`
 are the library a Linux template preloads for Rosetta and its empty arm64 stand-in,
 cross-compiled with zig by `Vendor/build-rosetta-low32.sh`; `Resources/Hukan.entitlements` carries the one entitlement
-Virtualization.framework requires, which ad-hoc signing can hold.
+Virtualization.framework requires, which ad-hoc signing can hold. `Sources/Hukan/WindowsCatalog.swift`
+is generated too, by `Vendor/update-windows-catalog.sh` (osslsigncode from Homebrew), rerun for a
+new Windows release (`docs/virtual-machines.md`). wimlib, which makes a Windows ISO from what that
+catalog points at, is Homebrew's and a dependency of the cask, as QEMU is.
 
 **The guest agents are the exception: they are built, not committed.** They are one Zig program
 under `GuestAgent/src`, and the app target's last build phase runs `Vendor/build-guest-agents.sh`

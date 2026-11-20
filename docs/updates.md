@@ -8,12 +8,15 @@ and the reasoning behind it; read the file before changing the area it covers.
   npm updater and sets `autoUpdatesProtectedForNative`, which exempts its own — so there is nothing
   to tell you that will not have happened by morning anyway. The cask does not follow anything, so
   hukan is the one of the two that can go quietly stale.
-  **Five outbound requests are hukan's own, and the line around them is the whole of why they are
+  **Six outbound requests are hukan's own, and the line around them is the whole of why they are
   allowed.** The cask check: one fixed URL, GET, nothing sent, no credentials, nothing about the
   work. A macOS restore image, fetched only when someone asks for one in the template sheet, from
   the address Virtualization.framework names. An Ubuntu desktop or server ISO, likewise only when asked for:
   Canonical's list of supported LTS releases (`meta-release-lts`), each release's `SHA256SUMS` to
-  find its newest point release and hold the download to, and the ISO. And the virtio-win drivers, from one
+  find its newest point release and hold the download to, and the ISO. Windows 11 for Arm, likewise
+  only when asked for: Microsoft's ESD in the language chosen, from the address and held to the
+  checksum in the catalog the build carries (`docs/virtual-machines.md`), over plain http, the only
+  way Microsoft serves it. And the virtio-win drivers, from one
   fixed address, once, the first time a Windows template is made. And the packages an Ubuntu ISO
   lacks for an install, from Ubuntu's archive, once per ISO, as the end of its download. libgit2
   is built network-less on purpose and

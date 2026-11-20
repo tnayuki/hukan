@@ -3,7 +3,6 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import OSLog
-import Vision
 
 /// Where QEMU's sockets go. A socket's path has to fit in 104 bytes, which the store's own
 /// directory does not, and `/tmp` is shared with every account on the Mac: another one could put a
@@ -93,8 +92,6 @@ final class WindowsTemplateBuilder {
         try Self.fetchDrivers()
         return try prepare()
       }
-      // Off the main thread and before QEMU, which is what the prompt's three seconds need.
-      Self.warmUpRecognition()
       DispatchQueue.main.async { [self] in
         if cancelled {
           if case .success(let machine) = prepared { discard(machine.url) }
@@ -535,10 +532,25 @@ final class WindowsTemplateBuilder {
     Self.running = process
     onPhase?(.installing(-1))
     screenView.connect(socket: display)
-    let screen = machine.url.appendingPathComponent("screen.png").path
     DispatchQueue.global(qos: .utility).async {
-      Self.passBootPrompt(socket: socket, screen: screen)
+      Self.ejectInstallerAtFirstReset(socket: socket)
     }
+  }
+
+  /// The ISO is taken out when the guest first restarts, which is WinPE's reboot once Windows is
+  /// on the disk: an ISO that boots without waiting for a key would otherwise be booted again by
+  /// every restart Setup makes after, and the install begun again from its first step. Taken out
+  /// rather than put behind the disk in the boot order, which was tried: Setup's own restart wrote
+  /// the firmware's boot order, and the ISO came first again.
+  private static func ejectInstallerAtFirstReset(socket: String) {
+    guard let qemu = QMPConnection(socket: socket), qemu.wait(for: "RESET") else { return }
+    // By the device the drive is in, which `usb-storage` makes and names itself: ejecting by the
+    // drive's own name is deprecated.
+    let drives = qemu.execute("query-block") as? [[String: Any]] ?? []
+    guard let device = drives.first(where: { $0["device"] as? String == "cd0" })?["qdev"] else {
+      return
+    }
+    _ = qemu.execute("eject", ["id": device, "force": true])
   }
 
   private func arguments(_ machine: Machine, socket: String, display: String) -> [String] {
@@ -565,80 +577,6 @@ final class WindowsTemplateBuilder {
       "-rtc", "base=localtime", "-nic", "none", "-display", "none", "-vnc", "unix:\(display)",
       "-qmp", "unix:\(socket),server=on,wait=off",
     ]
-  }
-
-  /// A Windows ISO waits about three seconds at "Press any key to boot from CD or DVD", in English
-  /// whatever language it installs, and with no key it gives up and the firmware falls through to
-  /// its shell. So the screen is read, and Return goes once, when the words are on it: sent blind
-  /// and repeatedly, the keys carried on into Setup and pressed its Cancel button.
-  /// The prompt stands for about three seconds, and Vision's first recognition loads its model,
-  /// which can take longer than that — so the model is loaded before QEMU starts, and a prompt
-  /// missed all the same is not the end of the install: the firmware falls into its shell, which
-  /// is told to run the installer's loader again, and the prompt comes back.
-  private static func passBootPrompt(socket: String, screen: String) {
-    guard let qemu = QMPConnection(socket: socket) else { return }
-    let deadline = Date().addingTimeInterval(120)
-    var shellTries = 0
-    while Date() < deadline {
-      guard qemu.execute("screendump", ["filename": screen, "format": "png"]) != nil else {
-        Thread.sleep(forTimeInterval: 0.3)
-        continue
-      }
-      let seen = text(in: screen).lowercased()
-      if seen.contains("press any key") {
-        _ = qemu.execute("send-key", ["keys": [["type": "qcode", "data": "ret"]]])
-        break
-      }
-      if seen.contains("shell>"), shellTries < 3 {
-        shellTries += 1
-        type("fs0:\\efi\\boot\\bootaa64.efi\n", into: qemu)
-        Thread.sleep(forTimeInterval: 1)
-        continue
-      }
-      Thread.sleep(forTimeInterval: 0.3)
-    }
-    try? FileManager.default.removeItem(atPath: screen)
-  }
-
-  /// Loads Vision's recognition model, so the first screen read while the prompt stands is fast.
-  static func warmUpRecognition() {
-    guard
-      let context = CGContext(
-        data: nil, width: 64, height: 32, bitsPerComponent: 8, bytesPerRow: 0,
-        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue),
-      let image = context.makeImage()
-    else { return }
-    try? VNImageRequestHandler(cgImage: image).perform([VNRecognizeTextRequest()])
-  }
-
-  /// Types into the firmware a key at a time, as QEMU's key codes; enough for a path.
-  private static func type(_ text: String, into qemu: QMPConnection) {
-    let named: [Character: (String, Bool)] = [
-      ":": ("semicolon", true), "\\": ("backslash", false), ".": ("dot", false),
-      "\n": ("ret", false),
-    ]
-    for character in text {
-      let (code, shift): (String, Bool)
-      if let key = named[character] {
-        (code, shift) = key
-      } else {
-        (code, shift) = (String(character), false)
-      }
-      let keys: [[String: String]] =
-        (shift ? [["type": "qcode", "data": "shift"]] : []) + [["type": "qcode", "data": code]]
-      _ = qemu.execute("send-key", ["keys": keys])
-      Thread.sleep(forTimeInterval: 0.05)
-    }
-  }
-
-  private static func text(in path: String) -> String {
-    guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-      let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-    else { return "" }
-    let request = VNRecognizeTextRequest()
-    try? VNImageRequestHandler(cgImage: image).perform([request])
-    return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-      .joined(separator: " ")
   }
 
   /// Stop where it stands and leave nothing behind — the window's −. Setup stopped on an error of
@@ -1452,6 +1390,14 @@ final class QMPConnection {
       if let reply = object["return"] { return reply }
     }
     return nil
+  }
+
+  /// Blocks until QEMU reports the event, or false once it has gone.
+  func wait(for event: String) -> Bool {
+    while let object = readObject() {
+      if object["event"] as? String == event { return true }
+    }
+    return false
   }
 
   private func readObject() -> [String: Any]? {

@@ -237,3 +237,28 @@ and the reasoning behind it; read the file before changing the area it covers.
   only while it stays inside it.
   SPICE's WebDAV, UTM's road, needs a SPICE client and a QEMU built with it, which Homebrew's is
   not; virtiofs needs a daemon that runs only on Linux, and Windows has no 9p client.
+- **Windows is downloaded as Microsoft's ESD and made into an ISO here**, because an ISO has no
+  address to fetch it from: Microsoft's page issues one per visit, for a day, and refuses scripted
+  visitors. The ESD is what the Media Creation Tool fetches, from Microsoft's CDN at a fixed
+  address with its SHA-256 in a catalog Microsoft signs. **The catalog is read when hukan is built,
+  not when it runs**: `Vendor/update-windows-catalog.sh` writes the ARM64 consumer image of each
+  language into `WindowsCatalog.swift`, so a newer Windows comes with a newer hukan — which costs
+  nothing a template notices, since it installs with no network and Windows Update moves it on
+  from there. Microsoft's own catalog link stopped at 24H2, and the newer ones are found through
+  Windows on R's index, which also hosts some of them; so the script takes a catalog only once its
+  Authenticode signature checks out against Microsoft's root, pinned by fingerprint, and the app
+  never asks the index anything. **The ESD comes over plain http**, the only way Microsoft serves
+  it, and is held to the catalog's checksum before anything is made from it; `Info.plist` lets
+  that one host through App Transport Security. **The ISO is put back together by wimlib**, a
+  dependency of the cask, as Microsoft's tool does it on Windows: Setup's files, WinPE and Setup in
+  `boot.wim` with Setup marked to boot, the editions in an `install.esd` left solidly compressed —
+  DISM applies it as it does a WIM — and UDF beside ISO9660, since it is over 4GB. **`hdiutil`
+  writes the boot entry's sector count as 4**, 2KB of a 1.7MB boot image, and the firmware finds an
+  empty FAT and drops to its shell; Microsoft's ISOs give the whole image there, and so does the
+  ISO once it is made. **It boots without waiting for a key** (`efisys_noprompt.bin`), since nobody
+  is there to press one, and the screen is not read for a prompt: no ISO another way comes in.
+  **The ISO is taken out of the machine at the guest's first restart**, WinPE's reboot once
+  Windows is on the disk, or every restart Setup makes after would boot it again and start the
+  install over. Putting the disk ahead of the ISO in the boot order was tried first: the first
+  restart reached the disk, and Setup's next one had rewritten the firmware's order and came back
+  to the ISO.

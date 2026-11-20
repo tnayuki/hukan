@@ -499,18 +499,21 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     let latest = menu.addItem(
       withTitle: "Download the Latest macOS", action: #selector(downloadLatest), keyEquivalent: "")
     // Ubuntu by release rather than "the latest": a template is kept for years, and which LTS it
-    // is decides what runs on it. Which there are is asked when this is chosen.
-    let ubuntu = [
+    // is decides what runs on it. Which there are is asked when this is chosen. Windows asks only
+    // its language: the release is the one this build carries the catalog of.
+    let others = [
       menu.addItem(
-        withTitle: "Download Ubuntu…", action: #selector(downloadUbuntu), keyEquivalent: "")
+        withTitle: "Download Ubuntu…", action: #selector(downloadUbuntu), keyEquivalent: ""),
+      menu.addItem(
+        withTitle: "Download Windows…", action: #selector(downloadWindows), keyEquivalent: ""),
     ]
     let file = menu.addItem(
       withTitle: "Add Image from File…", action: #selector(addImageFromFile), keyEquivalent: "")
     let address = menu.addItem(
       withTitle: "Add Image from Address…", action: #selector(addImageFromAddress),
       keyEquivalent: "")
-    for item in [template, latest, file, address] + ubuntu { item.target = self }
-    for item in [latest, file, address] + ubuntu { item.isEnabled = download == nil }
+    for item in [template, latest, file, address] + others { item.target = self }
+    for item in [latest, file, address] + others { item.isEnabled = download == nil }
     menu.autoenablesItems = false
     let frame = addRemove.frame
     menu.popUp(positioning: nil, at: NSPoint(x: frame.minX, y: frame.minY), in: addRemove.superview)
@@ -520,6 +523,29 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
 
   /// The supported LTS releases, each at its newest point release, read from Canonical's lists
   /// before anything is offered — and the one chosen downloaded and held to its checksum.
+  /// Windows 11 in a language chosen here, from the catalog this build carries: the ISO is made
+  /// from Microsoft's ESD once it is down, so what is asked is only which language it installs.
+  @objc private func downloadWindows() {
+    guard let window else { return }
+    let images = WindowsCatalog.images
+    let alert = NSAlert()
+    alert.messageText = "Download Windows"
+    alert.informativeText =
+      "Windows 11 for Arm (\(WindowsCatalog.build)), made into an ISO here. The language is the"
+      + " one the template installs."
+    let popUp = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 240, height: 26))
+    for image in images { popUp.addItem(withTitle: image.languageName) }
+    popUp.selectItem(at: images.firstIndex(of: WindowsImage.preferred) ?? 0)
+    alert.accessoryView = popUp
+    alert.addButton(withTitle: "Download")
+    alert.addButton(withTitle: "Cancel")
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard response == .alertFirstButtonReturn, images.indices.contains(popUp.indexOfSelectedItem)
+      else { return }
+      self?.startDownload(.windows(images[popUp.indexOfSelectedItem]))
+    }
+  }
+
   @objc private func downloadUbuntu() {
     guard let window else { return }
     UbuntuRelease.fetchAvailable { [weak self] result in
@@ -883,7 +909,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
     case .locating, nil: return "Finding the latest macOS…"
     case .copying: return "Copying…"
     case .downloading(let fraction): return "Downloading… \(Int(fraction * 100))%"
-    case .packages(let message): return message
+    case .packages(let message), .building(let message): return message
     case .done: return "Downloaded"
     case .failed(let message): return message
     }
@@ -892,7 +918,7 @@ final class VirtualMachinesWindowController: NSWindowController, NSWindowDelegat
   private static func fraction(_ state: RestoreImageDownload.State?) -> Double? {
     switch state {
     case .downloading(let fraction): return fraction
-    case .locating, .copying, .packages, nil: return -1
+    case .locating, .copying, .packages, .building, nil: return -1
     default: return nil
     }
   }

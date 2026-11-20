@@ -20,6 +20,8 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     /// An address whose publisher states the file's SHA-256, which the download is held to.
     case checked(URL, sha256: String)
     case file(URL)
+    /// Windows, as Microsoft's ESD in one language, made into an ISO once it is here.
+    case windows(WindowsImage)
   }
 
   enum State: Equatable {
@@ -27,6 +29,7 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     case copying
     case downloading(Double)
     case packages(String)
+    case building(String)
     case done(URL)
     case failed(String)
   }
@@ -41,8 +44,11 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
   private var task: URLSessionDownloadTask?
   private let source: Source
   private var expectedSHA256: String? {
-    if case .checked(_, let sha256) = source { return sha256.lowercased() }
-    return nil
+    switch source {
+    case .checked(_, let sha256): return sha256.lowercased()
+    case .windows(let image): return image.sha256.lowercased()
+    default: return nil
+    }
   }
 
   init(_ source: Source = .latest) {
@@ -50,6 +56,7 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     switch source {
     case .latest: break
     case .address(let url), .checked(let url, _), .file(let url): name = url.lastPathComponent
+    case .windows(let image): name = image.isoName
     }
   }
 
@@ -59,12 +66,19 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
     case .latest: locateLatest()
     case .address(let url), .checked(let url, _): fetch(url)
     case .file(let url): copy(url)
+    case .windows(let image): fetch(image.url)
     }
   }
 
   private func fetch(_ url: URL) {
-    let destination = MachineStore.imagesURL.appendingPathComponent(url.lastPathComponent)
+    let destination = MachineStore.imagesURL.appendingPathComponent(name ?? url.lastPathComponent)
     if FileManager.default.fileExists(atPath: destination.path) {
+      // An ISO this built is not what Microsoft's checksum is of, and was put in place only
+      // after the ESD it came from had passed it.
+      if case .windows = source {
+        imageReady(destination)
+        return
+      }
       guard let expected = expectedSHA256 else {
         imageReady(destination)
         return
@@ -186,6 +200,10 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
       finish(.failed("Another hukan is adding this ISO."))
       return
     }
+    if case .windows = source {
+      buildWindows(from: location, partial: partial, at: destination, claim: claim)
+      return
+    }
     do {
       // Moved out of the system's temporary file within this call — it is gone once it returns —
       // and renamed into place only once it is all there.
@@ -215,6 +233,54 @@ final class RestoreImageDownload: NSObject, URLSessionDownloadDelegate {
         }
         guard let self else { return release() }
         self.settle(partial, at: destination, then: release)
+      }
+    }
+  }
+
+  /// Windows comes as an ESD, which is checked against the catalog and then made into the ISO, all
+  /// inside a `.download` directory: a quit or a cancel partway leaves one thing for the store to
+  /// sweep, as a half-fetched file would.
+  private func buildWindows(
+    from location: URL, partial: URL, at destination: URL, claim: MachineStore.Claim
+  ) {
+    let esd = partial.appendingPathComponent("image.esd")
+    do {
+      try? FileManager.default.removeItem(at: partial)
+      try FileManager.default.createDirectory(at: partial, withIntermediateDirectories: true)
+      try FileManager.default.moveItem(at: location, to: esd)
+    } catch {
+      try? FileManager.default.removeItem(at: partial)
+      claim.release()
+      finish(.failed(error.localizedDescription))
+      return
+    }
+    let expected = expectedSHA256
+    let cancellation = cancellation
+    state = .copying
+    onChange?()
+    DispatchQueue.global(qos: .userInitiated).async {
+      let result = Result<URL, Error> {
+        guard Self.sha256(of: esd) == expected else {
+          throw MachineError("The download failed its checksum and was not kept.")
+        }
+        DispatchQueue.main.async { [weak self] in
+          guard let self, !cancellation.isCancelled else { return }
+          self.state = .building("Making the ISO…")
+          self.onChange?()
+        }
+        let iso = partial.appendingPathComponent("image.iso")
+        try WindowsImage.makeISO(from: esd, at: iso, in: partial, cancellation: cancellation)
+        try FileManager.default.moveItem(at: iso, to: destination)
+        return destination
+      }
+      try? FileManager.default.removeItem(at: partial)
+      DispatchQueue.main.async { [weak self] in
+        claim.release()
+        guard let self, !cancellation.isCancelled else { return }
+        switch result {
+        case .success(let url): self.finish(.done(url))
+        case .failure(let error): self.finish(.failed(error.localizedDescription))
+        }
       }
     }
   }

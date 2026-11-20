@@ -468,7 +468,9 @@ compared with what this build of hukan ships and replaced if they differ, so a t
 have to be made again for that. The toolbar's CPU and memory include the machines this app is
 running.
 
-A Windows on Arm ISO makes a Windows template the same way, unattended in about twenty minutes,
+Windows 11 for Arm comes in through the window's `+` too, in the language chosen: hukan downloads
+Microsoft's own image, checks it against Microsoft's checksum, and makes it into an ISO, with
+wimlib from Homebrew, which the cask installs. A Windows on Arm ISO makes a Windows template the same way, unattended in about twenty minutes,
 on QEMU from Homebrew, which the cask installs, with Microsoft Defender switched off from the start
 — it is the guest's heaviest load while a toolchain installs, and its sample submission would send
 files from the worktree to Microsoft. It runs on a tab like a macOS machine, with its screen
