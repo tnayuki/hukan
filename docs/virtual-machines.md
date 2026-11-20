@@ -110,6 +110,12 @@ and the reasoning behind it; read the file before changing the area it covers.
   started by the desktop session and a template is finished only once both halves say hello;
   `loginctl enable-linger` runs from cloud-init once the account exists, which is the earliest
   it can. A server's screen tools are refused by hukan rather than left to fail inside the guest.
+- **A Linux guest that restarts does so inside the running machine**, measured on GPU machines on
+  macOS 27 — so what hukan tells a guest each boot, said once when the machine started, was not
+  said again: this Mac's scale, held by a keeper the restart
+  ended, fell back to 1×. The agent's hello carries the kernel's boot id, and a new one is the
+  guest restarted, which has hukan tell it all again. A boot id rather than a hello going quiet
+  for a while, which would be a guess at how long a restart takes.
 - **Nothing in a Linux guest updates by itself**, as in a Windows one: apt's daily refresh and
   unattended upgrades are off (a later file than Ubuntu's `20auto-upgrades`), no new release is
   offered, update-notifier — Software Updater's window, and a crash report's question, over the

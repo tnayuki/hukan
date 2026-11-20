@@ -97,8 +97,14 @@ fn announce(io: std.Io, mode: []const u8) void {
     vsock.connect(fd, host_cid, hello_port) catch return;
     var arena_state: std.heap.ArenaAllocator = .init(std.heap.smp_allocator);
     defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var hello = agent.hello(arena, mode);
+    // Which boot this is, where the system says: a guest that restarts inside a running machine
+    // is told apart from one still up by it, so hukan can tell it again what it tells each boot.
+    var buffer: [64]u8 = undefined;
+    if (platform.bootID(io, &buffer)) |boot| agent.put(&hello, arena, "boot", boot);
     var context = fd;
-    agent.respond(vsock.connection(&context), arena_state.allocator(), agent.hello(arena_state.allocator(), mode));
+    agent.respond(vsock.connection(&context), arena, hello);
 }
 
 fn fail(comptime format: []const u8, values: anytype) noreturn {

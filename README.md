@@ -504,7 +504,8 @@ its screenshots, clicks, typing and keys go through a GNOME Shell extension the 
 place itself, which a running desktop picks up from its next sign-in; there is no accessibility
 tree to read. Text with no key on the keyboard — Japanese, say — goes in through IBus, so it
 reaches any window with an input method, on Xwayland too. A
-Linux guest that reboots stops, and Start brings it up again.
+Linux guest that reboots comes back up in the same running machine, and is told again what hukan
+tells it each boot — this Mac's scale, its time zone, its keyboard.
 
 New Template lists each release's server ISO beside its desktop. A template made from it installs
 Ubuntu Server — about a third of the desktop's size on disk, with no GNOME — and the same agent,

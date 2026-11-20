@@ -43,6 +43,12 @@ pub fn answerOnce(helper: *const agent.Agent, arena: std.mem.Allocator, body: []
 
 pub fn startup(_: *const agent.Agent) void {}
 
+/// Not given on macOS: hukan tells a boot apart only on Linux, where a restart was seen to keep
+/// the machine running.
+pub fn bootID(_: std.Io, _: []u8) ?[]const u8 {
+    return null;
+}
+
 pub fn extra(r: *agent.Request) ?agent.Answer {
     const op = r.text("op") orelse return null;
     if (!screen.handles(op)) return null;

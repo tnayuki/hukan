@@ -702,6 +702,14 @@ final class MachinePaneViewController: NSViewController {
       guard let self, let runner, self.runner === runner else { return }
       self.agentSaidHello(half, on: runner)
     }
+    // A guest that restarts inside the running machine is told again what it is told each boot:
+    // the scale above all, which its keeper held only until the restart.
+    runner.onGuestRestarted = { [weak self, weak runner] in
+      guard let self, let runner, self.runner === runner else { return }
+      self.modeAsked = false
+      self.guestPrepared = false
+      self.guestScale = nil
+    }
     // The guest stopping on its own — shut down from inside, or by the save that asked it to —
     // as a Windows machine's QEMU leaving is: a save carries on to its copy, and anything else
     // says the machine shut down and offers to start it, rather than leaving a dark screen.

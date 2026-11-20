@@ -23,6 +23,12 @@ pub fn startup(served: *const agent.Agent) void {
     }
 }
 
+/// This boot's id, new at every boot of the kernel.
+pub fn bootID(io: std.Io, buffer: []u8) ?[]const u8 {
+    const id = std.Io.Dir.cwd().readFile(io, "/proc/sys/kernel/random/boot_id", buffer) catch return null;
+    return std.mem.trim(u8, id, " \n");
+}
+
 pub fn extra(r: *agent.Request) ?agent.Answer {
     const op = r.text("op") orelse return null;
     if (std.mem.eql(u8, op, "jis_key")) return keyboard.answer(r);

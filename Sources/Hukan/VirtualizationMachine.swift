@@ -40,6 +40,11 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
   private(set) var agentsHeard: Set<String> = []
   /// Told each time an agent says hello, which it does at start and every fifteen seconds after.
   var onAgentHello: ((String) -> Void)?
+  /// Told on the main thread when a hello names another boot than the last: the guest restarted
+  /// without the machine stopping, and what was heard and told before is about the boot that went.
+  var onGuestRestarted: (() -> Void)?
+  /// The boot the agent last named; a Linux agent names it, others do not.
+  private var guestBoot: String?
   private let helloListener = VZVirtioSocketListener()
   static let helloPort: UInt32 = 7739
 
@@ -278,8 +283,16 @@ final class VirtualizationMachine: NSObject, VZVirtualMachineDelegate,
       guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
         let half = object["hello"] as? String
       else { return }
+      let boot = object["boot"] as? String
       DispatchQueue.main.async {
         guard let self else { return }
+        if let boot {
+          if let known = self.guestBoot, known != boot {
+            self.agentsHeard = []
+            self.onGuestRestarted?()
+          }
+          self.guestBoot = boot
+        }
         self.agentsHeard.insert(half)
         self.onAgentHello?(half)
       }
