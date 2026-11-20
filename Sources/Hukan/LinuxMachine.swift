@@ -973,20 +973,38 @@ final class LinuxTemplateBuilder {
         self.fail(machine, VirtualizationMachine.explain(error))
       }
     }
-    // The install is minutes and the first boot under a minute; an hour without either finishing
-    // is a setup that has stopped somewhere, and the console says where.
-    let deadline = Date().addingTimeInterval(60 * 60)
+    // A setup that fails says so on the console — each of hukan's scripts its exit status, and
+    // Ubuntu's installer its own failure — so the console is read as it is written, and the build
+    // stops there rather than waiting on a guest that will not finish. Read, not timed: a time
+    // limit would be a guess at how long a slow install takes.
+    let console = machine.url.appendingPathComponent(Self.consoleLogName)
+    var offset: UInt64 = 0
+    var reader = ConsoleWatch()
     let watched = stage
     func watch() {
       guard stage == watched, !gaveUp, running === runner else { return }
-      if Date() > deadline {
-        onPhase?(
-          .setupFailed(
-            "it did not finish — \(Self.consoleLogName) in the template's folder says how far it got"
-          ))
-        return
+      if let handle = try? FileHandle(forReadingFrom: console) {
+        defer { try? handle.close() }
+        try? handle.seek(toOffset: offset)
+        if let data = try? handle.readToEnd(), !data.isEmpty {
+          offset += UInt64(data.count)
+          if let problem = reader.feed(String(decoding: data, as: UTF8.self)) {
+            gaveUp = true
+            running = nil
+            // The template's folder goes with the failure; its console is kept where logs are.
+            let kept = FileManager.default.homeDirectoryForCurrentUser
+              .appendingPathComponent("Library/Logs/hukan-linux-template.log")
+            try? FileManager.default.removeItem(at: kept)
+            try? FileManager.default.copyItem(at: console, to: kept)
+            runner.forceStop { [weak self] in
+              self?.fail(
+                machine, "\(problem). Its console is in ~/Library/Logs/\(kept.lastPathComponent).")
+            }
+            return
+          }
+        }
       }
-      DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: watch)
+      DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: watch)
     }
     watch()
   }
@@ -1001,7 +1019,7 @@ final class LinuxTemplateBuilder {
   }
 
   private func stopped(_ machine: Machine, error: Error?) {
-    guard !cancelled else { return }
+    guard !cancelled, !gaveUp else { return }
     running = nil
     if let error {
       fail(machine, VirtualizationMachine.explain(error))
@@ -1098,5 +1116,41 @@ final class LinuxTemplateBuilder {
           + String(decoding: data, as: UTF8.self))
     }
     return data
+  }
+}
+
+/// What a Linux template's console says about its setup failing, read a piece at a time as it is
+/// written: one of hukan's scripts leaving with a status other than 0 — named with the last command
+/// its trace shows — or Ubuntu's installer reporting its own failure.
+struct ConsoleWatch {
+  private var partial = ""
+  private var lastCommand: String?
+
+  /// The failure the text adds, if it adds one.
+  mutating func feed(_ text: String) -> String? {
+    var lines = (partial + text).components(separatedBy: "\n")
+    partial = lines.removeLast()
+    for raw in lines {
+      let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+      if line.hasPrefix("+ hukan-"), let colon = line.firstIndex(of: ":") {
+        let command = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        // The script's own way out says nothing about where it went wrong.
+        if !command.hasPrefix("exit"), !command.hasPrefix("echo hukan-") { lastCommand = command }
+      }
+      if !line.hasPrefix("+"),
+        let range = line.range(of: #"hukan-[a-z]+ exit=[0-9]+"#, options: .regularExpression)
+      {
+        let found = line[range]
+        let script = found.prefix { $0 != " " }
+        let status = found.split(separator: "=").last.map(String.init) ?? ""
+        guard status != "0" else { continue }
+        let at = lastCommand.map { " at `\($0)`" } ?? ""
+        return "\(script) stopped with status \(status)\(at)"
+      }
+      if line.contains("install_fail") {
+        return "Ubuntu's installer failed before hukan's setup finished"
+      }
+    }
+    return nil
   }
 }

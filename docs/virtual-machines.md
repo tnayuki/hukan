@@ -116,6 +116,13 @@ and the reasoning behind it; read the file before changing the area it covers.
   ended, fell back to 1×. The agent's hello carries the kernel's boot id, and a new one is the
   guest restarted, which has hukan tell it all again. A boot id rather than a hello going quiet
   for a while, which would be a guess at how long a restart takes.
+- **A Linux template that fails says so, by its console, not by a clock**: each of hukan's
+  scripts writes its exit status to the serial console the build keeps beside the template, and
+  Ubuntu's installer writes its own failure there, so the console is read as it is written and the
+  build stops at the first status other than 0, naming the script and the last command its trace
+  shows, and keeps the console in `~/Library/Logs`, since the template's folder goes with the
+  failure. It had waited an hour, and on a failed DKMS build twice sat on the installer's error
+  screen with nothing said; an hour was also a guess at how long a slow install takes.
 - **Nothing in a Linux guest updates by itself**, as in a Windows one: apt's daily refresh and
   unattended upgrades are off (a later file than Ubuntu's `20auto-upgrades`), no new release is
   offered, update-notifier — Software Updater's window, and a crash report's question, over the

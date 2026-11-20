@@ -82,6 +82,40 @@ final class LinuxMachineTests: XCTestCase {
     XCTAssertTrue(script.contains("softdep virtio_gpu post: hukan_gpu_align"))
   }
 
+  func testTheConsoleTellsASetupThatFailedFromOneThatGoesOn() {
+    // A good install: each script's trace and its status 0, and the commands that set the traps.
+    var good = ConsoleWatch()
+    XCTAssertNil(
+      good.feed(
+        """
+        + trap echo hukan-late exit=$? EXIT
+        sh -exc 'exec >/dev/hvc0 2>&1; trap "echo hukan-late exit=\\$?" EXIT; sh /run/hukan/hukan-setup'
+        + hukan-setup: chroot /target dkms install hukan-gpu-align/1 -k 6.8.0-149-generic
+        hukan-setup exit=0
+        hukan-late exit=0
+
+        """))
+    // The DKMS build that failed on 2026-11-19, cut mid-line the way a read can cut it.
+    var failed = ConsoleWatch()
+    XCTAssertNil(
+      failed.feed(
+        """
+        + hukan-setup: chroot /target dkms install hukan-gpu-align/1 -k 6.8.0-149-generic
+        Error! Bad return status for module build on kernel: 6.8.0-149-generic (aarch64)
+        + hukan-setup: exit 1
+        + hukan-setup: echo hukan-setup exit=1
+        hukan-setup ex
+        """))
+    XCTAssertEqual(
+      failed.feed("it=1\nhukan-late exit=1\n"),
+      "hukan-setup stopped with status 1 at `chroot /target dkms install hukan-gpu-align/1 -k "
+        + "6.8.0-149-generic`")
+    var installer = ConsoleWatch()
+    XCTAssertEqual(
+      installer.feed("subiquity/ErrorReporter/1795077772.747119427.install_fail/add_info:\n"),
+      "Ubuntu's installer failed before hukan's setup finished")
+  }
+
   func testNothingInTheGuestUpdatesByItself() {
     let script = LinuxTemplateBuilder.setupScript
     for line in [
