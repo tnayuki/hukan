@@ -474,7 +474,8 @@ Microsoft's own image in the language chosen, checked against Microsoft's checks
 an ISO with wimlib, and run on QEMU, both from Homebrew and installed by the cask, with Microsoft
 Defender switched off from the start
 — it is the guest's heaviest load while a toolchain installs, and its sample submission would send
-files from the worktree to Microsoft. It runs on a tab like a macOS machine, with its screen
+files from the worktree to Microsoft. Windows Update and the Store update only when asked to.
+It runs on a tab like a macOS machine, with its screen
 and keyboard there, and is saved and resumed the same way; it signs itself in again after a sign-out. The agent's tools work on it as they do
 on a macOS machine, with ⌘ as the Windows key and ⌥ as Alt; a menu takes a moment to draw after it
 is pressed open. The session's worktree is `W:\`, shared over SMB by Samba from Homebrew,

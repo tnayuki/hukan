@@ -249,17 +249,31 @@ and the reasoning behind it; read the file before changing the area it covers.
   only while it stays inside it.
   SPICE's WebDAV, UTM's road, needs a SPICE client and a QEMU built with it, which Homebrew's is
   not; virtiofs needs a daemon that runs only on Linux, and Windows has no 9p client.
+- **Nothing in a Windows guest updates by itself**: a machine an agent drives was otherwise
+  restarted, or shown a prompt over its work, by nobody's choice; checking for updates by hand
+  still works. Group Policy's values are written in WinPE, into the registry of a Windows that has
+  never started: "Configure Automatic Updates: Disabled" (`NoAutoUpdate`), which Pro honours,
+  stops Windows Update's own scans and installs but **not the drivers Windows fetches for its
+  devices** — measured: a driver update came down and was installed 38 seconds after a boot, by
+  the Device Driver Retrieval Client. So Windows Update is also not searched for a device's
+  driver (`SearchOrderConfig`), nor its metadata fetched, nor drivers taken with quality updates;
+  and the Store's apps are not downloaded. Written before the first boot because that boot is
+  when Windows first looks for its devices' drivers. Measured again with them, nothing was scanned
+  or fetched by itself, though Settings still says it checks daily and shows no "managed by your
+  organization": what it says is not what it does. What is left is the Store's setup acquisition,
+  which installs Windows App Runtime a couple of minutes into each copy's first boot: an app
+  added once, not an update, and so not stopped.
 - **Windows is downloaded as Microsoft's ESD and made into an ISO here**, because an ISO has no
   address to fetch it from: Microsoft's page issues one per visit, for a day, and refuses scripted
   visitors. The ESD is what the Media Creation Tool fetches, from Microsoft's CDN at a fixed
   address with its SHA-256 in a catalog Microsoft signs. **The catalog is read when hukan is built,
   not when it runs**: `Vendor/update-windows-catalog.sh` writes the ARM64 consumer image of each
   language into `WindowsCatalog.swift`, so a newer Windows comes with a newer hukan — which costs
-  nothing a template notices, since it installs with no network and Windows Update moves it on
-  from there. Microsoft's own catalog link stopped at 24H2, and the newer ones are found through
-  Windows on R's index, which also hosts some of them; so the script takes a catalog only once its
-  Authenticode signature checks out against Microsoft's root, pinned by fingerprint, and the app
-  never asks the index anything. **The ESD comes over plain http**, the only way Microsoft serves
+  nothing a template notices, since it installs with no network and Windows Update, run by
+  hand, moves it on from there. Microsoft's own catalog link stopped at 24H2, and the newer ones
+  are found through Windows on R's index, which also hosts some of them; so the script takes a
+  catalog only once its Authenticode signature checks out against Microsoft's root, pinned by
+  fingerprint, and the app never asks the index anything. **The ESD comes over plain http**, the only way Microsoft serves
   it, and is held to the catalog's checksum before anything is made from it; `Info.plist` lets
   that one host through App Transport Security. **The ISO is put back together by wimlib**, a
   dependency of the cask, as Microsoft's tool does it on Windows: Setup's files, WinPE and Setup in

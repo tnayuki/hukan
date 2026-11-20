@@ -147,7 +147,7 @@ final class WindowsTemplateBuilder {
   }
 
   /// What WinPE runs in place of Setup's own install: the disk, the image, then Defender's services
-  /// switched off in the registry of a Windows that has never started — the one moment it can be
+  /// switched off, and updates by themselves, in the registry of a Windows that has never started — the one moment it can be
   /// done, since from the first boot Defender guards those keys against SYSTEM too, and Tamper
   /// Protection undoes anything said to it afterwards. Then the boot files, and the answer file
   /// where the image's own first boot looks for it. Unlike the first logon's script this one stops
@@ -180,6 +180,21 @@ final class WindowsTemplateBuilder {
     "for %%s in (Sense WdBoot WdFilter WdNisDrv WdNisSvc WinDefend) do "
       + "reg add HKLM\\hukan\\ControlSet001\\Services\\%%s /v Start /t REG_DWORD /d 4 /f",
     "reg unload HKLM\\hukan",
+    // Nothing updates by itself: a machine an agent drives was otherwise restarted, or had a prompt
+    // put over its work, by nobody's choice. Group Policy's values, written before the first boot,
+    // since Windows looks for drivers for its devices there: Automatic Updates disabled, which Pro
+    // honours; Windows Update not searched for a device's driver, nor its metadata fetched, nor
+    // drivers taken with quality updates; the Store's apps not downloaded. Checking for updates by
+    // hand still works.
+    "reg load HKLM\\hukansw W:\\Windows\\System32\\config\\SOFTWARE || exit /b 1",
+    "set P=HKLM\\hukansw\\Policies\\Microsoft",
+    "reg add %P%\\Windows\\WindowsUpdate\\AU /v NoAutoUpdate /t REG_DWORD /d 1 /f",
+    "reg add %P%\\Windows\\WindowsUpdate /v ExcludeWUDriversInQualityUpdate /t REG_DWORD /d 1 /f",
+    "reg add %P%\\Windows\\DriverSearching /v SearchOrderConfig /t REG_DWORD /d 0 /f",
+    "reg add \"%P%\\Windows\\Device Metadata\" "
+      + "/v PreventDeviceMetadataFromNetwork /t REG_DWORD /d 1 /f",
+    "reg add %P%\\WindowsStore /v AutoDownload /t REG_DWORD /d 2 /f",
+    "reg unload HKLM\\hukansw",
     "bcdboot W:\\Windows /s S: /f UEFI || exit /b 1",
     "mkdir W:\\Windows\\Panther",
     "copy /y %ANS%\\autounattend.xml W:\\Windows\\Panther\\unattend.xml || exit /b 1",

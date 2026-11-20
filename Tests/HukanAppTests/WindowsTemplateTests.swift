@@ -75,7 +75,8 @@ final class WindowsTemplateTests: XCTestCase {
     let order = try [
       "diskpart /s", "dism /Apply-Image",
       "reg load HKLM\\hukan W:\\Windows\\System32\\config\\SYSTEM",
-      "reg unload HKLM\\hukan", "bcdboot W:\\Windows", "W:\\Windows\\Panther\\unattend.xml",
+      "reg unload HKLM\\hukan", "reg load HKLM\\hukansw W:\\Windows\\System32\\config\\SOFTWARE",
+      "reg unload HKLM\\hukansw", "bcdboot W:\\Windows", "W:\\Windows\\Panther\\unattend.xml",
       "wpeutil reboot",
     ].map { try XCTUnwrap(script.range(of: $0)?.lowerBound, $0) }
     XCTAssertEqual(order, order.sorted())
@@ -83,6 +84,16 @@ final class WindowsTemplateTests: XCTestCase {
       script.contains(
         "in (Sense WdBoot WdFilter WdNisDrv WdNisSvc WinDefend) do reg add HKLM\\hukan"))
     XCTAssertTrue(script.contains("/v Start /t REG_DWORD /d 4 /f"))
+    // Updates, Windows Update's drivers among them, are Group Policy's before the first boot.
+    for value in [
+      "Windows\\WindowsUpdate\\AU /v NoAutoUpdate /t REG_DWORD /d 1",
+      "Windows\\WindowsUpdate /v ExcludeWUDriversInQualityUpdate /t REG_DWORD /d 1",
+      "Windows\\DriverSearching /v SearchOrderConfig /t REG_DWORD /d 0",
+      "Windows\\Device Metadata\" /v PreventDeviceMetadataFromNetwork /t REG_DWORD /d 1",
+      "WindowsStore /v AutoDownload /t REG_DWORD /d 2",
+    ] {
+      XCTAssertTrue(script.contains(value), value)
+    }
   }
 
   func testSetupInstallsDriversAndBothAgentHalves() {
