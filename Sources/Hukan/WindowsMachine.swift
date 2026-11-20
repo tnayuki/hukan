@@ -71,6 +71,8 @@ final class WindowsTemplateBuilder {
   var onPhase: ((MacTemplateBuilder.Phase) -> Void)?
   /// Stopped from the window: nothing from here on may report a phase or publish.
   private var cancelled = false
+  /// Whether the guest has restarted out of WinPE. Main thread.
+  private var restarted = false
   private var machine: Machine?
   private let password = MacTemplateBuilder.makePassword()
   /// The install, for the Virtual Machines window to show.
@@ -147,11 +149,12 @@ final class WindowsTemplateBuilder {
   }
 
   /// What WinPE runs in place of Setup's own install: the disk, the image, then Defender's services
-  /// switched off, and updates by themselves, in the registry of a Windows that has never started — the one moment it can be
-  /// done, since from the first boot Defender guards those keys against SYSTEM too, and Tamper
-  /// Protection undoes anything said to it afterwards. Then the boot files, and the answer file
-  /// where the image's own first boot looks for it. Unlike the first logon's script this one stops
-  /// at a failed step, so Setup goes on and asks for the rest on screen.
+  /// switched off, and updates by themselves, in the registry of a Windows that has never started —
+  /// the one moment it can be done, since from the first boot Defender guards those keys against
+  /// SYSTEM too, and Tamper Protection undoes anything said to it afterwards. Then the boot files,
+  /// and the answer file where the image's own first boot looks for it. A failed step powers the
+  /// guest off instead of restarting it, and QEMU leaving without the restart is how the builder
+  /// knows: WinPE has nothing else to say it through.
   static let installScript = [
     "@echo off",
     "set SRC=",
@@ -161,7 +164,7 @@ final class WindowsTemplateBuilder {
       + "set SRC=%%d:\\sources\\install.esd",
     "set ANS=",
     "for %%d in (C D E F G H I J K L) do if exist %%d:\\hukan-install.cmd set ANS=%%d:",
-    "if not defined SRC exit /b 1",
+    "if not defined SRC goto failed",
     "(",
     "echo select disk 0",
     "echo clean",
@@ -174,9 +177,9 @@ final class WindowsTemplateBuilder {
     "echo format quick fs=ntfs label=Windows",
     "echo assign letter=W",
     ") > X:\\hukan-diskpart.txt",
-    "diskpart /s X:\\hukan-diskpart.txt || exit /b 1",
-    "dism /Apply-Image /ImageFile:%SRC% /Name:\"Windows 11 Pro\" /ApplyDir:W:\\ || exit /b 1",
-    "reg load HKLM\\hukan W:\\Windows\\System32\\config\\SYSTEM || exit /b 1",
+    "diskpart /s X:\\hukan-diskpart.txt || goto failed",
+    "dism /Apply-Image /ImageFile:%SRC% /Name:\"Windows 11 Pro\" /ApplyDir:W:\\ || goto failed",
+    "reg load HKLM\\hukan W:\\Windows\\System32\\config\\SYSTEM || goto failed",
     "for %%s in (Sense WdBoot WdFilter WdNisDrv WdNisSvc WinDefend) do "
       + "reg add HKLM\\hukan\\ControlSet001\\Services\\%%s /v Start /t REG_DWORD /d 4 /f",
     "reg unload HKLM\\hukan",
@@ -186,21 +189,51 @@ final class WindowsTemplateBuilder {
     // honours; Windows Update not searched for a device's driver, nor its metadata fetched, nor
     // drivers taken with quality updates; the Store's apps not downloaded. Checking for updates by
     // hand still works.
-    "reg load HKLM\\hukansw W:\\Windows\\System32\\config\\SOFTWARE || exit /b 1",
+    "reg load HKLM\\hukansw W:\\Windows\\System32\\config\\SOFTWARE || goto failed",
     "set P=HKLM\\hukansw\\Policies\\Microsoft",
-    "reg add %P%\\Windows\\WindowsUpdate\\AU /v NoAutoUpdate /t REG_DWORD /d 1 /f",
-    "reg add %P%\\Windows\\WindowsUpdate /v ExcludeWUDriversInQualityUpdate /t REG_DWORD /d 1 /f",
-    "reg add %P%\\Windows\\DriverSearching /v SearchOrderConfig /t REG_DWORD /d 0 /f",
+    "reg add %P%\\Windows\\WindowsUpdate\\AU /v NoAutoUpdate /t REG_DWORD /d 1 /f || goto failed",
+    "reg add %P%\\Windows\\WindowsUpdate "
+      + "/v ExcludeWUDriversInQualityUpdate /t REG_DWORD /d 1 /f || goto failed",
+    "reg add %P%\\Windows\\DriverSearching /v SearchOrderConfig /t REG_DWORD /d 0 /f || goto failed",
     "reg add \"%P%\\Windows\\Device Metadata\" "
-      + "/v PreventDeviceMetadataFromNetwork /t REG_DWORD /d 1 /f",
-    "reg add %P%\\WindowsStore /v AutoDownload /t REG_DWORD /d 2 /f",
+      + "/v PreventDeviceMetadataFromNetwork /t REG_DWORD /d 1 /f || goto failed",
+    "reg add %P%\\WindowsStore /v AutoDownload /t REG_DWORD /d 2 /f || goto failed",
     "reg unload HKLM\\hukansw",
-    "bcdboot W:\\Windows /s S: /f UEFI || exit /b 1",
+    "bcdboot W:\\Windows /s S: /f UEFI || goto failed",
     "mkdir W:\\Windows\\Panther",
-    "copy /y %ANS%\\autounattend.xml W:\\Windows\\Panther\\unattend.xml || exit /b 1",
+    "copy /y %ANS%\\autounattend.xml W:\\Windows\\Panther\\unattend.xml || goto failed",
     "wpeutil reboot",
+    "goto :eof",
+    ":failed",
+    "wpeutil shutdown",
     "",
   ].joined(separator: "\r\n")
+
+  /// The virtio-serial port the first logon's script reports through, and the file beside the
+  /// template being made that it reaches.
+  static let setupPort = "dev.hukan.setup"
+  static let setupLogName = "setup.log"
+
+  /// What went wrong, if anything, in a guest that powered off: WinPE stopped at a step if it never
+  /// restarted, and the first logon's script failed a step, or never got to its end, by its report.
+  // Internal so tests can read a report without running Windows.
+  static func setupProblem(restarted: Bool, report: String?) -> String? {
+    guard restarted else {
+      return "Windows could not be laid down on the disk (WinPE stopped at a step). "
+        + "The template's folder holds the disk as it was left."
+    }
+    let lines = (report ?? "").split(whereSeparator: \.isNewline).map {
+      $0.trimmingCharacters(in: .whitespaces)
+    }
+    let failed = lines.filter { $0.hasPrefix("failed: ") }.map { $0.dropFirst("failed: ".count) }
+    if !failed.isEmpty {
+      return "Windows' first sign-in could not set up: \(failed.joined(separator: ", "))."
+    }
+    guard lines.contains("done") else {
+      return "Windows' first sign-in did not finish setting up."
+    }
+    return nil
+  }
 
   /// What the first logon runs, from the answers disc: the drivers, the agent's two halves, and a
   /// sign-in that holds.
@@ -212,25 +245,32 @@ final class WindowsTemplateBuilder {
     "set D=",
     "for %%d in (D E F G H I J) do if exist %%d:\\vioserial\\w11\\ARM64\\vioser.inf set D=%%d:",
     "pnputil /add-driver %D%\\vioserial\\w11\\ARM64\\vioser.inf /install",
-    "pnputil /add-driver %D%\\NetKVM\\w11\\ARM64\\netkvm.inf /install",
-    "pnputil /add-driver %D%\\viogpudo\\w11\\ARM64\\viogpudo.inf /install",
+    // The serial driver first, since it is what the builder is told through: a step that fails
+    // says so on this port, and the last line says the script got to its end.
+    "set R=\\\\.\\Global\\\(setupPort)",
+    "pnputil /add-driver %D%\\NetKVM\\w11\\ARM64\\netkvm.inf /install "
+      + "|| (echo failed: NetKVM)> %R%",
+    "pnputil /add-driver %D%\\viogpudo\\w11\\ARM64\\viogpudo.inf /install "
+      + "|| (echo failed: viogpudo)> %R%",
     "set H=C:\\Program Files\\Hukan",
     "mkdir \"%H%\"",
-    "copy /y \"%~dp0hukan-guest-agent.exe\" \"%H%\\\"",
-    "sc create HukanGuestAgent binPath= \"\\\"%H%\\hukan-guest-agent.exe\\\" --root\" start= auto",
+    "copy /y \"%~dp0hukan-guest-agent.exe\" \"%H%\\\" || (echo failed: the agent's copy)> %R%",
+    "sc create HukanGuestAgent binPath= \"\\\"%H%\\hukan-guest-agent.exe\\\" --root\" start= auto "
+      + "|| (echo failed: the agent's service)> %R%",
     "schtasks /create /tn HukanGuestAgent /sc onlogon /rl highest /f "
-      + "/tr \"\\\"%H%\\hukan-guest-agent.exe\\\" --user\"",
+      + "/tr \"\\\"%H%\\hukan-guest-agent.exe\\\" --user\" || (echo failed: the agent's task)> %R%",
     "reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System "
-      + "/v EnableLUA /t REG_DWORD /d 0 /f",
+      + "/v EnableLUA /t REG_DWORD /d 0 /f || (echo failed: EnableLUA)> %R%",
     // The answer file's AutoLogon signs in at boot only, and for a counted number of boots: a
     // logoff would otherwise leave the machine at the sign-in screen, where the user half of the
     // agent is not running and nothing can sign it back in.
     "reg add \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\" "
-      + "/v ForceAutoLogon /t REG_SZ /d 1 /f",
+      + "/v ForceAutoLogon /t REG_SZ /d 1 /f || (echo failed: ForceAutoLogon)> %R%",
     "reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\" "
       + "/v AutoLogonCount /f",
-    "powercfg /change standby-timeout-ac 0",
-    "powercfg /change monitor-timeout-ac 0",
+    "powercfg /change standby-timeout-ac 0 || (echo failed: standby)> %R%",
+    "powercfg /change monitor-timeout-ac 0 || (echo failed: monitor)> %R%",
+    "(echo done)> %R%",
     "",
   ].joined(separator: "\r\n")
 
@@ -505,8 +545,9 @@ final class WindowsTemplateBuilder {
     Self.running = process
     onPhase?(.installing(-1))
     screenView.connect(socket: display)
-    DispatchQueue.global(qos: .utility).async {
-      Self.ejectInstallerAtFirstReset(socket: socket)
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      guard Self.ejectInstallerAtFirstReset(socket: socket) else { return }
+      DispatchQueue.main.async { self?.restarted = true }
     }
   }
 
@@ -515,15 +556,18 @@ final class WindowsTemplateBuilder {
   /// every restart Setup makes after, and the install begun again from its first step. Taken out
   /// rather than put behind the disk in the boot order, which was tried: Setup's own restart wrote
   /// the firmware's boot order, and the ISO came first again.
-  private static func ejectInstallerAtFirstReset(socket: String) {
-    guard let qemu = QMPConnection(socket: socket), qemu.wait(for: "RESET") else { return }
+  /// Whether the guest has restarted: WinPE's reboot, which only an install that got through makes.
+  @discardableResult
+  private static func ejectInstallerAtFirstReset(socket: String) -> Bool {
+    guard let qemu = QMPConnection(socket: socket), qemu.wait(for: "RESET") else { return false }
     // By the device the drive is in, which `usb-storage` makes and names itself: ejecting by the
     // drive's own name is deprecated.
     let drives = qemu.execute("query-block") as? [[String: Any]] ?? []
     guard let device = drives.first(where: { $0["device"] as? String == "cd0" })?["qdev"] else {
-      return
+      return true
     }
     _ = qemu.execute("eject", ["id": device, "force": true])
+    return true
   }
 
   private func arguments(_ machine: Machine, socket: String, display: String) -> [String] {
@@ -549,6 +593,11 @@ final class WindowsTemplateBuilder {
       "-device", "usb-storage,bus=xhci.0,drive=cd2,removable=on",
       "-rtc", "base=localtime", "-nic", "none", "-display", "none", "-vnc", "unix:\(display)",
       "-qmp", "unix:\(socket),server=on,wait=off",
+      // What the first logon's script reports, into a file beside the template being made.
+      "-device", "virtio-serial-pci,id=serial0",
+      "-chardev",
+      "file,id=setup,path=\(machine.url.appendingPathComponent(Self.setupLogName).path)",
+      "-device", "virtserialport,bus=serial0.0,chardev=setup,name=\(Self.setupPort)",
     ]
   }
 
@@ -576,7 +625,9 @@ final class WindowsTemplateBuilder {
     MachineStore.changed()
   }
 
-  /// The guest shuts itself down at its first logon, so QEMU leaving cleanly is the install done.
+  /// The guest shuts itself down at its first logon, so QEMU leaving cleanly is the install done —
+  /// once WinPE has restarted into the Windows it laid down, and the first logon's script has said
+  /// it got to its end with no step failed.
   private func finished(_ machine: Machine, status: Int32, log: URL) {
     guard !cancelled else { return }
     let manager = FileManager.default
@@ -586,6 +637,15 @@ final class WindowsTemplateBuilder {
       onPhase?(.failed("QEMU stopped (status \(status)). \(tail)"))
       return
     }
+    if let problem = Self.setupProblem(
+      restarted: restarted,
+      report: try? String(
+        contentsOf: machine.url.appendingPathComponent(Self.setupLogName), encoding: .utf8))
+    {
+      onPhase?(.failed(problem))
+      return
+    }
+    try? manager.removeItem(at: machine.url.appendingPathComponent(Self.setupLogName))
     try? manager.removeItem(at: log)
     let destination = MachineStore.templatesURL.appendingPathComponent(machine.id.uuidString)
     do {

@@ -300,4 +300,12 @@ and the reasoning behind it; read the file before changing the area it covers.
   Windows is on the disk, or every restart Setup makes after would boot it again and start the
   install over. Putting the disk ahead of the ISO in the boot order was tried first: the first
   restart reached the disk, and Setup's next one had rewritten the firmware's order and came back
-  to the ISO.
+  to the ISO. **A template that fails says so, by what the guest reports, not by a clock**: WinPE,
+  which has no way to the host but its own restart, powers off at a failed step instead, so QEMU
+  leaving without that first restart is an install that never laid Windows down. The first
+  logon's script reports each failed step and its own end on a virtio-serial port of the build's,
+  written to a file beside the template — its serial driver is the first thing it installs — and
+  a guest that powers off with a step failed, or without the end reported, is a failure. virt's
+  PL011 was tried first: Windows on Arm loads a driver for it but makes no COM port of it. Windows
+  Setup stopping on its own error screen between the two is the one failure not told, and stays
+  for whoever is watching the screen to stop with −; a time limit would be a guess.

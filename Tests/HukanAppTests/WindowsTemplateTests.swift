@@ -77,7 +77,7 @@ final class WindowsTemplateTests: XCTestCase {
       "reg load HKLM\\hukan W:\\Windows\\System32\\config\\SYSTEM",
       "reg unload HKLM\\hukan", "reg load HKLM\\hukansw W:\\Windows\\System32\\config\\SOFTWARE",
       "reg unload HKLM\\hukansw", "bcdboot W:\\Windows", "W:\\Windows\\Panther\\unattend.xml",
-      "wpeutil reboot",
+      "wpeutil reboot", ":failed", "wpeutil shutdown",
     ].map { try XCTUnwrap(script.range(of: $0)?.lowerBound, $0) }
     XCTAssertEqual(order, order.sorted())
     XCTAssertTrue(
@@ -94,6 +94,37 @@ final class WindowsTemplateTests: XCTestCase {
     ] {
       XCTAssertTrue(script.contains(value), value)
     }
+  }
+
+  func testAFailedWinPEStepPowersOffRatherThanHandingBackToSetup() {
+    let script = WindowsTemplateBuilder.installScript
+    XCTAssertFalse(script.contains("exit /b 1"))
+    for step in ["diskpart /s", "dism /Apply-Image", "bcdboot", "reg load HKLM\\hukansw"] {
+      let line = script.components(separatedBy: "\r\n").first { $0.hasPrefix(step) } ?? ""
+      XCTAssertTrue(line.hasSuffix("|| goto failed"), line)
+    }
+  }
+
+  func testTheFirstLogonReportsEachFailedStepAndItsEnd() {
+    let script = WindowsTemplateBuilder.setupScript
+    XCTAssertTrue(script.contains("set R=\\\\.\\Global\\dev.hukan.setup"))
+    XCTAssertTrue(script.contains("|| (echo failed: the agent's service)> %R%"))
+    let lines = script.components(separatedBy: "\r\n").filter { !$0.isEmpty }
+    XCTAssertEqual(lines.last, "(echo done)> %R%")
+    // The serial driver is the first thing installed, being what the rest reports through.
+    XCTAssertLessThan(
+      try XCTUnwrap(script.range(of: "vioser.inf")?.lowerBound),
+      try XCTUnwrap(script.range(of: "set R=")?.lowerBound))
+  }
+
+  func testTheBuildIsJudgedByWinPEsRestartAndTheFirstLogonsReport() {
+    let problem = WindowsTemplateBuilder.setupProblem
+    XCTAssertNotNil(problem(false, "done\r\n"))
+    XCTAssertNil(problem(true, "done\r\n"))
+    XCTAssertNotNil(problem(true, nil))
+    XCTAssertNotNil(problem(true, ""))
+    let failed = problem(true, "failed: NetKVM \r\nfailed: EnableLUA\r\ndone\r\n")
+    XCTAssertEqual(failed, "Windows' first sign-in could not set up: NetKVM, EnableLUA.")
   }
 
   func testSetupInstallsDriversAndBothAgentHalves() {
