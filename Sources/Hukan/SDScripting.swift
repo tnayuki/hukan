@@ -536,6 +536,13 @@ final class SDSession: NSObject {
       controller?.setTags(newValue.components(separatedBy: .newlines), for: session)
     }
   }
+  /// The id of the session that started this one with `start_session`, while it is still nested
+  /// under it — empty for any other session, and for one detached to top level. Read-only: the
+  /// link is the agent's to make, and the rail's Detach is the person's way to end it.
+  @objc var startedBy: String {
+    guard let origin = agentSession?.origin, !origin.detached else { return "" }
+    return origin.parentID.uuidString
+  }
   /// Whether the rail is showing this session below the fold — which is the flag *and* the one
   /// rule that overrides it, since a session that is working or waiting on you comes back out.
   /// What a script checking the rail wants is what the rail is doing, not what was recorded.

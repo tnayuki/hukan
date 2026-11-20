@@ -513,7 +513,9 @@ enum ExternalMCP {
     var agentSinceLastSaid = false
     for record in records {
       switch record.kind {
-      case .userText(let text):
+      case .userText(let body):
+        // hukan's report of side sessions is said by nobody; it is named for what it is.
+        let text = record.reports.map { Transcript.reportsNote(titles: $0, waiting: 0) } ?? body
         if agentSinceLastSaid || turns.isEmpty {
           turns.append(Turn(stamp: record.stamp, said: text))
         } else {

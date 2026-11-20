@@ -1301,6 +1301,63 @@ enum Git {
     return result
   }
 
+  /// Make a linked worktree for a side session (`start_session`'s `use_worktree`): a new branch
+  /// `branch` cut from `base` — a local branch, or HEAD of the checkout at `url` when nil — checked
+  /// out at `path`, registered under `name`. The one write hukan makes to a repository's worktrees,
+  /// and made only on an agent's call: the desktop app makes the side session's checkout itself,
+  /// and an agent told to `EnterWorktree` first would start its work where it was asked not to.
+  /// Done in libgit2 like every other read, so the build stays free of a `git` it would run.
+  /// Answers with the new worktree, or with why there is none.
+  static func addWorktree(
+    from url: URL, path: URL, name: String, branch: String, base: String?
+  ) -> Result<URL, WorktreeError> {
+    guard let repo = openRepository(at: url) else { return .failure(.init("not a git repository")) }
+    defer { git_repository_free(repo) }
+    func lastError(_ fallback: String) -> WorktreeError {
+      .init(git_error_last().flatMap { $0.pointee.message.map { String(cString: $0) } } ?? fallback)
+    }
+    var object: OpaquePointer?
+    let spec = base.map { "refs/heads/\($0)^{commit}" } ?? "HEAD^{commit}"
+    guard git_revparse_single(&object, repo, spec) == 0, let object else {
+      return .failure(.init(base.map { "no local branch named \($0)" } ?? "HEAD has no commit"))
+    }
+    defer { git_object_free(object) }
+    var reference: OpaquePointer?
+    guard git_branch_create(&reference, repo, branch, object, 0) == 0, let reference else {
+      return .failure(lastError("could not create branch \(branch)"))
+    }
+    defer { git_reference_free(reference) }
+    try? FileManager.default.createDirectory(
+      at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+    var options = git_worktree_add_options()
+    git_worktree_add_options_init(&options, UInt32(GIT_WORKTREE_ADD_OPTIONS_VERSION))
+    options.ref = reference
+    var worktree: OpaquePointer?
+    guard git_worktree_add(&worktree, repo, name, path.path, &options) == 0, let worktree else {
+      let error = lastError("could not add the worktree at \(path.path)")
+      // A branch nothing checks out is litter the failure would otherwise leave behind.
+      git_branch_delete(reference)
+      return .failure(error)
+    }
+    git_worktree_free(worktree)
+    return .success(path.standardizedFileURL)
+  }
+
+  /// Whether the repository at `url` has a local branch called `name`.
+  static func branchExists(_ name: String, at url: URL) -> Bool {
+    guard let repo = openRepository(at: url) else { return false }
+    defer { git_repository_free(repo) }
+    var reference: OpaquePointer?
+    guard git_branch_lookup(&reference, repo, name, GIT_BRANCH_LOCAL) == 0 else { return false }
+    git_reference_free(reference)
+    return true
+  }
+
+  struct WorktreeError: Error {
+    let message: String
+    init(_ message: String) { self.message = message }
+  }
+
   /// What git has underway in this worktree, if anything.
   ///
   /// The *kind* is `git_repository_state`, which is one read of the gitdir and no walk. The

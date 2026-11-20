@@ -318,6 +318,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       self.createSession(in: worktree)
     }
     rail.onStartSession = { [weak self] session in self?.startSessionFromRail(session) }
+    rail.onDetachSession = { [weak self] session in self?.detach(session) }
     // The rail has already confirmed — deleting unlinks the transcript, so there is no undo.
     rail.onSetTags = { [weak self] session, tags in self?.setTags(tags, for: session) }
     rail.onRename = { [weak self] session, name in self?.rename(session, to: name) }
@@ -1989,6 +1990,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       SessionNotifier.shared.observe(session, worktreeName: name)
       // Hold the machine awake while any agent is mid-turn (dropped when none are).
       SleepGuard.shared.refresh()
+      self.sideSessionStateChanged(session)
     }
     // Held changes must reach the rail even for a session created before any discovery pass wires
     // it (`discoverSessions` wires the rest). Reload is enough — the row's grey rides on `heldByPID`.
@@ -2039,8 +2041,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
         done(.error("the session is gone"))
         return
       }
-      if call.name == HukanMCP.newSessionTool {
-        done(self.startSession(call, from: session))
+      if call.name == HukanMCP.startSessionTool {
+        self.startSideSession(call, from: session, done: done)
+      } else if call.name == HukanMCP.handOffTool {
+        self.handOff(call, from: session, done: done)
+      } else if call.name == HukanMCP.detachSessionTool {
+        done(self.detachSession(call, from: session))
       } else if call.name.hasPrefix("vm_") || call.name.hasPrefix("guest_") {
         self.files.desk.performMachineTool(call, for: session, completion: done)
       } else {
@@ -2049,28 +2055,478 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     session.onNeedsStart = { [weak self] in self?.startSession(session) }
     session.onInstructed = { [weak self] in self?.unarchiveOnInstruction(session) }
+    session.onTurnEnded = { [weak self, weak session] report, failed in
+      guard let self, let session else { return }
+      self.turnEnded(session, report: report, failed: failed)
+    }
+    session.onEngineFailed = { [weak self, weak session] message in
+      guard let self, let session else { return }
+      self.engineFailed(session, message: message)
+    }
   }
 
-  /// `new_session`, called by `caller`'s agent: a session in one of the caller's repository's
-  /// worktrees — the caller's own by default — started the way `hukan_new_session` starts one from
-  /// outside, its note naming the session that asked.
-  private func startSession(_ call: HukanMCP.Call, from caller: AgentSession) -> HukanMCP.Outcome {
-    guard let message = call.string("message") else { return .error("a message is required") }
+  /// `start_session`, called by `caller`'s agent: a side session, nested under the caller on the
+  /// rail and reporting to it (see `SessionOrigin`). Shaped as the desktop app's tool of the same
+  /// name. "offer" and "own_initiative" are held on a card on the caller in every permission mode
+  /// — the first asking whether to do the task here or in a session of its own, the second
+  /// whether to do it at all — and a start on a turn the person did not open is refused
+  /// (`TurnInput.mayStartSessions`). Answers once the session is started, or once the person has
+  /// answered.
+  private func startSideSession(
+    _ call: HukanMCP.Call, from caller: AgentSession,
+    done: @escaping (HukanMCP.Outcome) -> Void
+  ) {
+    let initiations = ["user_asked", "offer", "own_initiative"]
+    guard let initiation = call.string("initiation"), initiations.contains(initiation) else {
+      return done(.error("`initiation` must be \"user_asked\", \"offer\" or \"own_initiative\""))
+    }
+    guard let title = call.string("title").map({ String($0.prefix(80)) }) else {
+      return done(.error("a title is required"))
+    }
+    guard let prompt = call.string("prompt") else { return done(.error("a prompt is required")) }
+    if let context = call.string("context"), context != "fork", context != "fresh" {
+      return done(.error("`context` must be \"fresh\" or \"fork\""))
+    }
+    let fork = call.string("context") == "fork"
+    let background = call.string("background")
+    if !fork, background == nil {
+      return done(
+        .error(
+          "`background` is required with \"fresh\": the goal, decisions and constraints so far, "
+            + "for someone who has not seen this conversation"))
+    }
+    if fork, call.arguments["use_worktree"] != nil || call.string("cwd") != nil {
+      return done(
+        .error("use_worktree and cwd are \"fresh\" only; a \"fork\" goes where this session is"))
+    }
+    if initiation != "own_initiative", !caller.turnInput.mayStartSessions {
+      return done(
+        .error(
+          "Not started: this turn was opened by another session's message or by your side "
+            + "sessions' reports, not by the user. Propose it instead (initiation "
+            + "\"own_initiative\"), and the user decides."))
+    }
+    let brief =
+      fork
+      ? prompt
+      : "Background (from the session that started this one):\n\(background ?? "")\n\nTask:\n"
+        + prompt
+    let request = SideSessionRequest(
+      title: title, brief: brief, fork: fork, name: call.string("name"),
+      useWorktree: call.arguments["use_worktree"] as? Bool, cwd: call.string("cwd"),
+      sourceBranch: call.string("source_branch"), branchName: call.string("branch_name"),
+      model: fork ? nil : call.string("model"), effort: fork ? nil : call.string("effort"),
+      permissionMode: call.string("permission_mode"),
+      wakeParent: call.arguments["wake_when_done"] as? Bool ?? false)
+    // What the call can be refused for is checked before the card goes up, so a yes is never
+    // followed by a no.
+    if case .failure(let error) = settings(for: request, from: caller) {
+      return done(.error(error.message))
+    }
+    let start = { [weak self, weak caller] in
+      guard let self, let caller else { return done(.error("the session is gone")) }
+      done(self.startSideSession(request, from: caller))
+    }
+    switch initiation {
+    case "own_initiative":
+      caller.requestGrant(
+        tabID: UUID(), title: title, url: prompt, level: .drive, proposal: true
+      ) { level in
+        guard level != nil else {
+          return done(
+            .text("The user did not start \u{201C}\(title)\u{201D}. Do not propose it again."))
+        }
+        start()
+      }
+    case "offer":
+      caller.requestGrant(
+        tabID: UUID(), title: title, url: prompt, level: .drive, proposal: true, offer: true
+      ) { level in
+        guard level != nil else {
+          return done(
+            .text(
+              "The user chose to do \u{201C}\(title)\u{201D} here: carry on with it in this "
+                + "session."))
+        }
+        start()
+      }
+    default:
+      start()
+    }
+  }
+
+  /// `hand_off_to_session`: the task this session is in the middle of moves to a session of its
+  /// own, carrying this conversation (a fork) and what is left of the plan. The desktop app's
+  /// tool. The person asked for it or it is not done, as with any start.
+  private func handOff(
+    _ call: HukanMCP.Call, from caller: AgentSession, done: @escaping (HukanMCP.Outcome) -> Void
+  ) {
+    guard let title = call.string("title").map({ String($0.prefix(80)) }) else {
+      return done(.error("a title is required"))
+    }
+    guard let plan = call.string("remaining_plan") else {
+      return done(.error("remaining_plan is required: what is left, and what done looks like"))
+    }
+    guard caller.turnInput.mayStartSessions else {
+      return done(
+        .error(
+          "Not handed off: this turn was not opened by the user. Ask them first, or propose a "
+            + "session with start_session (initiation \"own_initiative\")."))
+    }
+    let request = SideSessionRequest(
+      title: title,
+      brief: "You are taking over this task from the session it started in, which stops working "
+        + "on it now. What is left:\n\(plan)",
+      fork: true)
+    switch startSideSession(request, from: caller) {
+    case .text(let text):
+      done(
+        .text(
+          text.components(separatedBy: " It runs on its own").first! + ". It carries this "
+            + "conversation and the plan. Stop working on this task here: tell the user in one "
+            + "line where it went, then end your turn."))
+    case let other:
+      done(other)
+    }
+  }
+
+  /// Everything a call says about the session it would start, in one place for the two tools.
+  private struct SideSessionRequest {
+    var title: String
+    var brief: String
+    var fork: Bool
+    var name: String? = nil
+    var useWorktree: Bool? = nil
+    var cwd: String? = nil
+    var sourceBranch: String? = nil
+    var branchName: String? = nil
+    var model: String? = nil
+    var effort: String? = nil
+    var permissionMode: String? = nil
+    var wakeParent = false
+  }
+
+  /// What a side session is given of the caller's composer choices: its mode or a lower one, and
+  /// a model and effort no higher than its own — the desktop app's rule, so a session cannot buy
+  /// more than the one that started it was given. A higher model or effort is ignored rather than
+  /// refused, as the desktop app ignores it; a higher mode is refused, since a session that
+  /// starts asking less is a decision the person makes on its own menu. The reason for anything
+  /// ignored rides along, for the result to say.
+  private func settings(for request: SideSessionRequest, from caller: AgentSession)
+    -> Result<
+      (mode: PermissionMode, model: String, effort: String, ignored: [String]), Git.WorktreeError
+    >
+  {
+    let mode: PermissionMode
+    if let raw = request.permissionMode {
+      guard let asked = PermissionMode(rawValue: raw) else {
+        return .failure(.init("no permission mode named \(raw)"))
+      }
+      guard Self.permissionRank(asked) <= Self.permissionRank(caller.permissionMode) else {
+        return .failure(
+          .init(
+            "\(raw) is above this session's own mode (\(caller.permissionMode.rawValue)); a side "
+              + "session starts in this session's mode or a lower one"))
+      }
+      mode = asked
+    } else {
+      mode = caller.permissionMode
+    }
+    var ignored: [String] = []
+    var model = caller.model
+    if let asked = request.model {
+      let own = SideSessionReports.modelRank(caller.reportedModel ?? caller.model)
+      if let rank = SideSessionReports.modelRank(asked), let own, rank <= own {
+        model = asked
+      } else {
+        ignored.append("model \(asked)")
+      }
+    }
+    var effort = caller.effort
+    if let asked = request.effort {
+      // A caller on the model's own default has no level to compare with, so it is not raised.
+      if let rank = SideSessionReports.effortRank(asked),
+        SideSessionReports.effortRank(caller.effort).map({ rank <= $0 }) ?? false
+      {
+        effort = asked
+      } else {
+        ignored.append("effort \(asked)")
+      }
+    }
+    return .success((mode, model, effort, ignored))
+  }
+
+  /// Start the side session a request describes, now. The family's cap is checked here rather
+  /// than before a card, since what is at work may have changed while the person decided.
+  private func startSideSession(_ request: SideSessionRequest, from caller: AgentSession)
+    -> HukanMCP.Outcome
+  {
     guard let home = workspace.worktree(id: caller.worktreeID) else {
       return .error("this session's worktree is not open in hukan")
     }
-    let name = call.string("worktree")
+    let family = caller.origin.map { $0.detached ? caller.id : $0.familyID } ?? caller.id
+    let working = workspace.sessions.filter {
+      ($0.id == family || ($0.origin?.familyID == family && $0.origin?.detached == false))
+        && $0.isWorking
+    }
+    if working.count >= SideSessionReports.workingCap {
+      return .error(
+        "Not started: \(working.count) sessions of this family are at work already, the most "
+          + "there may be. Propose it instead (initiation \"own_initiative\"), or wait for one "
+          + "to finish.")
+    }
+    let chosen: (mode: PermissionMode, model: String, effort: String, ignored: [String])
+    switch settings(for: request, from: caller) {
+    case .success(let value): chosen = value
+    case .failure(let error): return .error(error.message)
+    }
+    let name = request.name.map(SideSessionReports.slug).flatMap { $0.isEmpty ? nil : $0 }
+    let place: Worktree
+    switch sideSessionPlace(request, home: home, name: name) {
+    case .success(let worktree): place = worktree
+    case .failure(let error): return .error(error.message)
+    }
+    let session = AgentSession(worktreeID: place.id)
+    session.lastInstructedAt = Date()
+    session.origin = SessionOrigin(
+      parentID: caller.id, name: name, familyID: family, wakeParent: request.wakeParent)
+    session.title = request.title
+    session.model = chosen.model
+    session.effort = chosen.effort
+    session.permissionMode = chosen.mode
+    if request.fork, let anchor = caller.lastRecordUUID {
+      session.forkOrigin = ClaudeSession.ForkPoint(source: caller.id, anchor: anchor)
+    }
+    try? FileManager.default.createDirectory(
+      at: SideSessionReports.notesFolder(family: family), withIntermediateDirectories: true)
+    attach(session)
+    workspace.sessions.append(session)
+    workspace.rememberOrigin(of: session)
+    session.note("Started from session \u{201C}\(caller.title ?? "New session")\u{201D}.")
+    session.start(at: place.url, holdIdle: true)
+    guard session.isRunning else {
+      reload()
+      return .error(
+        "The session was made but its engine did not start; it says why in its own transcript.")
+    }
+    // The title the call gave is the row's from the start; written to the engine too, so a
+    // restored window reads it back rather than the brief's first line.
+    session.rename(to: request.title) { _ in }
+    session.send(request.brief, from: .peer)
+    reload()
+    window?.invalidateRestorableState()
+    let moved = place.id == home.id ? "" : " in \(place.url.path)"
+    let ignored =
+      chosen.ignored.isEmpty
+      ? ""
+      : " Ignored, being above this session's own: \(chosen.ignored.joined(separator: ", "))."
+    return .text(
+      "Started session \u{201C}\(request.title)\u{201D} (session_id: \(session.id.uuidString))"
+        + "\(moved).\(ignored) It runs on its own; you get a note here when its turn ends. Don't "
+        + "repeat the introduction: at most one line on how you'll report back, then end your "
+        + "turn — do not wait for it.")
+  }
+
+  /// Where a side session works: a worktree named by `cwd`, the caller's own checkout, or a new
+  /// worktree made for it — `use_worktree`, the default when the caller is in a linked worktree,
+  /// and always for a fork from one, which the desktop app cuts from the starter's branch tip so
+  /// the two do not write one checkout. A new one goes where Claude Code's `EnterWorktree` puts
+  /// its own — `.claude/worktrees/<name>` in the main checkout — so the two read alike on the
+  /// rail and in `git worktree list`, on a branch of the same name: no prefix, which would be a
+  /// house style nobody chose.
+  private func sideSessionPlace(_ request: SideSessionRequest, home: Worktree, name: String?)
+    -> Result<Worktree, Git.WorktreeError>
+  {
+    if let cwd = request.cwd {
+      let path = URL(fileURLWithPath: (cwd as NSString).expandingTildeInPath).standardizedFileURL
+      guard
+        let named = workspace.worktrees.first(where: {
+          $0.repositoryID == home.repositoryID
+            && ($0.url.standardizedFileURL == path || $0.url.lastPathComponent == cwd)
+        })
+      else { return .failure(.init("\(home.repositoryName) has no worktree at \(cwd)")) }
+      return .success(named)
+    }
+    let useWorktree = request.fork ? !home.isMain : request.useWorktree ?? !home.isMain
+    guard useWorktree else { return .success(home) }
     guard
-      let worktree = name.map({ name in
-        workspace.worktrees.first {
-          $0.repositoryID == home.repositoryID && $0.url.lastPathComponent == name
-        }
-      }) ?? home
-    else { return .error("\(home.repositoryName) has no worktree named \(name ?? "")") }
-    let session = makeSession(in: worktree, selecting: false)
-    session.note("Started from session “\(caller.title ?? "New session")”.")
-    session.send(message)
-    return .text("Started session \(session.id.uuidString) in \(worktree.url.lastPathComponent).")
+      let main = workspace.worktrees.first(where: {
+        $0.repositoryID == home.repositoryID && $0.isMain
+      })
+    else { return .failure(.init("\(home.repositoryName) has no main checkout open")) }
+    let wanted = request.branchName.map(SideSessionReports.slug).flatMap { $0.isEmpty ? nil : $0 }
+    let base = wanted ?? name ?? SideSessionReports.slug(request.title)
+    let stem = base.isEmpty ? "session" : base
+    let existing = Set(Git.worktrees(at: main.url).map(\.lastPathComponent))
+    var slug = stem
+    var counter = 2
+    while existing.contains(slug) || Git.branchExists(slug, at: main.url)
+      || FileManager.default.fileExists(
+        atPath: main.url.appendingPathComponent(".claude/worktrees/\(slug)").path)
+    {
+      slug = "\(stem)-\(counter)"
+      counter += 1
+    }
+    // A fork carries the conversation as it stands, so its checkout is cut from where the
+    // starter's is — its branch tip — and not from a branch the call named.
+    let made = Git.addWorktree(
+      from: home.url, path: main.url.appendingPathComponent(".claude/worktrees/\(slug)"),
+      name: slug, branch: slug, base: request.fork ? nil : request.sourceBranch)
+    return made.map { workspace.addWorktree($0) }
+  }
+
+  /// The modes from least to most the agent may do unasked, for "this mode or a lower one".
+  private static func permissionRank(_ mode: PermissionMode) -> Int {
+    switch mode {
+    case .plan: return 0
+    case .default: return 1
+    case .acceptEdits: return 2
+    case .auto: return 3
+    case .bypassPermissions: return 4
+    }
+  }
+
+  /// `detach_session`: `caller` lets go of a side session it started, or of itself.
+  private func detachSession(_ call: HukanMCP.Call, from caller: AgentSession) -> HukanMCP.Outcome {
+    guard let id = call.string("session_id") else { return .error("a session_id is required") }
+    let target: AgentSession?
+    if id == "self" {
+      target = caller.origin == nil ? nil : caller
+    } else {
+      target = workspace.sessions.first {
+        $0.id.uuidString.caseInsensitiveCompare(id) == .orderedSame
+          && $0.origin?.parentID == caller.id
+      }
+    }
+    guard let target, target.origin?.detached == false else {
+      return .error("\(id) is not a side session this session started, nor one still nested")
+    }
+    detach(target)
+    return .text("Session \(target.id.uuidString) is at top level now.")
+  }
+
+  /// Move a side session to top level: the rail stops nesting it, and its turns stop reporting.
+  func detach(_ session: AgentSession) {
+    guard var origin = session.origin, !origin.detached else { return }
+    origin.detached = true
+    session.origin = origin
+    workspace.rememberOrigin(of: session)
+    if let parent = parent(of: session) {
+      parent.sideNotes.removeAll { $0.sessionID == session.id }
+    }
+    wakeAncestors(of: session)
+    reload()
+    window?.invalidateRestorableState()
+  }
+
+  /// The session that started `session`, while it is still nested under it.
+  private func parent(of session: AgentSession) -> AgentSession? {
+    guard let origin = session.origin, !origin.detached else { return nil }
+    return workspace.sessions.first { $0.id == origin.parentID }
+  }
+
+  /// Every session nested under `session`, however deep.
+  private func descendants(of session: AgentSession) -> [AgentSession] {
+    var found: [AgentSession] = []
+    var seen: Set<UUID> = [session.id]
+    var frontier = [session.id]
+    while let id = frontier.popLast() {
+      for child in workspace.sessions
+      where child.origin?.parentID == id && child.origin?.detached == false
+        && !seen.contains(child.id)
+      {
+        seen.insert(child.id)
+        found.append(child)
+        frontier.append(child.id)
+      }
+    }
+    return found
+  }
+
+  /// A turn ended. A side session's report goes to the session that started it; then every
+  /// session up the tree is looked at, since this may have been the last of a subtree at work.
+  private func turnEnded(_ session: AgentSession, report: String?, failed: Bool) {
+    if let parent = parent(of: session) {
+      parent.sideNotes.removeAll { $0.sessionID == session.id }
+      parent.sideNotes.append(
+        SideNote(
+          sessionID: session.id, title: session.title ?? "New session",
+          report: SideSessionReports.report(report), failed: failed))
+    }
+    wakeIfSettled(session)
+    wakeAncestors(of: session)
+  }
+
+  /// A side session's engine went away before any turn of it ended: its starter is owed that,
+  /// since no report will ever come — the desktop app's "fails to start".
+  private func engineFailed(_ session: AgentSession, message: String) {
+    guard !session.hasEndedTurn, let parent = parent(of: session) else { return }
+    parent.sideNotes.removeAll { $0.sessionID == session.id }
+    parent.sideNotes.append(
+      SideNote(
+        sessionID: session.id, title: session.title ?? "New session",
+        report: SideSessionReports.report("It never started: \(message)"), failed: true))
+    wakeAncestors(of: session)
+  }
+
+  /// A side session changed state: one that has just stopped on a card may be what the sessions
+  /// above it were waiting on.
+  /// Looked at again after a while, as the desktop app waits for a card to have settled: an
+  /// approval answered in a moment is not worth continuing anyone over.
+  private func sideSessionStateChanged(_ session: AgentSession) {
+    guard session.origin?.detached == false, session.state == .needsAttention else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self, weak session] in
+      guard let self, let session, session.state == .needsAttention else { return }
+      self.wakeAncestors(of: session)
+    }
+  }
+
+  private func wakeAncestors(of session: AgentSession) {
+    var current = session
+    for _ in 0..<32 {
+      guard let parent = parent(of: current) else { return }
+      wakeIfSettled(parent)
+      current = parent
+    }
+  }
+
+  /// Continue `parent` with its side sessions' reports once it is free and nothing under it is
+  /// still at work, however deep — the desktop app's rule, so a session that sent three pieces off
+  /// hears once, when the last comes back, rather than three times over its own next turn, and
+  /// does not hear of a side session going idle while that one's own side session works on. One
+  /// waiting on the person counts as settled and is named, since only the person can move it — and
+  /// one newly waiting is reason enough to be told, notes or none. An archived parent is done
+  /// with, and its reports are dropped with it. Past `wakeCap` continuations without the person,
+  /// the reports go to the transcript for the person instead.
+  private func wakeIfSettled(_ parent: AgentSession) {
+    if workspace.archivedSessionIDs.contains(parent.id) {
+      parent.sideNotes = []
+      return
+    }
+    guard !parent.isWorking, parent.state != .needsAttention, parent.state != .signedOut,
+      parent.heldByPID == nil
+    else { return }
+    let below = descendants(of: parent)
+    guard !below.contains(where: { $0.isWorking && $0.state != .needsAttention }) else { return }
+    let waiting = below.filter { $0.state == .needsAttention }
+    let newlyWaiting = waiting.filter { !parent.announcedWaiting.contains($0.id) }
+    guard !parent.sideNotes.isEmpty || !newlyWaiting.isEmpty else { return }
+    let notes = parent.sideNotes
+    parent.sideNotes = []
+    parent.announcedWaiting = Set(waiting.map(\.id))
+    let shown = SideSessionReports.shown(notes: notes, waiting: waiting.count)
+    guard parent.wakesSincePerson < SideSessionReports.wakeCap else {
+      parent.note(
+        shown + " — not continued: \(SideSessionReports.wakeCap) continuations in a row without "
+          + "you")
+      return
+    }
+    parent.wakesSincePerson += 1
+    reattachIfNeeded(parent)
+    parent.deliverReports(
+      SideSessionReports.message(
+        notes: notes, waiting: waiting.map { ($0.id, $0.title ?? "New session") }),
+      shown: shown)
   }
 
   /// Replace a session's tags by hand — the rail's editor, or a script.

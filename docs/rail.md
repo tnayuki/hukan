@@ -71,6 +71,26 @@ and the reasoning behind it; read the file before changing the area it covers.
   click in an opened call already means fold the call, and a nested call that also took one would
   leave which was meant to chance; and its messages carry no fork or rollback mark, that
   conversation not being the session's to cut.
+  **A side session is a row, nested under the top of the family that started it.** What a
+  subagent lacks a side session has (`docs/model.md`): it is spoken to and its approvals land on
+  it, so it takes a row — and the row stands under the session that started it, because that
+  session is what it reports to and what archiving takes it with. **A tree, as deep as the starts
+  go** — not the desktop app's one level under the top session, which was tried first: a side
+  session's own side sessions report to it and not to the top, so a rail that flattened the family
+  hid who answers to whom, the one thing the nesting is for. Among siblings the rail's order holds,
+  and the family moves with its top row — a side session instructed more recently does not lift
+  its starter, the family being one piece of work.
+  One whose starter is in the other section or gone stands on its own, and so does one detached
+  (the right-click's Detach to Top Level, or the agent's `detach_session`). **A family folds, by hand only,
+  and its folded row says what is inside.** A session that sends work off a lot grows a family
+  long enough to push the next top row out of reach, and a family whose work is done is the
+  thing to put away. But the rows under it are the ones most likely to be waiting on you, so the
+  folded row takes the rule a folded group's heading has: it carries the loudest state inside —
+  needing you over working, pulsing when something under it works — and how many rows it holds,
+  the count a results header carries. It opens by default and is never opened or folded for you;
+  a family that unfolded itself when a card came up would be overriding the one fold that was the
+  person's to make, when the row it folds into already says so. Saved with the window, by the top
+  session's id.
   **The order is the window's choice of three, and only an order.** When you last instructed a
   session is the default and the one the ages down the trailing edge read in; by branch, and by
   the value of one *kind* of tag, are the other two — the kind because a session carries several

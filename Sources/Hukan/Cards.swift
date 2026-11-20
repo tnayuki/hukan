@@ -168,7 +168,8 @@ final class GrantCard: LayerSurface {
 
     let icon = NSImageView()
     icon.image = NSImage(
-      systemSymbolName: grant.machine ? "desktopcomputer" : "sparkles",
+      systemSymbolName: grant.proposal
+        ? "rectangle.stack.badge.plus" : grant.machine ? "desktopcomputer" : "sparkles",
       accessibilityDescription: "Share a tab")
     icon.contentTintColor = .systemOrange
     icon.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
@@ -176,7 +177,11 @@ final class GrantCard: LayerSurface {
     // Opening names the site rather than a page: there is no page yet, and the address under
     // the question is what says where the tab is going.
     let question: String
-    if grant.machine && grant.saving {
+    if grant.proposal && grant.offer {
+      question = "Do \u{201C}\(grant.title)\u{201D} in a new session?"
+    } else if grant.proposal {
+      question = "Start a session for \u{201C}\(grant.title)\u{201D}?"
+    } else if grant.machine && grant.saving {
       question = "Let the agent save \u{201C}\(grant.url)\u{201D} as a template?"
     } else if grant.machine && grant.closing {
       question = "Let the agent delete \u{201C}\(grant.title)\u{201D}?"
@@ -209,6 +214,12 @@ final class GrantCard: LayerSurface {
       button.bezelStyle = .rounded
       button.controlSize = .small
     }
+    // A proposal is a yes or a no, like a machine.
+    if grant.proposal {
+      decline.title = grant.offer ? "Do It Here" : "Not Now"
+      drive.title = grant.offer ? "New Session" : "Start Session"
+      read.isHidden = true
+    }
     // A machine has one answer, not two: running a command in it is never only reading.
     if grant.machine {
       decline.title = "Don\u{2019}t Allow"
@@ -225,22 +236,26 @@ final class GrantCard: LayerSurface {
     // The address under the question, the way a tool's argument sits under an approval's name:
     // the title says which page, the address says which site the answer is about.
     let body = NSTextField(
-      labelWithString: grant.machine && grant.saving
-        ? "Shuts down, is copied, restarts. Every copy starts with what is in it, sign-ins"
-          + " included."
-        : grant.machine && grant.closing
-          ? "Everything done in this copy is lost. The template stays."
-          : grant.machine && grant.stopping
-            ? "Saved as it is, and resumes from there."
-            : grant.machine && grant.opening
-              ? "A copy of the template for the agent: commands, files and the screen."
-              : grant.machine
-                ? "Commands, files and the screen — as the guest's user, and as its administrator"
-                  + " when asked."
-                : grant.url)
-    body.font = monospace
+      labelWithString: grant.proposal
+        ? grant.url
+        : grant.machine && grant.saving
+          ? "Shuts down, is copied, restarts. Every copy starts with what is in it, sign-ins"
+            + " included."
+          : grant.machine && grant.closing
+            ? "Everything done in this copy is lost. The template stays."
+            : grant.machine && grant.stopping
+              ? "Saved as it is, and resumes from there."
+              : grant.machine && grant.opening
+                ? "A copy of the template for the agent: commands, files and the screen."
+                : grant.machine
+                  ? "Commands, files and the screen — as the guest's user, and as its administrator"
+                    + " when asked."
+                  : grant.url)
+    body.font = grant.proposal ? .systemFont(ofSize: 12) : monospace
     body.textColor = .secondaryLabelColor
-    body.lineBreakMode = .byTruncatingTail
+    // A brief is read, not glanced at: a few lines of it, where an address is one.
+    body.lineBreakMode = grant.proposal ? .byWordWrapping : .byTruncatingTail
+    if grant.proposal { body.maximumNumberOfLines = 4 }
     body.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
     let stack = NSStackView(views: [header, body])

@@ -172,6 +172,9 @@ final class Workspace {
   /// this key inherit their repository order; newly opened loose repositories append to it.
   var railOrder: [String] = []
   var collapsedGroups: Set<String> = []
+  /// The sessions whose side sessions the rail shows folded under them, by session id — folded by
+  /// hand and only by hand, like every fold on the rail. View state, saved with the window.
+  var collapsedFamilies: Set<String> = []
 
   var topLevelOrder: [String] {
     let loose = repositories.filter { groupID(for: $0.id) == nil }.map { "r:" + $0.id }
@@ -315,7 +318,7 @@ final class Workspace {
   /// `confirmBusyTeardown`); the scripted verb does not, the way `roll back` does not.
   func setArchived(_ archived: Bool, for sessions: [AgentSession]) -> Bool {
     var moved = false
-    for session in sessions {
+    for session in archived ? withSettledSideSessions(sessions) : sessions {
       if archived {
         guard canArchive(session) else { continue }
         session.stop()
@@ -325,6 +328,28 @@ final class Workspace {
       }
     }
     return moved
+  }
+
+  /// `sessions` and, for archiving, the side sessions they started that have nothing left to do —
+  /// the desktop app archives those with the session that started them, since they were that
+  /// session's work. One still working, or waiting on you, stays: archiving stops the engine, and
+  /// a turn nobody asked to stop is not the starter's to end. A side session moved to top level
+  /// is its own (`SessionOrigin.detached`).
+  private func withSettledSideSessions(_ sessions: [AgentSession]) -> [AgentSession] {
+    var result = sessions
+    var ids = Set(sessions.map(\.id))
+    var frontier = sessions.map(\.id)
+    while let parent = frontier.popLast() {
+      for child in self.sessions
+      where child.origin?.parentID == parent && child.origin?.detached == false
+        && !ids.contains(child.id) && !child.isWorking && child.state != .needsAttention
+      {
+        ids.insert(child.id)
+        result.append(child)
+        frontier.append(child.id)
+      }
+    }
+    return result
   }
 
   /// You instructed a session, so it is not one you are done with: an archive flag comes off.
@@ -383,6 +408,7 @@ final class Workspace {
   /// Each session's tags, keyed by session id. View state with no owner elsewhere, like the
   /// rail's order below — the same map-not-list rule as the drafts.
   private var restoredTags: [String: [String]] = [:]
+  private var restoredOrigins: [String: SessionOrigin] = [:]
   /// The model roster each session last saw the engine advertise, keyed by session id. Held per
   /// session, not shared — so a restored session that has not connected yet shows the list it
   /// itself saw, and seeds its own picker with it (see `applyRestoredPrefs`) rather than borrowing
@@ -491,6 +517,11 @@ final class Workspace {
     restoredTags[session.id.uuidString] = session.tags.isEmpty ? nil : session.tags
   }
 
+  /// The same for a side session's link (see `SessionOrigin`), for the same reason.
+  func rememberOrigin(of session: AgentSession) {
+    restoredOrigins[session.id.uuidString] = session.origin
+  }
+
   func applyRestoredPrefs(to session: AgentSession) {
     if let prefs = restoredPrefs[session.id.uuidString] {
       session.permissionMode = prefs.mode
@@ -505,6 +536,9 @@ final class Workspace {
     }
     if let tags = restoredTags[session.id.uuidString] {
       session.setTags(tags)
+    }
+    if let origin = restoredOrigins[session.id.uuidString] {
+      session.origin = origin
     }
     // Show this session's own last-seen roster until it connects and reports a fresh one (a
     // restored session stays lazy, so without this its picker would flash the fallback until the
@@ -1076,6 +1110,7 @@ final class Workspace {
     static let membershipGroups = "rail.membershipGroups"
     static let railOrder = "rail.order"
     static let collapsedGroups = "rail.collapsedGroups"
+    static let collapsedFamilies = "rail.collapsedFamilies"
     static let collapsedRepositories = "rail.collapsedRepositories"
     // How the rail orders sessions: "instructed", "branch" or "tag", and the tag's kind beside it.
     static let railSort = "rail.sort"
@@ -1110,6 +1145,13 @@ final class Workspace {
     static let strandedRepositories = "stranded.repositories"
     static let tagSessionIDs = "tags.ids"
     static let tagValues = "tags.values"
+    // Side sessions' links, keyed by session id: the starter, the handle ("" for none), and
+    // whether the session was moved to top level ("1").
+    static let originSessionIDs = "origin.ids"
+    static let originParents = "origin.parents"
+    static let originNames = "origin.names"
+    static let originDetached = "origin.detached"
+    static let originFamilies = "origin.families"
     // The rail's order: when you last instructed each session, as seconds since the reference
     // date. Keyed by session id like the choices above.
     static let instructedSessionIDs = "instructed.ids"
@@ -1201,6 +1243,7 @@ final class Workspace {
       forKey: Key.membershipGroups)
     coder.encode(topLevelOrder as NSArray, forKey: Key.railOrder)
     coder.encode(Array(collapsedGroups) as NSArray, forKey: Key.collapsedGroups)
+    coder.encode(Array(collapsedFamilies) as NSArray, forKey: Key.collapsedFamilies)
     let terminals = terminals ?? self.terminals
     coder.encode(worktrees.map(\.url.path) as NSArray, forKey: Key.worktreePaths)
     coder.encode(worktrees.map(\.id.uuidString) as NSArray, forKey: Key.worktreeIDs)
@@ -1291,6 +1334,13 @@ final class Workspace {
     coder.encode(withTags.map(\.id.uuidString) as NSArray, forKey: Key.tagSessionIDs)
     coder.encode(withTags.map { $0.tags as NSArray } as NSArray, forKey: Key.tagValues)
 
+    let withOrigin = sessions.compactMap { session in session.origin.map { (session.id, $0) } }
+    coder.encode(withOrigin.map(\.0.uuidString) as NSArray, forKey: Key.originSessionIDs)
+    coder.encode(withOrigin.map(\.1.parentID.uuidString) as NSArray, forKey: Key.originParents)
+    coder.encode(withOrigin.map { $0.1.name ?? "" } as NSArray, forKey: Key.originNames)
+    coder.encode(withOrigin.map { $0.1.detached ? "1" : "" } as NSArray, forKey: Key.originDetached)
+    coder.encode(withOrigin.map(\.1.familyID.uuidString) as NSArray, forKey: Key.originFamilies)
+
     // When you last instructed each session — the rail's sort key. Stored because it is view
     // state with no owner elsewhere; the mtime it used to be re-derived from answers a different
     // question and so reordered the rail on every restart. Only an instructed session is worth a
@@ -1372,6 +1422,7 @@ final class Workspace {
     }
     railOrder = strings(coder, Key.railOrder)
     collapsedGroups = Set(strings(coder, Key.collapsedGroups))
+    collapsedFamilies = Set(strings(coder, Key.collapsedFamilies))
     let paths = strings(coder, Key.worktreePaths)
     let ids = strings(coder, Key.worktreeIDs)
     var seen = Set<String>()
@@ -1485,6 +1536,21 @@ final class Workspace {
     restoredTags = [:]
     for (index, idString) in tagIDs.enumerated() where index < tagValues.count {
       restoredTags[idString] = tagValues[index]
+    }
+
+    let originIDs = strings(coder, Key.originSessionIDs)
+    let originParents = strings(coder, Key.originParents)
+    let originNames = strings(coder, Key.originNames)
+    let originDetached = strings(coder, Key.originDetached)
+    let originFamilies = strings(coder, Key.originFamilies)
+    restoredOrigins = [:]
+    for (index, idString) in originIDs.enumerated() where index < originParents.count {
+      guard let parent = UUID(uuidString: originParents[index]) else { continue }
+      let name = index < originNames.count ? originNames[index] : ""
+      restoredOrigins[idString] = SessionOrigin(
+        parentID: parent, name: name.isEmpty ? nil : name,
+        detached: index < originDetached.count && originDetached[index] == "1",
+        familyID: index < originFamilies.count ? UUID(uuidString: originFamilies[index]) : nil)
     }
 
     let instructedIDs = strings(coder, Key.instructedSessionIDs)

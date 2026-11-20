@@ -89,6 +89,13 @@ struct PendingGrant {
   /// With `machine`: the machine is to be stopped, asked on its own every time — someone may be
   /// working in it, and using a machine is not consent to have it taken away from under them.
   var stopping = false
+  /// Not a tab at all: the agent proposes a side session (`start_session`'s "own_initiative"),
+  /// `title` naming it and `url` carrying its brief. Asked in every permission mode — a proposal
+  /// is the agent asking whether to do something nobody told it to, which no mode answers.
+  var proposal = false
+  /// With `proposal`: "offer" — the person named the task, and the card asks where it is done,
+  /// here or in a session of its own. Declining means here.
+  var offer = false
   /// Answered exactly once: the level granted, or nil for declined.
   let decide: (BrowserGrant.Level?) -> Void
 }
@@ -345,6 +352,41 @@ final class AgentSession {
   /// with the transcript and a restart puts it back. The controller owns the field and mirrors
   /// every edit here; the session only stores it (and it rides the same disk path as the queue).
   var draft: String = ""
+
+  /// The session that started this one through `start_session`, if one did (see `SessionOrigin`).
+  /// View state like the tags: the window saves it, and nothing on disk outside hukan knows of it.
+  var origin: SessionOrigin?
+
+  /// Whose message opened the turn now running — the person's, another session's, or one of
+  /// hukan's own reports from the sessions this one started. A turn the person did not open may
+  /// not start a session on its own say (see `SessionOrigin`), which is what keeps one agent's
+  /// words from setting off a chain of sessions nobody asked for.
+  private(set) var turnInput: TurnInput = .person
+
+  /// A turn ended: what its final message said (the `result` the engine closes it with), and
+  /// whether it failed. The window passes the report to the session that started this one.
+  var onTurnEnded: ((_ report: String?, _ failed: Bool) -> Void)?
+
+  /// What the sessions this one started reported while it could not be told — mid-turn, or with
+  /// one of them still working. Delivered in one message when it next can be (see
+  /// `WorkspaceWindow.wakeIfSettled`). Not saved: a report waiting through a restart would be
+  /// about a turn the person has long since read for themselves.
+  var sideNotes: [SideNote] = []
+
+  /// The side sessions found waiting on the person that the last report already named, so a card
+  /// that stays up does not continue this session over and over.
+  var announcedWaiting: Set<UUID> = []
+
+  /// How many times this session was continued with reports since the person last spoke to it
+  /// (see `SideSessionReports.wakeCap`).
+  var wakesSincePerson = 0
+
+  /// Whether a turn of this session has ended since it was made — what a side session's starter
+  /// is owed a report of even when it never gets that far (`onEngineFailed`).
+  private(set) var hasEndedTurn = false
+
+  /// The engine went away on its own, with what it said on the way out.
+  var onEngineFailed: ((String) -> Void)?
 
   /// What the session is labelled with on the rail — `kind: value` strings, set by the agent
   /// through the hosted `set_tags` or by hand from the rail (see `SessionTags`). View state: the
@@ -1184,6 +1226,7 @@ final class AgentSession {
         var message = "claude exited (status \(status))"
         if let reason = stderr, !reason.isEmpty { message += "\n\(reason)" }
         self.append(Transcript.error(message))
+        self.onEngineFailed?(message)
       }
       self.deliberateStop = false
       self.onStateChange?()
@@ -1191,7 +1234,9 @@ final class AgentSession {
     do {
       try session.start(
         model: model, permissionMode: permissionMode.rawValue, effort: effort,
-        tools: tools, resume: isDetached, fork: forkOrigin, rollbackTo: rollbackAnchor)
+        tools: tools, resume: isDetached, fork: forkOrigin, rollbackTo: rollbackAnchor,
+        sideSession: origin.map { !$0.detached } ?? false,
+        notesFolder: origin.map { SideSessionReports.notesFolder(family: $0.familyID).path })
       runner = session
       titleAsked = false
       // The branch has been taken, or the cut has been made: either way the engine has written
@@ -1236,6 +1281,25 @@ final class AgentSession {
     append(Transcript.note(text))
   }
 
+  /// Open a turn on hukan's own say: the sessions this one started have reported. Not an
+  /// instruction — the rail's order and the archive are the person's, and a report is the agent's
+  /// own work coming back, like a task notification — and not drawn as a message, since nobody
+  /// typed it: the transcript gets `shown` as a note, and the engine the text written for it.
+  /// Only when the turn is free; a send would cut one, and the window waits for it to end.
+  func deliverReports(_ text: String, shown: String) {
+    guard !isTurnActive, state != .signedOut else { return }
+    if runner == nil {
+      onNeedsStart?()
+      guard runner != nil else { return }
+    }
+    turnInput = .reports
+    append(Transcript.note(shown))
+    runner?.send(text)
+    state = .running
+    isTurnActive = true
+    onStateChange?()
+  }
+
   /// Stamp the rail's sort key and let the window take the row out of the Archived fold — for a
   /// composer send, and for a message the engine replays from Remote Control or another session.
   private func noteInstruction() {
@@ -1250,7 +1314,10 @@ final class AgentSession {
   /// turn and let this line open the next one the moment the interrupt lands, rather than
   /// holding it until the turn finishes on its own. With a queue already building, the send is
   /// deliberate type-ahead, so it joins the queue as before.
-  func send(_ text: String, attachments: [Attachment] = []) {
+  ///
+  /// `input` says whose message it is: a side session's brief is another session's, not the
+  /// person's, whatever path it takes in (see `TurnInput`).
+  func send(_ text: String, attachments: [Attachment] = [], from input: TurnInput = .person) {
     // `/login` and `/logout` are interactive built-in commands: their OAuth/browser flow needs
     // a real TTY, so sending them over stream-json would just hang on a turn that never ends.
     // Hand the bare verb to the window to run in a terminal instead — this is the one path out
@@ -1271,6 +1338,8 @@ final class AgentSession {
     // archived one back out of the fold. Fired before the start below, so the row is already out
     // when the engine's first state change reloads the rail.
     noteInstruction()
+    turnInput = input
+    if input == .person { wakesSincePerson = 0 }
     // Start is deferred to the first send, so a new or merely-viewed session spawns no `claude`
     // until you actually talk to it. Bring the process up now; bail if it could not start —
     // already owned by another process, in which case `start` left a note. The engine's outbox
@@ -1741,11 +1810,12 @@ final class AgentSession {
   func requestGrant(
     tabID: UUID, title: String, url: String, level: BrowserGrant.Level, opening: Bool = false,
     machine: Bool = false, closing: Bool = false, saving: Bool = false, stopping: Bool = false,
-    decide: @escaping (BrowserGrant.Level?) -> Void
+    proposal: Bool = false, offer: Bool = false, decide: @escaping (BrowserGrant.Level?) -> Void
   ) {
     pendingGrant = PendingGrant(
       tabID: tabID, title: title, url: url, level: level, opening: opening, machine: machine,
-      closing: closing, saving: saving, stopping: stopping, decide: decide)
+      closing: closing, saving: saving, stopping: stopping, proposal: proposal, offer: offer,
+      decide: decide)
     state = .needsAttention
     touch()  // needing you is activity; float it up so it is easy to find
     onStateChange?()
@@ -1756,6 +1826,19 @@ final class AgentSession {
   func resolveGrant(_ level: BrowserGrant.Level?) {
     guard let grant = pendingGrant else { return }
     pendingGrant = nil
+    if grant.proposal {
+      append(
+        Transcript.note(
+          level != nil
+            ? "→ started \u{201C}\(grant.title)\u{201D}"
+            : grant.offer
+              ? "→ \u{201C}\(grant.title)\u{201D} to be done here"
+              : "→ did not start \u{201C}\(grant.title)\u{201D}"))
+      state = .running
+      onStateChange?()
+      grant.decide(level)
+      return
+    }
     let name = "\u{201C}\(grant.opening && !grant.machine ? grant.url : grant.title)\u{201D}"
     let act = grant.opening ? "opened \(name) for the agent" : "shared \(name) with the agent"
     if grant.machine {
@@ -2260,9 +2343,14 @@ final class AgentSession {
           append(Transcript.note(Transcript.peerNote(peer.from)))
           appendUserMessage(Transcript.userMessage(peer.body, forkAnchor: lastRecordUUID))
           noteInstruction()
+          turnInput = .peer
         } else if Self.isFromElsewhere(event.payload), let text = Self.promptText(event.payload) {
           appendUserMessage(Transcript.userMessage(text, forkAnchor: lastRecordUUID))
-          if !Self.isTaskNotification(event.payload) { noteInstruction() }
+          if !Self.isTaskNotification(event.payload) {
+            noteInstruction()
+            turnInput = .person
+            wakesSincePerson = 0
+          }
         }
         userMessages.append((anchor: lastRecordUUID, uuid: uuid))
       }
@@ -2414,6 +2502,8 @@ final class AgentSession {
       onStateChange?()
       refreshCostEstimate()
       refreshContextUsage()
+      hasEndedTurn = true
+      onTurnEnded?(event.payload["result"] as? String, failed)
 
     case "system" where event.subtype == "init":
       // The starting point, before any worktree the agent may create. Moves are detected separately.

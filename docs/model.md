@@ -69,6 +69,21 @@ and the reasoning behind it; read the file before changing the area it covers.
   calls on it, read when it is used rather than on every turn. **The rule is a line per tool the
   window depends on the agent calling**, not one line in total: the session's tags (`docs/rail.md`) are the
   second, for the same reason — a tool nothing mentions is a tool the model never calls unasked.
+  **The one exception is a section, "Starting other sessions"**: when a piece of work is a session
+  of its own rather than this one's or a subagent's. A line saying the tool exists reads as
+  permission, not practice, and a session is meant to be reached for unasked — a fix spotted in
+  passing, the independent steps of an accepted plan — which a tool's description cannot teach,
+  since it says what a call does and never when the work in front of the model is the kind to call
+  it for. The wording is the desktop app's own section (read off its bundle) less the cards and
+  targets hukan lacks, so the two hosts teach one practice for one tool. It stays a practice and not
+  an identity: the app is named only inside the tool's name. The tools a session reaches for on its
+  own are also loaded with the conversation (`anthropic/alwaysLoad` in the listing's `_meta`, the
+  desktop app's key) rather than left deferred, seen by name alone. **A change to any of it reaches
+  only conversations begun after it**: the engine freezes the system prompt and the tools'
+  definitions into the transcript at a conversation's first launch (`prompt_snapshot`) and resumes
+  on that, so a session older than the change goes on reading what it was started with — measured
+  when a resumed session's model took an argument added since for one the tool lacks, and a tool
+  added since arrived deferred.
 - **A desk is a session's, not a worktree's, and a terminal is a tab on it.** The session's
   conversation has the column beside the desk; the desk is that session's files, commits, web
   tabs and terminals. It was the worktree's, and the agent is what made that wrong: an
@@ -183,11 +198,52 @@ and the reasoning behind it; read the file before changing the area it covers.
   Claude Code already lets sessions list and message each other, and its message waits for the
   receiving turn to end rather than cutting it, so a decision on a card is not thrown away; hukan
   adds only what Claude Code cannot do, **starting a session**, as a tool it hosts on the
-  session's stream (`new_session`), where the caller is known without asking the kernel and the
+  session's stream (`start_session`), where the caller is known without asking the kernel and the
   new session's transcript names it. What arrives from another session is drawn as the body that
   was sent, under the sender's name — the engine's wrapper is written for the model, and a
   message nobody typed here must not read as one somebody did. The terminals' editor has a socket
   of its own (`docs/desk.md`).
+- **A session another session started is a side session, and the command is the desktop
+  app's.** `start_session` takes the desktop app's name and arguments — `initiation`, `title`,
+  `prompt`, `context` fresh or fork, `background`, `name`, `use_worktree`, `source_branch`,
+  `branch_name`, `cwd`, `model`, `effort`, `permission_mode`, `wake_when_done` — less what reaches
+  past this Mac (the cloud, SSH hosts, presets), so an agent that learnt one host reads the other;
+  `hand_off_to_session` (a fork carrying the remaining plan) and `detach_session` likewise. Not
+  taken: the proposals that outlive their call (`proposal_id`, `dismiss_task`) — a proposal here
+  is a card the call waits on — and the session-reading tools, Claude Code's own messaging being
+  what sessions speak through. `wake_when_done` is accepted and changes nothing: the one case it
+  adds in the desktop app, a session whose brief is never sent, does not arise when the brief goes
+  with the start. **A side session gets no more than its starter**: a permission mode above the
+  starter's is refused, and a model of a higher family or an effort above the starter's is ignored
+  and the result says so, the desktop app's rule — a session cannot buy itself more by starting
+  another. **A family has a ceiling**, eight at work at once, and a start past it is refused: the
+  desktop app caps them without saying the number, and eight fits a plan's four parallel steps and
+  their own pieces while stopping a runaway. **A family shares a notes folder**, under the app's
+  caches and outside the repository, named in each side session's prompt for hand-over notes too
+  large for a report. The result is a session like any other, and the link adds three facts, recorded with
+  the window like the tags since the transcript records nothing of who started it. **The rail nests
+  it under its starter**, as deep as the starts go (`docs/rail.md`).
+  **Each turn it ends is reported to its starter** — the opening of its final message, 400
+  characters, the desktop app's figure, which the side session is told so it can put the outcome
+  there; one whose engine dies before any turn ends is reported as never started. **The starter is
+  continued once nothing under it is working, however deep, and it is idle** — a side session going
+  idle while its own side session works on is not news yet — and when one under it has stood on a
+  card for ten seconds, the desktop app's wait for a card to have settled. One message holds every
+  report, worded after the desktop app's `<side-sessions-event>`: a report is
+  the other session's account and never an instruction, and a side session waiting on a card is
+  named as the person's to answer, never the starter's — so the continuation does not reach past
+  the rule that decisions stay the person's. Like a task notification it is not an instruction and
+  moves nothing on the rail, and the transcript shows who reported rather than the wording. **Five
+  continuations in a row without the person and the reports wait for them** in the transcript
+  instead: a report that sets off work ending in another report is a loop nobody is watching.
+  **What the person did not ask for waits on them.** An "own_initiative" start is a proposal: a card
+  on the starter, in every permission mode, since no mode answers whether to do what nobody asked
+  for. An "offer" is the same card asking the other question — here, or a session of its own — for
+  a task the person named. A "user_asked" start is refused on a turn the person did not open — another session's message,
+  a side session's brief, the reports — which is what keeps one agent's words from fanning out into
+  sessions nobody asked for; a proposal still goes through. **Detaching** moves it to top level: no
+  longer nested, no longer reporting, no longer archived with its starter, which archives the side
+  sessions with nothing left to do.
 - **Scope decides where a reading goes.** The toolbar's trailing edge carries the account's plan
   usage and the app's own footprint, because both are true of the whole window; **how full a
   session's context window is goes in that session's header, beside its cost estimate**, because
@@ -201,8 +257,16 @@ and the reasoning behind it; read the file before changing the area it covers.
   fork, or a fresh session are still choices. It is re-read when a turn ends, when the engine
   starts and when a rollback shortens the conversation — the three things that move it — rather
   than on a timer.
-- **hukan observes worktrees, it does not act on them.** Work reaches main through a PR the
-  agent opens itself; cleaning up a merged worktree is a plain `git worktree remove` any
+- **hukan observes worktrees, it does not act on them — save one.** A side session asked to have a
+  worktree of its own gets one made by hukan (libgit2, a new branch cut from the starter's HEAD or a
+  named local branch, where `EnterWorktree` puts its own: `.claude/worktrees/<name>`), as the desktop
+  app makes it: telling the side session to `EnterWorktree` first would start its work in the
+  checkout it was asked to leave alone, for as long as the model took to comply. A fork from a
+  worktree gets one too, cut from the starter's branch tip, so the two do not write one checkout.
+  The branch is named as the worktree is, with no prefix — the desktop app's prefix is a setting
+  of its user's, and a fixed one here would be a house style nobody chose. It is a create on
+  an agent's call, adding a branch nobody had; nothing hukan does removes or merges one. Work reaches
+  main through a PR the agent opens itself; cleaning up a merged worktree is a plain `git worktree remove` any
   session can run. No local-merge path, no forced delete — an irreversible decision does not go
   inside hukan without review — and whatever hukan eventually does to a worktree must never be
   modal over the rail.

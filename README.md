@@ -97,6 +97,16 @@ last tool it used, three at most and the rest counted — and a
 worktree a subagent made (`isolation: "worktree"`) is listed under the branch of the session that
 sent it. What a subagent did is read in the transcript: opening the
 `Agent` call that sent it shows the subagent's own conversation under its prompt.
+A session can also start sessions of its own (`start_session`, shaped as the Claude desktop app's
+tool): side sessions, nested under the session that started them, as deep as they go, each a
+session you can open and speak to, in its own new worktree or the starter's checkout. Each turn a
+side session ends is reported to its starter, which carries on once nothing under it is working.
+One the agent proposes on its own asks you first on a card, whatever the permission mode, and so
+does a task you named, asking whether to do it there or in a new session. A session's side sessions fold
+under it by its chevron, the folded row showing whether anything inside is working or waiting on
+you. Right-click a side session to
+detach it to top level; archiving a session archives the side sessions it started that have
+nothing left to do.
 A worktree is not a row of its own, so one with no session in it is not on the rail. An agent
 moving worktree (`EnterWorktree`) takes its session, and its desk, with it, and leaving it
 (`ExitWorktree`) brings the session back to the worktree it was started from; the row stays where

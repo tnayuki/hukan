@@ -37,8 +37,11 @@ outbound list is in `docs/updates.md`, and the guarded verbs in `docs/testing.md
 - **Open Recent is hukan's one app-global store** — a list of repository paths, not a dimmed
   row on the rail, since a closed repository has nothing to say.
 - **Where a session is, is read off `EnterWorktree`/`ExitWorktree`**, and the system prompt
-  carries one line per tool the window depends on the agent calling — and nothing about what
-  hukan is.
+  carries one line per tool the window depends on the agent calling, plus one section on when work
+  becomes a session of its own — and nothing about what hukan is.
+- **A session another session started is a side session**, still a session — a row you speak to,
+  whose approvals land on it — nested under the one that started it, reporting its turns to it, and
+  shaped as the desktop app's `start_session`. What the person did not ask for waits on their yes.
 - **A desk is a session's, not a worktree's.** Its file tabs follow the session into another
   checkout — except a tab holding an unsaved edit, which stays on the buffer it was typed into;
   a file the new checkout lacks closes. No session, no desk.
@@ -52,8 +55,9 @@ outbound list is in `docs/updates.md`, and the guarded verbs in `docs/testing.md
   port; it speaks to a session and decides nothing, and says where it came from.
 - **Scope decides where a reading goes**: window-wide facts on the toolbar, a conversation's
   facts in its header.
-- **hukan observes worktrees, it does not act on them.** Work reaches main through a PR the
-  agent opens; no local merge, no forced delete, nothing modal over the rail.
+- **hukan observes worktrees, it does not act on them** — save making one for a side session the
+  agent asked to have its own. Work reaches main through a PR the agent opens; no local merge, no
+  forced delete, nothing modal over the rail.
 - **hukan's own outbound requests are a closed list** (`docs/updates.md`). libgit2 is built
   network-less; the browser's traffic is the user's.
 - **Decisions put to the person stay the person's.** An approval or a question is never

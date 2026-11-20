@@ -37,10 +37,14 @@ struct HistoryRecord {
   /// Who sent a `userText` nobody typed in this conversation: the name of the Claude session that
   /// sent it (`SendMessage`). Nil for a message typed here, which is every other one.
   let from: String?
+  /// A `userText` that is hukan's own report of the side sessions a session started, with the
+  /// titles it reports: drawn as the note it was drawn as live, not as the wording written for
+  /// the model, which nobody typed.
+  let reports: [String]?
 
   init(
     kind: Kind, stamp: Date?, forkAnchor: String? = nil, messageUUID: String? = nil,
-    toolUseID: String? = nil, from: String? = nil
+    toolUseID: String? = nil, from: String? = nil, reports: [String]? = nil
   ) {
     self.kind = kind
     self.stamp = stamp
@@ -48,6 +52,7 @@ struct HistoryRecord {
     self.messageUUID = messageUUID
     self.toolUseID = toolUseID
     self.from = from
+    self.reports = reports
   }
 }
 
@@ -55,6 +60,13 @@ extension Transcript {
   /// The line over a message another Claude session sent, so it does not read as one somebody
   /// typed here — the same idiom as the note a message from an outside client carries.
   static func peerNote(_ from: String) -> String { "Sent from session “\(from)”." }
+
+  /// The line in place of a report of side sessions: who reported, and how many are waiting.
+  static func reportsNote(titles: [String], waiting: Int) -> String {
+    var line = "← reports from " + titles.map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", ")
+    if waiting > 0 { line += " (\(waiting) waiting on you)" }
+    return line
+  }
 
   /// Render a saved conversation into the transcript, a time separator wherever it paused.
   /// Mirrors the live path's block choices (thinking and tool results left out), so a restored
@@ -84,6 +96,10 @@ extension Transcript {
       }
       switch record.kind {
       case .userText(let body):
+        if let titles = record.reports {
+          result.append(note(Transcript.reportsNote(titles: titles, waiting: 0)))
+          continue
+        }
         if let from = record.from { result.append(note(Transcript.peerNote(from))) }
         result.append(userMessage(body, forkAnchor: record.forkAnchor))
       case .assistantText(let body):
