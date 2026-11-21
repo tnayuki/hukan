@@ -536,6 +536,9 @@ final class SDSession: NSObject {
       controller?.setTags(newValue.components(separatedBy: .newlines), for: session)
     }
   }
+  /// The panel as drawn, so a script can check that an install, a render and a press land
+  /// without reading pixels.
+  @objc var panelText: String { agentSession?.panel?.scriptingText ?? "" }
   /// The id of the session that started this one with `start_session`, while it is still nested
   /// under it — empty for any other session, and for one detached to top level. Read-only: the
   /// link is the agent's to make, and the rail's Detach is the person's way to end it.

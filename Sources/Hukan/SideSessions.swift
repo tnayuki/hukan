@@ -45,6 +45,10 @@ enum TurnInput {
   case peer
   /// hukan's report of the sessions this one started (`AgentSession.deliverReports`).
   case reports
+  /// What happened on the session's panel — a button, an approval, a command's result
+  /// (`AgentSession.deliverPanelNote`). The person pressed it, but what it says is what a render,
+  /// reading files the agent wrote, put on the button: not the person's own words.
+  case panel
 
   /// Whether a turn opened this way may start a session without asking. Only the person's: the
   /// desktop app refuses a start on a turn another session's message or an automated event

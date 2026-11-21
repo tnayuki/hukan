@@ -409,6 +409,8 @@ final class Workspace {
   /// rail's order below — the same map-not-list rule as the drafts.
   private var restoredTags: [String: [String]] = [:]
   private var restoredOrigins: [String: SessionOrigin] = [:]
+  /// Each session's installed panel as it was kept (`SessionPanel.Stored`).
+  private var restoredPanels: [String: SessionPanel.Stored] = [:]
   /// The model roster each session last saw the engine advertise, keyed by session id. Held per
   /// session, not shared — so a restored session that has not connected yet shows the list it
   /// itself saw, and seeds its own picker with it (see `applyRestoredPrefs`) rather than borrowing
@@ -517,6 +519,11 @@ final class Workspace {
     restoredTags[session.id.uuidString] = session.tags.isEmpty ? nil : session.tags
   }
 
+  /// The same for a session's panel — the definition, its seal and the approvals made on it.
+  func rememberPanel(of session: AgentSession) {
+    restoredPanels[session.id.uuidString] = session.panel?.stored
+  }
+
   /// The same for a side session's link (see `SessionOrigin`), for the same reason.
   func rememberOrigin(of session: AgentSession) {
     restoredOrigins[session.id.uuidString] = session.origin
@@ -536,6 +543,9 @@ final class Workspace {
     }
     if let tags = restoredTags[session.id.uuidString] {
       session.setTags(tags)
+    }
+    if session.panel == nil, let stored = restoredPanels[session.id.uuidString] {
+      session.panel = SessionPanel(stored: stored)
     }
     if let origin = restoredOrigins[session.id.uuidString] {
       session.origin = origin
@@ -1145,6 +1155,8 @@ final class Workspace {
     static let strandedRepositories = "stranded.repositories"
     static let tagSessionIDs = "tags.ids"
     static let tagValues = "tags.values"
+    static let panelSessionIDs = "panels.sessionIDs"
+    static let panelValues = "panels.values"
     // Side sessions' links, keyed by session id: the starter, the handle ("" for none), and
     // whether the session was moved to top level ("1").
     static let originSessionIDs = "origin.ids"
@@ -1333,6 +1345,18 @@ final class Workspace {
     let withTags = sessions.filter { !$0.tags.isEmpty }
     coder.encode(withTags.map(\.id.uuidString) as NSArray, forKey: Key.tagSessionIDs)
     coder.encode(withTags.map { $0.tags as NSArray } as NSArray, forKey: Key.tagValues)
+
+    // A session's panel: the definition as approved, its seal and the decisions made on it, one
+    // JSON string per session — kept for an archived session too, which may be taken back out.
+    let withPanel = sessions.compactMap { session in
+      session.panel.flatMap { panel in
+        (try? JSONEncoder().encode(panel.stored)).map {
+          (session.id.uuidString, String(decoding: $0, as: UTF8.self))
+        }
+      }
+    }
+    coder.encode(withPanel.map(\.0) as NSArray, forKey: Key.panelSessionIDs)
+    coder.encode(withPanel.map(\.1) as NSArray, forKey: Key.panelValues)
 
     let withOrigin = sessions.compactMap { session in session.origin.map { (session.id, $0) } }
     coder.encode(withOrigin.map(\.0.uuidString) as NSArray, forKey: Key.originSessionIDs)
@@ -1536,6 +1560,14 @@ final class Workspace {
     restoredTags = [:]
     for (index, idString) in tagIDs.enumerated() where index < tagValues.count {
       restoredTags[idString] = tagValues[index]
+    }
+
+    let panelIDs = strings(coder, Key.panelSessionIDs)
+    let panelValues = strings(coder, Key.panelValues)
+    restoredPanels = [:]
+    for (index, idString) in panelIDs.enumerated() where index < panelValues.count {
+      restoredPanels[idString] = try? JSONDecoder().decode(
+        SessionPanel.Stored.self, from: Data(panelValues[index].utf8))
     }
 
     let originIDs = strings(coder, Key.originSessionIDs)

@@ -99,6 +99,9 @@
             <property name="tags" code="pTag" type="text" access="rw" description="The session's tags, one a line, each kind: value. Set it to a list of lines to replace them, empty to clear">
                 <cocoa key="tags"/>
             </property>
+            <property name="panel" code="pPnl" type="text" access="r" description="The session's panel as drawn, one part a line: its title, then any band (a stopped panel, a pending confirmation, the notice), then each part. Empty when the session has no panel">
+                <cocoa key="panelText"/>
+            </property>
             <property name="started by" code="pStB" type="text" access="r" description="The id of the session that started this one (start_session), while it is nested under it; empty otherwise">
                 <cocoa key="startedBy"/>
             </property>

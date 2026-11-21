@@ -168,8 +168,10 @@ final class GrantCard: LayerSurface {
 
     let icon = NSImageView()
     icon.image = NSImage(
-      systemSymbolName: grant.proposal
-        ? "rectangle.stack.badge.plus" : grant.machine ? "desktopcomputer" : "sparkles",
+      systemSymbolName: grant.panel != nil
+        ? "rectangle.topthird.inset.filled"
+        : grant.proposal
+          ? "rectangle.stack.badge.plus" : grant.machine ? "desktopcomputer" : "sparkles",
       accessibilityDescription: "Share a tab")
     icon.contentTintColor = .systemOrange
     icon.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
@@ -177,7 +179,9 @@ final class GrantCard: LayerSurface {
     // Opening names the site rather than a page: there is no page yet, and the address under
     // the question is what says where the tab is going.
     let question: String
-    if grant.proposal && grant.offer {
+    if grant.panel != nil {
+      question = "Install the panel \u{201C}\(grant.title)\u{201D}?"
+    } else if grant.proposal && grant.offer {
       question = "Do \u{201C}\(grant.title)\u{201D} in a new session?"
     } else if grant.proposal {
       question = "Start a session for \u{201C}\(grant.title)\u{201D}?"
@@ -220,6 +224,12 @@ final class GrantCard: LayerSurface {
       drive.title = grant.offer ? "New Session" : "Start Session"
       read.isHidden = true
     }
+    // A panel is installed or not; what it may do is the definition below, read in full.
+    if grant.panel != nil {
+      decline.title = "Don\u{2019}t Install"
+      drive.title = "Install"
+      read.isHidden = true
+    }
     // A machine has one answer, not two: running a command in it is never only reading.
     if grant.machine {
       decline.title = "Don\u{2019}t Allow"
@@ -258,14 +268,28 @@ final class GrantCard: LayerSurface {
     if grant.proposal { body.maximumNumberOfLines = 4 }
     body.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-    let stack = NSStackView(views: [header, body])
+    // The definition and every file it names, scrolling in place: what is approved is all of it,
+    // so none of it is summarised away.
+    let review: NSView =
+      grant.panel.map { text -> NSView in
+        ScrollBox(
+          content: NSAttributedString(
+            string: text,
+            attributes: [.font: monospace, .foregroundColor: NSColor.labelColor]),
+          maxHeight: 260)
+      } ?? body
+    let stack = NSStackView(views: [header, review])
     stack.orientation = .vertical
     stack.alignment = .leading
     stack.spacing = 6
     addSubview(stack)
     stack.pin(to: self, insets: NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12))
     header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-    body.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+    if grant.panel != nil {
+      review.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    } else {
+      body.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+    }
   }
 
   required init?(coder: NSCoder) { fatalError() }

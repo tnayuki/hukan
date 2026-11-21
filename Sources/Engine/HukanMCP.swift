@@ -70,6 +70,10 @@ enum HukanMCP {
   /// tab, so it needs no window to be asked in.
   static let setTagsTool = "set_tags"
 
+  /// The tool that puts a panel above this session's conversation (`docs/panels.md`). Answered by
+  /// the window, which puts the definition in front of the person first.
+  static let panelInstallTool = "panel_install"
+
   /// The tool that starts a side session. Answered by the window, which owns the rail and the
   /// desks; it is the one thing a session cannot do through Claude Code itself, which already lets
   /// sessions list and message each other. Named and shaped as the desktop app's
@@ -123,6 +127,50 @@ enum HukanMCP {
             ]
           ],
           "required": ["tags"],
+          "additionalProperties": false,
+        ]),
+      Tool(
+        name: panelInstallTool,
+        description:
+          "Install a panel on this session: a view above this conversation, drawn from files you "
+          + "write, with buttons the user presses. The user is shown the definition and every file "
+          + "it names, and approves it before anything runs; a later change to one of those files "
+          + "stops the panel until it is installed again. Installing replaces this session's panel."
+          + "\n\nThe definition: `render` — `{ \"run\": [argv], \"watch\": [globs] }` — is run in "
+          + "this session's worktree (never through a shell) whenever a watched file changes, a turn "
+          + "ends, the tags change or the user decides on a document. It reads JSON on stdin "
+          + "(`session`, `tags`, `state` working|waiting|ended, `worktree`, `approvals` [{document, "
+          + "hash, verdict approved|rejected, reason, at}]) and prints the panel as JSON on stdout "
+          + "within 10s. `commands` — `{ name: { \"run\": [argv with {arg} holes], \"args\": { arg: "
+          + "regex }, \"outward\": bool } }` — are the only commands a button may run; mark one "
+          + "`outward` when it reaches past this machine (a PR, a message), and the user confirms "
+          + "each run. `files` lists further absolute paths to pin, such as modules a script "
+          + "imports. Name scripts by absolute path so they are pinned."
+          + "\n\nThe output: `{ \"title\": string, \"items\": [part] }`, a part being `{type: "
+          + "\"badge\", text, tone}`, `{type: \"text\", text}`, `{type: \"fields\", items: [{label, "
+          + "value}]}`, `{type: \"list\", rows | groups: [{title, rows}], limit, empty}`, `{type: "
+          + "\"button\", ...button}`, `{type: \"approval\", document, label}`, `{type: \"notice\", "
+          + "text, tone}` or `{type: \"divider\"}`. A row is `{title, subtitle, status: text | {text, "
+          + "tone}, symbol, buttons, url | document | session}`; a button is `{label, symbol, send: "
+          + "message}` or `{label, symbol, command: name, args}`; a field is `{label, value, "
+          + "symbol}`. A title, subtitle, value or text is a string or a list of spans: a string, "
+          + "`{text, mono, strong, tone}`, `{text, url | document | session}` for a link, `{tag: "
+          + "\"PR: #42 <https://…>\"}` for a chip drawn as the session list draws tags, `{time: "
+          + "ISO 8601}` shown as `3m ago` and kept current, or `{symbol: SF Symbol name, tone}`. The "
+          + "panel is short and wide: badges and top-level buttons go on its title row, fields and "
+          + "a list's groups sit side by side. Tones: neutral, info, success, warning, danger. What "
+          + "the user does on the panel — a send, a command's result, an approval with the "
+          + "document's hash, a send-back with its reason — comes to you as a message.",
+        inputSchema: [
+          "type": "object",
+          "properties": [
+            "definition": [
+              "type": "object",
+              "description":
+                "The panel's definition: `render`, and optionally `commands` and `files`",
+            ]
+          ],
+          "required": ["definition"],
           "additionalProperties": false,
         ]),
       Tool(

@@ -96,6 +96,10 @@ struct PendingGrant {
   /// With `proposal`: "offer" — the person named the task, and the card asks where it is done,
   /// here or in a session of its own. Declining means here.
   var offer = false
+  /// Not a tab either: the agent installs a panel (`panel_install`), `title` naming it and this
+  /// carrying what is approved — the definition and every file it names, in full. Asked in every
+  /// permission mode: the approval is what allows the panel's commands, so no mode can stand in.
+  var panel: String? = nil
   /// Answered exactly once: the level granted, or nil for declined.
   let decide: (BrowserGrant.Level?) -> Void
 }
@@ -1287,17 +1291,59 @@ final class AgentSession {
   /// typed it: the transcript gets `shown` as a note, and the engine the text written for it.
   /// Only when the turn is free; a send would cut one, and the window waits for it to end.
   func deliverReports(_ text: String, shown: String) {
-    guard !isTurnActive, state != .signedOut else { return }
+    deliverAutomated(text, shown: shown, as: .reports)
+  }
+
+  /// A message hukan composes for the engine rather than one anybody typed — the reports, a
+  /// panel's — with the note the transcript shows instead. Returns whether it went: only a free
+  /// turn takes one.
+  @discardableResult
+  private func deliverAutomated(_ text: String, shown: String, as input: TurnInput) -> Bool {
+    guard !isTurnActive, state != .signedOut, state != .needsAttention, heldByPID == nil else {
+      return false
+    }
     if runner == nil {
       onNeedsStart?()
-      guard runner != nil else { return }
+      guard runner != nil else { return false }
     }
-    turnInput = .reports
+    turnInput = input
     append(Transcript.note(shown))
     runner?.send(text)
     state = .running
     isTurnActive = true
     onStateChange?()
+    return true
+  }
+
+  // MARK: Panel
+
+  /// The panel this session's agent installed and the person approved (`SessionPanel`). Kept
+  /// with the window like the tags, archived sessions included, so a session taken back out of
+  /// the archive has the panel it had.
+  var panel: SessionPanel? {
+    didSet { onPanelChange?() }
+  }
+  /// The panel redrew, or was installed or removed.
+  var onPanelChange: (() -> Void)?
+  /// Whether the column shows the panel folded to its title row. View state, not saved.
+  var panelCollapsed = false
+
+  /// What the panel has to tell the session that could not be told yet — the turn was busy, or
+  /// stopped on the person. Delivered in one message when the turn is next free, oldest first.
+  private var panelNotes: [(text: String, shown: String)] = []
+
+  /// Tell the session what happened on its panel: now when the turn is free, else when it next is.
+  func deliverPanelNote(_ text: String, shown: String) {
+    panelNotes.append((text, shown))
+    flushPanelNotes()
+  }
+
+  /// Send what the panel was holding, if the turn will take it.
+  func flushPanelNotes() {
+    guard !panelNotes.isEmpty else { return }
+    let text = panelNotes.map(\.text).joined(separator: "\n\n")
+    let shown = panelNotes.map(\.shown).joined(separator: "\n")
+    if deliverAutomated(text, shown: shown, as: .panel) { panelNotes = [] }
   }
 
   /// Stamp the rail's sort key and let the window take the row out of the Archived fold — for a
@@ -1810,12 +1856,13 @@ final class AgentSession {
   func requestGrant(
     tabID: UUID, title: String, url: String, level: BrowserGrant.Level, opening: Bool = false,
     machine: Bool = false, closing: Bool = false, saving: Bool = false, stopping: Bool = false,
-    proposal: Bool = false, offer: Bool = false, decide: @escaping (BrowserGrant.Level?) -> Void
+    proposal: Bool = false, offer: Bool = false, panel: String? = nil,
+    decide: @escaping (BrowserGrant.Level?) -> Void
   ) {
     pendingGrant = PendingGrant(
       tabID: tabID, title: title, url: url, level: level, opening: opening, machine: machine,
       closing: closing, saving: saving, stopping: stopping, proposal: proposal, offer: offer,
-      decide: decide)
+      panel: panel, decide: decide)
     state = .needsAttention
     touch()  // needing you is activity; float it up so it is easy to find
     onStateChange?()
@@ -1826,6 +1873,17 @@ final class AgentSession {
   func resolveGrant(_ level: BrowserGrant.Level?) {
     guard let grant = pendingGrant else { return }
     pendingGrant = nil
+    if grant.panel != nil {
+      append(
+        Transcript.note(
+          level != nil
+            ? "→ installed the panel \u{201C}\(grant.title)\u{201D}"
+            : "→ did not install the panel \u{201C}\(grant.title)\u{201D}"))
+      state = .running
+      onStateChange?()
+      grant.decide(level)
+      return
+    }
     if grant.proposal {
       append(
         Transcript.note(

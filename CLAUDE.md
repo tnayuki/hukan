@@ -80,6 +80,7 @@ outbound list is in `docs/updates.md`, and the guarded verbs in `docs/testing.md
 | `docs/files-panel.md` | Tree, filter and search (rg), right-click writes, drag and drop, Quick Look, change washes |
 | `docs/history-and-commits.md` | The History section, git operations underway, the commit tab, read costs |
 | `docs/change-tracking.md` | Untracked files as changes, how an FSEvents batch reaches tabs and git |
+| `docs/panels.md` | A session's panel: `panel_install`, the approval and its seal, render, buttons, what is kept |
 | `docs/virtual-machines.md` | macOS, Linux (Rosetta, GPU) and Windows machines |
 | `docs/remote-control.md` | Remote Control, its QR code and the replay of remote messages |
 | `docs/updates.md` | The update check and the list of hukan's own outbound requests |
@@ -111,6 +112,14 @@ only for a principle that holds across areas.
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
+- **Panels, the rest of the design** (`docs/panels.md`). Built: install and approval, render,
+  badge, text, fields, list, button (send and command), approval, notice, divider; text as spans
+  (links, tag chips, times, symbols). Next, in order:
+  schedules (`every`/`cron`, a `when`, the result told to the session only when the render
+  changes, backing off on failures, one catch-up run after sleep); a document's tab that approves
+  and tells the session of an edit, the evidence log, a preview of what an outward call sends, MCP
+  tools over hukan's own connection; then the flow and table parts and recording a VM's screen.
+  Tags gain a partial update beside `set_tags`.
 - **Browser** — what is left open is the login state: sharing Safari's is officially impossible
   (plan B: inject `Cookies.binarycookies`, needs Full Disk Access). Measured with a WKWebView
   harness (2026-08): SSO redirect chains and Kolide device trust **work**; passkeys and iCloud
@@ -146,7 +155,8 @@ open ".build/DerivedData/Build/Products/Debug/Hukan Dev.app"   # relaunch; resto
 
 Debug builds `Hukan Dev.app`, a separate app from the released one (`tell application "Hukan
 Dev"`). Signing is ad-hoc, so TCC grants reset on every rebuild. ripgrep is the one program
-hukan runs, from Homebrew (`brew install ripgrep` for a build not installed through the cask).
+hukan runs of its own accord, from Homebrew (`brew install ripgrep` for a build not installed
+through the cask); a panel's commands are the person's (`docs/panels.md`).
 
 The tests run in parallel, so the log carries no assertion messages — read failures from the
 `.xcresult`:

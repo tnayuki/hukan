@@ -21,7 +21,8 @@ and the reasoning behind it; read the file before changing the area it covers.
   fixed address, once, the first time a Windows template is made. And the packages an Ubuntu ISO
   lacks for an install, from Ubuntu's archive, once per ISO, as the end of its download. libgit2
   is built network-less on purpose and
-  the browser's traffic is the user's own; these are neither, so they are stated as a constraint
+  the browser's traffic is the user's own, as is what a panel's commands reach (`docs/panels.md`),
+  each declared in a definition the user approved; these are neither, so they are stated as a constraint
   rather than as a beginning.
   **It reads the cask, not the tag's GitHub Release.** The two disagree for a minute at a time —
   `release.yml` publishes the Release and pushes the cask that points at it afterwards — so a check

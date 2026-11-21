@@ -294,6 +294,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     running.onOpenURL = { [weak self] url in self?.openFromTranscript(url) ?? false }
     running.onOpenFile = { [weak self] url in self?.openPath(url) }
+    running.onOpenPanelTarget = { [weak self] target in self?.openPanelTarget(target) }
     workspace.onSessionsChanged = { [weak self] in self?.reload() }
     rail.onSelectWorktree = { [weak self] worktreeID in
       guard let self else { return }
@@ -2011,7 +2012,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
         done(.error("the session is gone"))
         return
       }
-      if call.name == HukanMCP.startSessionTool {
+      if call.name == HukanMCP.panelInstallTool {
+        self.installPanel(call, on: session, done: done)
+      } else if call.name == HukanMCP.startSessionTool {
         self.startSideSession(call, from: session, done: done)
       } else if call.name == HukanMCP.handOffTool {
         self.handOff(call, from: session, done: done)
@@ -2023,6 +2026,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
         self.files.desk.performBrowserTool(call, for: session, completion: done)
       }
     }
+    session.onPanelChange = { [weak self, weak session] in
+      guard let self, let session else { return }
+      self.wirePanel(of: session)
+      self.running.panelChanged(for: session)
+    }
+    wirePanel(of: session)
     session.onNeedsStart = { [weak self] in self?.startSession(session) }
     session.onInstructed = { [weak self] in self?.unarchiveOnInstruction(session) }
     session.onTurnEnded = { [weak self, weak session] report, failed in
@@ -2425,6 +2434,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     wakeIfSettled(session)
     wakeAncestors(of: session)
+    session.panel?.setNeedsRender()
+    session.flushPanelNotes()
   }
 
   /// A side session's engine went away before any turn of it ended: its starter is owed that,
@@ -2499,6 +2510,120 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       shown: shown)
   }
 
+  // MARK: Panels
+
+  /// `panel_install`, called by `session`'s agent: the definition and every file it names go on a
+  /// card, in every permission mode, and the panel is installed only on the person's yes — that
+  /// yes being what allows the commands in it (see `docs/panels.md`). Answers once they have
+  /// answered.
+  private func installPanel(
+    _ call: HukanMCP.Call, on session: AgentSession, done: @escaping (HukanMCP.Outcome) -> Void
+  ) {
+    let definition: PanelDefinition
+    let seal: PanelSeal
+    do {
+      definition = try PanelDefinition(json: call.arguments["definition"] ?? NSNull())
+      seal = try definition.seal()
+    } catch {
+      return done(.error("Not installed: \(error)"))
+    }
+    let name =
+      definition.render.run.last(where: { $0.hasPrefix("/") }).map {
+        URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent
+      } ?? definition.render.run[0]
+    session.requestGrant(
+      tabID: UUID(), title: name, url: "", level: .drive, panel: Self.panelReview(definition)
+    ) { [weak self, weak session] level in
+      guard let self, let session else { return done(.error("the session is gone")) }
+      guard level != nil else { return done(.error("The user declined to install the panel.")) }
+      // A file that changed while the card was up is not what the person read.
+      guard seal.firstBroken() == nil, (try? definition.seal()) == seal else {
+        return done(.error("Not installed: a file it names changed while the user was reading it."))
+      }
+      session.panel = SessionPanel(definition: definition, seal: seal)
+      self.workspace.rememberPanel(of: session)
+      self.window?.invalidateRestorableState()
+      session.panel?.setNeedsRender()
+      done(
+        .text(
+          "Installed. The panel is drawing now, and redraws as its watched files change and as your "
+            + "turns end. What the user does on it will come to you as a message."))
+    }
+  }
+
+  /// What the install card shows: the definition, then each file it names in full. A file too big
+  /// to read on a card is said to be, rather than cut where its meaning might be.
+  static func panelReview(_ definition: PanelDefinition) -> String {
+    var text = definition.source
+    for path in definition.namedFiles {
+      text += "\n\n\u{2500}\u{2500} \(path)\n"
+      guard let data = FileManager.default.contents(atPath: path) else {
+        text += "(cannot be read)"
+        continue
+      }
+      if data.count > 256 * 1024 {
+        text += "(\(data.count) bytes — too large to show here; open it to read it)"
+      } else if let string = String(data: data, encoding: .utf8) {
+        text += string
+      } else {
+        text += "(binary, \(data.count) bytes)"
+      }
+    }
+    return text
+  }
+
+  /// Give a session's panel what it needs from the window: where to run, what to tell the render,
+  /// where its messages go, and who to tell when it changes. Once per panel.
+  private func wirePanel(of session: AgentSession) {
+    guard let panel = session.panel, !panel.isWired else { return }
+    panel.isWired = true
+    panel.worktreeURL = { [weak self, weak session] in
+      guard let self, let session else { return nil }
+      return self.workspace.worktree(id: session.worktreeID)?.url
+    }
+    panel.sessionFacts = { [weak session] in
+      guard let session else { return [:] }
+      let state: String
+      switch session.state {
+      case .running: state = "working"
+      case .needsAttention: state = "waiting"
+      default: state = session.isWorking ? "working" : "ended"
+      }
+      return ["session": session.id.uuidString, "tags": session.tags, "state": state]
+    }
+    panel.deliver = { [weak self, weak session] text, shown in
+      guard let self, let session else { return }
+      self.reattachIfNeeded(session)
+      session.deliverPanelNote(text, shown: shown)
+    }
+    panel.onChange = { [weak self, weak session] in
+      guard let self, let session else { return }
+      self.running.panelChanged(for: session)
+    }
+    panel.onStoredChange = { [weak self, weak session] in
+      guard let self, let session else { return }
+      self.workspace.rememberPanel(of: session)
+      self.window?.invalidateRestorableState()
+    }
+    panel.setNeedsRender()
+  }
+
+  /// A panel's row or document was clicked: a page on the session's desk, a file of its worktree,
+  /// or another session.
+  private func openPanelTarget(_ target: PanelContent.Target) {
+    guard let session = workspace.selectedSession else { return }
+    switch target {
+    case .url(let url):
+      openTag(url, of: session)
+    case .document(let path):
+      guard let worktree = workspace.worktree(id: session.worktreeID) else { return }
+      files.desk.openFile(worktree: worktree, path: path, preview: false)
+    case .session(let id):
+      guard workspace.sessions.contains(where: { $0.id == id }) else { return }
+      selectSessions([id])
+    }
+  }
+
   /// Replace a session's tags by hand — the rail's editor, or a script.
   func setTags(_ tags: [String], for session: AgentSession) {
     if session.setTags(tags) { tagsChanged(session) }
@@ -2523,6 +2648,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// A session's tags moved — the agent's `set_tags`, or an edit from the rail. The row redraws and
   /// the window saves them, since nothing else records them.
   private func tagsChanged(_ session: AgentSession) {
+    session.panel?.setNeedsRender()
     workspace.rememberTags(of: session)
     reload()
     window?.invalidateRestorableState()

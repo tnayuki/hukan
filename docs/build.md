@@ -64,7 +64,8 @@ before it, did. `zig build-exe` keeps no
 account of what is up to date, so the script keeps its own — a hash of the source, the script, Zig
 and the SDK — and a build with nothing changed costs a tenth of a second rather than eleven.
 
-ripgrep is the one program hukan runs. The files panel's filter and its
+ripgrep is the one program hukan runs of its own accord — a panel's commands are the person's,
+declared in a definition they approved (`docs/panels.md`). The files panel's filter and its
 content search are a process each, per gesture, started by someone typing and killed by the next
 keystroke — which is a different shape from the thing libgit2 is here to prevent below, a spawn
 per FSEvents batch per worktree. What it buys is the walk: rg prunes by every `.gitignore` it

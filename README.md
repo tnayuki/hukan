@@ -428,6 +428,17 @@ selection, and its transcript says which session started it. After that they spe
 Claude Code's own messaging between sessions, and a message one sends another is drawn under the
 sender's name, never as something you typed.
 
+**A panel above the conversation.** A session's agent can install a panel on it
+(`panel_install`): a view drawn from files the agent writes, by a command the panel names, with
+buttons that send the session a message, run one of the commands the panel declares, or approve a
+document or send it back with a reason. It is laid out short and wide — fields side by side, a
+list's groups as columns — and a pull request in it is the same chip as on the rail, opening on the
+desk. Installing shows you the definition and every script it
+names, in full, whatever the permission mode, and nothing runs until you approve; a script that
+changes afterwards stops the panel until it is installed and approved again. A command marked as
+reaching outside asks before each run. Drag the rule under the panel to resize it, click its title
+row to fold it. What you do on it reaches the session as a message.
+
 ### Virtual machines
 
 A session can have a macOS or Linux guest of its own, running inside hukan on

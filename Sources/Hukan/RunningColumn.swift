@@ -47,6 +47,18 @@ final class RunningColumnViewController: NSViewController {
   var composerForScripting: ComposerInput { input }
   private let bottomArea = NSView()
   private let body = NSView()
+  /// The session's panel, between the header and the conversation (`docs/panels.md`): the
+  /// conversation's own view of its work, so it sits with the conversation and not on the desk.
+  private let panelView = PanelView()
+  /// The rule under the panel, dragged to give the panel more or less of the column.
+  private let panelDivider = PanelDivider()
+  private var panelHeightConstraint: NSLayoutConstraint!
+  /// The panel's height per session, once dragged; until then it opens at what it wants, capped.
+  private var panelHeights: [UUID: CGFloat] = [:]
+  /// What the panel view was last built from, so a reload that changed none of it leaves the view
+  /// — and a send-back's popover over it — alone.
+  private var shownPanel:
+    (panel: ObjectIdentifier, generation: Int, collapsed: Bool, waiting: Bool)?
   /// Pins the top of the composer stack; swapped to sit below the approval card when one shows.
   private var inputTopConstraint: NSLayoutConstraint!
   /// The cards above the composer, top-down: the agent's task list, then whichever decision is
@@ -418,7 +430,10 @@ final class RunningColumnViewController: NSViewController {
       self.onSetMaximized?(!self.isMaximized)
     }
     let container = NSView()
-    for child in [header, body, bottomArea] {
+    panelView.isHidden = true
+    panelDivider.isHidden = true
+    panelDivider.onDrag = { [weak self] delta in self?.dragPanel(by: delta) }
+    for child in [header, panelView, panelDivider, body, bottomArea] {
       child.translatesAutoresizingMaskIntoConstraints = false
       container.addSubview(child)
     }
@@ -429,16 +444,82 @@ final class RunningColumnViewController: NSViewController {
       // the same as the top — kept as the safe area for the cases AppKit adds one anyway.
       header.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
 
+      panelView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      panelView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      panelView.topAnchor.constraint(equalTo: header.bottomAnchor),
+      panelDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      panelDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      panelDivider.topAnchor.constraint(equalTo: panelView.bottomAnchor),
+      panelDivider.heightAnchor.constraint(equalToConstant: PanelDivider.thickness),
+
       body.leadingAnchor.constraint(equalTo: container.leadingAnchor),
       body.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-      body.topAnchor.constraint(equalTo: header.bottomAnchor),
+      body.topAnchor.constraint(equalTo: panelDivider.bottomAnchor),
 
       bottomArea.leadingAnchor.constraint(equalTo: container.leadingAnchor),
       bottomArea.trailingAnchor.constraint(equalTo: container.trailingAnchor),
       bottomArea.topAnchor.constraint(equalTo: body.bottomAnchor),
       bottomArea.bottomAnchor.constraint(equalTo: container.bottomAnchor),
     ])
+    panelHeightConstraint = panelView.heightAnchor.constraint(equalToConstant: 0)
+    panelHeightConstraint.isActive = true
     view = container
+  }
+
+  /// Show the attached session's panel, or none. The panel opens at the height it wants, at most
+  /// two fifths of the column, until the divider is dragged; folded, it keeps its title row.
+  private func refreshPanel(_ session: AgentSession?) {
+    guard let session, let panel = session.panel else {
+      shownPanel = nil
+      panelView.isHidden = true
+      panelDivider.isHidden = true
+      panelHeightConstraint.constant = 0
+      return
+    }
+    let waiting = session.state == .needsAttention
+    let key = (ObjectIdentifier(panel), panel.generation, session.panelCollapsed, waiting)
+    if let shown = shownPanel, shown == key { return }
+    shownPanel = key
+    panelView.isHidden = false
+    panelDivider.isHidden = session.panelCollapsed
+    panelView.onPress = { [weak panel] button in panel?.press(button) }
+    panelView.onConfirm = { [weak panel] yes in panel?.confirm(yes) }
+    panelView.onDecide = { [weak panel] document, approve, reason in
+      panel?.decide(document: document, approve: approve, reason: reason)
+    }
+    panelView.onOpen = { [weak self] target in self?.onOpenPanelTarget?(target) }
+    panelView.onToggleCollapsed = { [weak self, weak session] in
+      guard let session else { return }
+      session.panelCollapsed.toggle()
+      self?.refreshPanel(session)
+    }
+    panelView.show(
+      panel, collapsed: session.panelCollapsed,
+      waitingOnPerson: waiting)
+    if session.panelCollapsed {
+      panelHeightConstraint.constant = PanelView.headerHeight
+    } else {
+      let cap = max(PanelView.headerHeight, view.bounds.height * 0.4)
+      panelHeightConstraint.constant =
+        panelHeights[session.id] ?? min(panelView.fittingHeight(width: view.bounds.width), cap)
+    }
+  }
+
+  private func dragPanel(by delta: CGFloat) {
+    guard let session = attached, session.panel != nil, !session.panelCollapsed else { return }
+    let limit = max(PanelView.headerHeight, view.bounds.height - 160)
+    let height = min(max(PanelView.headerHeight, panelHeightConstraint.constant + delta), limit)
+    panelHeightConstraint.constant = height
+    panelHeights[session.id] = height
+  }
+
+  /// A panel row or document link was clicked: the window opens it (a tab, a session).
+  var onOpenPanelTarget: ((PanelContent.Target) -> Void)?
+
+  /// The attached session's panel changed. Cheaper than a reload, which rebuilds the cards.
+  func panelChanged(for session: AgentSession) {
+    guard session === attached else { return }
+    refreshPanel(session)
   }
 
   /// The session on screen. The append hook is swapped per session, so track who that is.
@@ -1104,6 +1185,7 @@ final class RunningColumnViewController: NSViewController {
     applyContextUsage(attached?.contextUsage)
     refreshComposerAccessories()
 
+    refreshPanel(attached)
     // Only the session on screen, since the cards sit above its own composer. Decisions
     // waiting in other sessions show as a badge in the rail.
     guard let session = attached else { return }
