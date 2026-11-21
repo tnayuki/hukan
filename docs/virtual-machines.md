@@ -233,6 +233,10 @@ and the reasoning behind it; read the file before changing the area it covers.
   ends: a full socket must leave the queue free to read replies and handle a reset or stop. A
   reset replaces the renderer; releasing the VM owner also shuts its GPU down permanently, so a
   late DRIVER_OK cannot start it again. The renderer watches its parent's exit on its own.
+  **A renderer that dies leaves the machine running**: its blobs stay in the region — the guest
+  still has them mapped, and a guest touching a page taken out from under it stopped the whole
+  machine with an internal Virtualization error — and what the guest was waiting on is answered
+  with an error. The desktop stops drawing until the guest restarts, which brings a new renderer.
   **Such a machine suspends like any other.** gfxstream snapshots its Vulkan state, captured from
   the renderer's start, beside the machine's own state; the device saves which blobs were mapped
   where, and a restored machine resumes only once the new renderer has handed each of them over

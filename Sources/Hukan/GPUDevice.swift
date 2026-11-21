@@ -75,8 +75,13 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
   private let memorySize: UInt64
   private let snapshot: URL
 
-  /// Elements handed to the renderer and not yet answered, by the tag they went with.
-  private var elements: [UInt64: VZVirtioQueueElement] = [:]
+  /// Elements handed to the renderer and not yet answered, by the tag they went with, each with the
+  /// request it carried, for an answer of our own should the renderer die first.
+  private struct Pending {
+    var element: VZVirtioQueueElement
+    var request: Data
+  }
+  private var elements: [UInt64: Pending] = [:]
   private var nextTag: UInt64 = 1
 
   /// A blob in the guest: where in the region, how much, and this process's mapping of its pages.
@@ -197,7 +202,7 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
     self.reader = GPULink.Reader()
     ownsService = false
     writer = GPULink.Writer(descriptor: pair[0], queue: queue) { [weak self] in
-      self?.stopRenderer()
+      self?.stopRenderer(leavingGuestPages: true)
     }
 
     let source = DispatchSource.makeReadSource(fileDescriptor: pair[0], queue: queue)
@@ -252,28 +257,44 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
   }
 
   /// The renderer goes, and with it everything it made; what the guest is waiting on is dropped.
-  private func stopRenderer() {
-    guard renderer != 0 else { return }
-    readSource?.cancel()
-    readSource = nil
-    writer?.cancel()
-    writer = nil
-    socket = -1
-    let pid = renderer
-    renderer = 0
-    kill(pid, SIGTERM)
-    DispatchQueue.global().async {
-      var status: Int32 = 0
-      while waitpid(pid, &status, 0) < 0, errno == EINTR {}
-      GPULink.note("renderer \(pid) ended, status \(status)")
+  ///
+  /// A renderer that died under a running guest (`leavingGuestPages`) leaves its blobs in the region:
+  /// the guest still has them mapped, and a guest touching a page taken out from under it stops the
+  /// whole machine with an internal Virtualization error. They stay until the device resets or
+  /// stops; what the guest was waiting on is answered with an error instead of dropped.
+  private func stopRenderer(leavingGuestPages: Bool = false) {
+    if renderer != 0 {
+      readSource?.cancel()
+      readSource = nil
+      writer?.cancel()
+      writer = nil
+      socket = -1
+      let pid = renderer
+      renderer = 0
+      kill(pid, SIGTERM)
+      DispatchQueue.global().async {
+        var status: Int32 = 0
+        while waitpid(pid, &status, 0) < 0, errno == EINTR {}
+        GPULink.note("renderer \(pid) ended, status \(status)")
+      }
+      mach_port_mod_refs(mach_task_self_, service, MACH_PORT_RIGHT_RECEIVE, -1)
+      service = 0
+      DispatchQueue.main.async { [weak self] in self?.surfaces = [:] }
     }
-    mach_port_mod_refs(mach_task_self_, service, MACH_PORT_RIGHT_RECEIVE, -1)
-    service = 0
-    for resource in Array(mappings.keys) { unmapBlob(resource) }
-    DispatchQueue.main.async { [weak self] in self?.surfaces = [:] }
-    // An element has to go back to its queue before it is let go, or the framework aborts; these
-    // go back unanswered.
-    for element in elements.values { element.returnToQueue() }
+    if leavingGuestPages {
+      if !mappings.isEmpty {
+        GPULink.note(
+          "GPU \(identity): \(mappings.count) blobs left in the guest, the renderer gone")
+      }
+      for pending in elements.values {
+        answer(pending.element, with: Self.unanswerable(pending.request))
+      }
+    } else {
+      for resource in Array(mappings.keys) { unmapBlob(resource) }
+      // An element has to go back to its queue before it is let go, or the framework aborts; these
+      // go back unanswered.
+      for pending in elements.values { pending.element.returnToQueue() }
+    }
     elements = [:]
   }
 
@@ -291,7 +312,7 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
   private func readSocket() {
     guard let bytes = GPULink.read(from: socket) else {
       GPULink.note("the renderer's socket closed")
-      stopRenderer()
+      stopRenderer(leavingGuestPages: true)
       return
     }
     for frame in reader.feed(bytes) { handle(frame) }
@@ -302,7 +323,7 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
   private func handle(_ frame: GPULink.Frame) -> GPULink.Frame? {
     switch frame.kind {
     case .response:
-      guard let element = elements.removeValue(forKey: frame.tag) else { return nil }
+      guard let element = elements.removeValue(forKey: frame.tag)?.element else { return nil }
       answer(element, with: frame.payload)
     case .frame:
       let id = frame.value
@@ -374,7 +395,7 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
   /// for the guest's RESOURCE_MAP_BLOB, answered once they are there, or for a restore.
   private func mapBlob(_ blob: GPULink.BlobMessage, entry: mach_port_t) {
     defer { mach_port_deallocate(mach_task_self_, entry) }
-    let element = elements.removeValue(forKey: blob.tag)
+    let element = elements.removeValue(forKey: blob.tag)?.element
     let offset = element != nil ? blob.offset : mappings[blob.resource]?.offset ?? blob.offset
     var response = withUnsafeBytes(of: blob.response) { Data($0) }
     func fail(_ why: String) {
@@ -457,7 +478,7 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
       guard poll(&poller, 1, 100) >= 0 || errno == EINTR else { return nil }
       guard poller.revents != 0 else { continue }
       guard let bytes = GPULink.read(from: socket) else {
-        stopRenderer()
+        stopRenderer(leavingGuestPages: true)
         return nil
       }
       for frame in reader.feed(bytes) {
@@ -583,7 +604,7 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
       }
       let tag = nextTag
       nextTag += 1
-      elements[tag] = element
+      elements[tag] = Pending(element: element, request: request.prefix(24))
       writer?.send(
         GPULink.encode(.request, value: UInt32(queue.queueIndex), tag: tag, payload: request))
     }
