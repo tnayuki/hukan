@@ -321,6 +321,15 @@ final class WorktreeDeskViewController: NSViewController {
     }
   }
 
+  /// A pane a mod opened in the session's engine (`ModSurface`): the engine's, not the desk's —
+  /// it comes and goes with the roster the engine pushes, and is never saved, since the engine
+  /// that drew it is what brings it back.
+  private final class ModTab {
+    let id = UUID()
+    let pane: ModPaneViewController
+    init(pane: ModPaneViewController) { self.pane = pane }
+  }
+
   /// One open commit: its own read-only pane, kept per session like the rest of the desk. The
   /// oid is the identity — a commit is an object of the repository, not of the worktree, so the
   /// same one opened from two worktrees is the same text; what is per-session is which commits
@@ -360,11 +369,12 @@ final class WorktreeDeskViewController: NSViewController {
       let browsers = browserTabsByDesk.removeValue(forKey: id) ?? []
       let commits = commitTabsByDesk.removeValue(forKey: id) ?? []
       let machines = machineTabsByDesk.removeValue(forKey: id) ?? []
+      let mods = modTabsByDesk.removeValue(forKey: id) ?? []
       let order = tabOrderByDesk.removeValue(forKey: id)
       let selected = surfaceByDesk.removeValue(forKey: id)
       let panes: [NSViewController] =
         files.map { $0.content } + browsers.map { $0.pane }
-        + commits.map { $0.content } + machines.map { $0.pane }
+        + commits.map { $0.content } + machines.map { $0.pane } + mods.map { $0.pane }
       for pane in panes {
         if pane.isViewLoaded { pane.view.removeFromSuperview() }
         pane.removeFromParent()
@@ -374,6 +384,8 @@ final class WorktreeDeskViewController: NSViewController {
         desk.browserTabsByDesk[id] = browsers
         desk.commitTabsByDesk[id] = commits
         desk.machineTabsByDesk[id] = machines
+        desk.modTabsByDesk[id] = mods
+        for tab in mods { desk.wire(tab, in: id) }
         desk.tabOrderByDesk[id] = order
         desk.surfaceByDesk[id] = selected
         for tab in files { desk.wire(tab, in: id) }
@@ -408,6 +420,7 @@ final class WorktreeDeskViewController: NSViewController {
   private var browserTabsByDesk: [UUID: [BrowserTab]] = [:]
   private var commitTabsByDesk: [UUID: [CommitTab]] = [:]
   private var machineTabsByDesk: [UUID: [MachineTab]] = [:]
+  private var modTabsByDesk: [UUID: [ModTab]] = [:]
   private var terminals: [TerminalSession] = []
   /// The worktree the desk's session is in now — what a file tab follows to.
   private var deskWorktreeID: UUID? {
@@ -427,6 +440,7 @@ final class WorktreeDeskViewController: NSViewController {
     case terminal(UUID)
     case commit(UUID)
     case machine(UUID)
+    case mod(UUID)
   }
   /// Which tab is showing, per desk — so the rail's selection moving away and coming back lands on
   /// the tab that was being read. The view holds every session's tabs at once and only shows one
@@ -455,6 +469,7 @@ final class WorktreeDeskViewController: NSViewController {
   private var browserTabs: [BrowserTab] { deskID.flatMap { browserTabsByDesk[$0] } ?? [] }
   private var commitTabs: [CommitTab] { deskID.flatMap { commitTabsByDesk[$0] } ?? [] }
   private var machineTabs: [MachineTab] { deskID.flatMap { machineTabsByDesk[$0] } ?? [] }
+  private var modTabs: [ModTab] { deskID.flatMap { modTabsByDesk[$0] } ?? [] }
 
   /// The commit tab showing right now, when the desk is on one. The scripting surface's handle on
   /// it: a commit tab has no specifier of its own, and checking one by clicking at coordinates is
@@ -488,6 +503,7 @@ final class WorktreeDeskViewController: NSViewController {
     guard surface != .none else { return false }
     // A machine's screen is pixels from another computer: nothing here can search it.
     if case .machine = surface { return false }
+    if case .mod = surface { return false }
     return activeFileContent?.isShowingImage != true
   }
 
@@ -553,7 +569,7 @@ final class WorktreeDeskViewController: NSViewController {
       commitTabs.first { $0.id == id }?.content.performFind(sender)
     case .browser(let id):
       browserTabs.first { $0.id == id }?.pane.performFind(sender)
-    case .machine, .none:
+    case .machine, .mod, .none:
       break
     }
   }
@@ -561,6 +577,7 @@ final class WorktreeDeskViewController: NSViewController {
   /// How many tabs the desk holds — ⌃⇥ tab-cycling validates on more than one.
   var tabCount: Int {
     fileTabs.count + browserTabs.count + commitTabs.count + terminals.count + machineTabs.count
+      + modTabs.count
   }
 
   /// The tabs in strip order, so ⌃⇥ / ⌃⇧⇥ walk them the way they read: the order kept in
@@ -578,6 +595,7 @@ final class WorktreeDeskViewController: NSViewController {
       + (browserTabsByDesk[deskID] ?? []).map { .browser($0.id) }
       + terminals.map { .terminal($0.id) }
       + (machineTabsByDesk[deskID] ?? []).map { .machine($0.id) }
+      + (modTabsByDesk[deskID] ?? []).map { .mod($0.id) }
     let known = (tabOrderByDesk[deskID] ?? []).filter(present.contains)
     return known + present.filter { !known.contains($0) }
   }
@@ -605,7 +623,7 @@ final class WorktreeDeskViewController: NSViewController {
                 != nil
             else { return nil }
             return .init(deskID: session.id, kind: .machine)
-          case .none: return nil
+          case .mod, .none: return nil
           }
         }
     }
@@ -627,6 +645,7 @@ final class WorktreeDeskViewController: NSViewController {
       let order = orderedSurfaces(
         in: session.id, terminals: workspace.terminals(inDesk: session.id)
       ).filter { surface in
+        if case .mod = surface { return false }
         guard case .machine(let id) = surface else { return true }
         return machineTabsByDesk[session.id]?.first(where: { $0.id == id })?.pane.machineID != nil
       }
@@ -951,7 +970,7 @@ final class WorktreeDeskViewController: NSViewController {
       if let key = machineTabs.first(where: { $0.id == id })?.pane.keyView {
         view.window?.makeFirstResponder(key)
       }
-    case .file, .commit, .none:
+    case .file, .commit, .mod, .none:
       break
     }
   }
@@ -1142,6 +1161,74 @@ final class WorktreeDeskViewController: NSViewController {
     if let reveal { tab.content.reveal(line: reveal.line, term: reveal.term) }
   }
 
+  // MARK: Mod panes
+
+  /// Bring the session's mod tabs in step with the panes its engine has open: a tab for each new
+  /// pane at the end of the strip, a retitle for one renamed, and the tab of a pane gone closed.
+  /// A pane the mod asked to have the keyboard, or the engine names as shown when it first
+  /// appears, is brought forward — but only a new one: the roster moving must not take the desk
+  /// away from what the person is reading.
+  /// A link pressed in a mod pane, with the desk (session) it is on: the window opens it there.
+  var onOpenModURL: ((UUID, URL) -> Void)?
+
+  /// Hang a mod tab on this desk: its controller a child here, its links opening through this
+  /// window — a tab moved in from another window brings its pane, not that window's wiring.
+  private func wire(_ tab: ModTab, in deskID: UUID) {
+    addChild(tab.pane)
+    tab.pane.onOpenURL = { [weak self] url in self?.onOpenModURL?(deskID, url) }
+    tab.pane.onReleaseKeyboard = { [weak self] in self?.onModPaneReleasesKeyboard?() }
+  }
+
+  /// A pane let go of the keyboard (Escape): the window puts it in the composer.
+  var onModPaneReleasesKeyboard: (() -> Void)?
+
+  /// The pane a session's mod draws under `id`, on whichever desk carries it.
+  func modPane(_ id: String, in deskID: UUID) -> ModPaneViewController? {
+    modTabsByDesk[deskID]?.first { $0.pane.pane.id == id }?.pane
+  }
+
+  func syncModPanes(for session: AgentSession) {
+    loadViewIfNeeded()
+    let deskID = session.id
+    let roster = session.modRoster
+    let previous = deskID == self.deskID ? orderedSurfaces : []
+    var tabs = modTabsByDesk[deskID] ?? []
+    let wanted = Set(roster.panes.map(\.id))
+    for tab in tabs where !wanted.contains(tab.pane.pane.id) { tab.pane.removeFromParent() }
+    tabs.removeAll { !wanted.contains($0.pane.pane.id) }
+    var opened: ModTab?
+    for pane in roster.panes {
+      if let tab = tabs.first(where: { $0.pane.pane.id == pane.id }) {
+        tab.pane.update(pane)
+        continue
+      }
+      let tab = ModTab(pane: ModPaneViewController(session: session, pane: pane))
+      wire(tab, in: deskID)
+      tabs.append(tab)
+      if pane.id == roster.focusRequestedID || pane.id == roster.shownID { opened = tab }
+    }
+    modTabsByDesk[deskID] = tabs
+    // A pane that asked for the keyboard has it only on the desk on screen and while nothing of
+    // the person's is under way there (`canGrantModFocus`); otherwise it is refused, once.
+    let requested = roster.focusRequestedID.flatMap { id in tabs.first { $0.pane.pane.id == id } }
+    if let requested, deskID != self.deskID || !session.canGrantModFocus {
+      session.refuseModFocusRequest(requested.pane.pane.id)
+    }
+    guard deskID == self.deskID else { return }
+    if let opened { surface = .mod(opened.id) }
+    if let requested, session.canGrantModFocus { surface = .mod(requested.id) }
+    reconcileSurface(previous: previous)
+    rebuildTabBar()
+    applySurface()
+    if let requested, session.canGrantModFocus { requested.pane.takeKeyboard() }
+  }
+
+  /// The engine said what its panes draw has changed: each of the session's panes asks again —
+  /// the one showing now, the rest when next shown.
+  func invalidateModPanes(in deskID: UUID) {
+    for tab in modTabsByDesk[deskID] ?? [] { tab.pane.setNeedsRender() }
+  }
+
   /// A machine on the session's desk: a copy of `template` made for this session, started and
   /// shown in the tab.
   @discardableResult
@@ -1263,7 +1350,7 @@ final class WorktreeDeskViewController: NSViewController {
       guard let tab = commitTabs.first(where: { $0.id == id }), tab.isPreview else { return false }
       tab.isPreview = false
       return true
-    case .browser, .terminal, .machine, .none:
+    case .browser, .terminal, .machine, .mod, .none:
       return false
     }
   }
@@ -1441,6 +1528,13 @@ final class WorktreeDeskViewController: NSViewController {
     case .terminal(let id):
       guard let terminal = terminals.first(where: { $0.id == id }) else { return "terminal" }
       return "terminal  \(terminal.title)"
+    case .mod(let id):
+      guard let tab = modTabs.first(where: { $0.id == id }) else { return "mod" }
+      // What it shows, one part a line, so a script can read a pane without pixels.
+      let outline = tab.pane.outline.split(separator: "\n").map { "\n          \($0)" }.joined()
+      return
+        "mod       \(tab.pane.pane.title)  (\(tab.pane.pane.plugin))  (\(tab.pane.stateDescription))"
+        + outline
     case .machine(let id):
       guard let tab = machineTabs.first(where: { $0.id == id }) else { return "machine" }
       let pending = tab.pane.isPending ? "  (unread)" : ""
@@ -2328,6 +2422,19 @@ final class WorktreeDeskViewController: NSViewController {
       }
       removeMachineTab(id, in: deskID)
       return true
+    case .mod(let id):
+      // The pane is the engine's: closing the tab asks it to close the pane, and the tab goes now
+      // rather than when the roster comes back. A mod that refuses has its pane put back by the
+      // roster the engine pushes.
+      guard let deskID, var tabs = modTabsByDesk[deskID],
+        let index = tabs.firstIndex(where: { $0.id == id })
+      else { return true }
+      let pane = tabs[index].pane
+      pane.removeFromParent()
+      tabs.remove(at: index)
+      modTabsByDesk[deskID] = tabs
+      workspace?.session(id: deskID)?.closeModPane(pane.pane.id)
+      return true
     case .commit(let id):
       guard let deskID, var tabs = commitTabsByDesk[deskID],
         let index = tabs.firstIndex(where: { $0.id == id })
@@ -2486,6 +2593,10 @@ final class WorktreeDeskViewController: NSViewController {
     // A session gone takes its tabs, but not its machines: closing a repository is not a decision
     // to delete what ran in it, so the machines are saved and kept on disk. Deleting the session
     // is, and has already taken them (`deleteMachines(ofSession:)`) before this runs.
+    for key in modTabsByDesk.keys where !live.contains(key) {
+      for tab in modTabsByDesk[key] ?? [] { tab.pane.removeFromParent() }
+      modTabsByDesk[key] = nil
+    }
     for key in machineTabsByDesk.keys where !live.contains(key) {
       for tab in machineTabsByDesk[key] ?? [] {
         tab.pane.retire(deleting: false)
@@ -2517,7 +2628,8 @@ final class WorktreeDeskViewController: NSViewController {
     // case that hides its own tab (and the `+` with it) was the odd exception. Only nothing open
     // collapses it.
     let machines = machineTabs
-    let total = files.count + commits.count + browsers.count + terminals.count + machines.count
+    let mods = modTabs
+    let total = tabCount
     defer { onTabsChanged?() }
     guard total > 0 else {
       tabScroll.isHidden = true
@@ -2599,6 +2711,14 @@ final class WorktreeDeskViewController: NSViewController {
             index: index, title: terminal.title,
             image: NSImage(systemSymbolName: "terminal", accessibilityDescription: nil),
             selected: surface == item))
+      case .mod(let id):
+        guard let mod = mods.first(where: { $0.id == id }) else { continue }
+        let tab = makeTab(
+          index: index, title: mod.pane.pane.title,
+          image: NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil),
+          selected: surface == item)
+        tab.toolTip = "\(mod.pane.pane.title) — \(mod.pane.pane.plugin)"
+        tabs.append(tab)
       case .machine(let id):
         guard let machine = machines.first(where: { $0.id == id }) else { continue }
         let tab = makeTab(
@@ -2921,7 +3041,7 @@ final class WorktreeDeskViewController: NSViewController {
     closeTab(at: sender.tag)
   }
 
-  private func closeTab(at index: Int) {
+  func closeTab(at index: Int) {
     let order = orderedSurfaces
     guard order.indices.contains(index) else { return }
     closeTabs([order[index]])
@@ -3036,6 +3156,13 @@ final class WorktreeDeskViewController: NSViewController {
     switch surface {
     case .none:
       setSurfaceView(placeholder)
+    case .mod(let id):
+      if let tab = modTabs.first(where: { $0.id == id }) {
+        setSurfaceView(tab.pane.view)
+        if let deskID { workspace?.session(id: deskID)?.showModPane(tab.pane.pane.id) }
+      } else {
+        setSurfaceView(placeholder)
+      }
     case .file(let id):
       if let tab = fileTabs.first(where: { $0.id == id }) {
         realize(tab)

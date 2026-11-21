@@ -160,6 +160,9 @@ final class ClaudeSession {
   /// so nothing here waits forever on a process that has exited.
   private var pendingReplies: [String: ([String: Any]?) -> Void] = [:]
   private let pendingRepliesLock = NSLock()
+  /// Set under the lock by the drain at exit: an ask that comes after it is answered nil at
+  /// once rather than registered where nothing will ever answer it.
+  private var hasDrainedReplies = false
 
   var onEvent: ((ClaudeEvent) -> Void)?
   var onExit: ((Int32) -> Void)?
@@ -175,6 +178,10 @@ final class ClaudeSession {
   /// main thread. Read for one purpose: a bridged conversation can only be opened by the account
   /// that bridged it, so the code offering it has to say whose it is.
   var onAccountEmail: ((String) -> Void)?
+  /// What the same reply's `capabilities` lists — the engine's word on which host-facing protocols
+  /// it speaks, `ui_surface_v1` (mods drawing on a surface, `ModSurface`) among them. Fires once,
+  /// on the main thread.
+  var onCapabilities: (([String]) -> Void)?
   /// The `initialize` reply came back an error, so the engine never became ready — most often
   /// because the account is signed out (the OAuth token expired or `/logout` was run elsewhere).
   /// Carries the engine's message. Fires on the main thread; the session is dead after this.
@@ -616,7 +623,14 @@ final class ClaudeSession {
     var request: [String: Any] = ["subtype": subtype]
     for (key, value) in parameters { request[key] = value }
     let requestID = nextControlRequestID()
+    // An ask after the process has gone would be registered past the drain that answers the
+    // rest with nil, and wait for good: whether it is gone is read under the drain's own lock.
     pendingRepliesLock.lock()
+    guard !hasDrainedReplies, process.isRunning else {
+      pendingRepliesLock.unlock()
+      DispatchQueue.main.async { completion(nil) }
+      return
+    }
     pendingReplies[requestID] = completion
     pendingRepliesLock.unlock()
     write(["type": "control_request", "request_id": requestID, "request": request])
@@ -919,6 +933,7 @@ final class ClaudeSession {
   /// caller left holding a completion that never runs is a spinner that never stops.
   private func finishPendingReplies() {
     pendingRepliesLock.lock()
+    hasDrainedReplies = true
     let waiting = pendingReplies
     pendingReplies.removeAll()
     pendingRepliesLock.unlock()
@@ -976,6 +991,11 @@ final class ClaudeSession {
     // it at all: a CLI that predates the keys says nothing, and the documented reading of an
     // absent key is false — which lands as unavailable, so the control never appears rather
     // than appearing dead.
+    if let inner = response["response"] as? [String: Any],
+      let capabilities = inner["capabilities"] as? [String]
+    {
+      DispatchQueue.main.async { [weak self] in self?.onCapabilities?(capabilities) }
+    }
     if let inner = response["response"] as? [String: Any],
       let account = inner["account"] as? [String: Any],
       let email = account["email"] as? String, !email.isEmpty

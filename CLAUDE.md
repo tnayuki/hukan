@@ -80,6 +80,7 @@ outbound list is in `docs/updates.md`, and the guarded verbs in `docs/testing.md
 | `docs/files-panel.md` | Tree, filter and search (rg), right-click writes, drag and drop, Quick Look, change washes |
 | `docs/history-and-commits.md` | The History section, git operations underway, the commit tab, read costs |
 | `docs/change-tracking.md` | Untracked files as changes, how an FSEvents batch reaches tabs and git |
+| `docs/mods.md` | Drawing Claude Code's mods: the surface, panes as desk tabs, how a tree is drawn |
 | `docs/virtual-machines.md` | macOS, Linux (Rosetta, GPU) and Windows machines |
 | `docs/remote-control.md` | Remote Control, its QR code and the replay of remote messages |
 | `docs/updates.md` | The update check and the list of hukan's own outbound requests |
@@ -111,6 +112,9 @@ only for a principle that holds across areas.
   whether hukan ever writes back (a reply, a re-request) is open. A `gh`-based PR-state link
   was prototyped and pulled back out; evaluating the real thing needs a repository with a
   real remote, Enterprise included.
+- **Mods, the rest of the surface** (`docs/mods.md`). Panes, the band above the prompt — their
+  scrolling and keyboard included — and the status lines are drawn; not yet the transcript rows a
+  mod may redraw.
 - **Browser** — what is left open is the login state: sharing Safari's is officially impossible
   (plan B: inject `Cookies.binarycookies`, needs Full Disk Access). Measured with a WKWebView
   harness (2026-08): SSO redirect chains and Kolide device trust **work**; passkeys and iCloud

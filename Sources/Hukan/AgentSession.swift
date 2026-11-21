@@ -1138,11 +1138,27 @@ final class AgentSession {
       self.onStateChange?()
     }
     session.onInitializeFailed = { [weak self] _ in self?.handleSignedOut() }
+    session.onCapabilities = { [weak self] capabilities in
+      guard let self, capabilities.contains(ModSurface.capability) else { return }
+      self.attachModSurface()
+    }
     session.onExit = { [weak self] status in
       guard let self else { return }
       // Read before the runner goes: the tail lives on it.
       let stderr = self.runner?.lastError
       self.runner = nil
+      // The panes were that engine's, drawn by mods it was running: nothing is left to draw them.
+      self.isModSurfaceAttached = false
+      self.setModRoster(ModSurface.Roster())
+      self.modBand = nil
+      self.modStatuses = []
+      self.shownModPane = nil
+      self.toldModPaneFocus = nil
+      self.refusedModFocusRequest = nil
+      self.isRenderingModBand = false
+      self.modBandDirty = false
+      self.modBandWorking = nil
+      self.onModBandChange?()
       // The bridge was that process's, so it does not survive it: a state kept here would say a
       // phone can reach a conversation nothing is holding. Availability does survive — it is a
       // fact about the install rather than about this process, and dropping it would take the
@@ -1273,6 +1289,264 @@ final class AgentSession {
     state = .signedOut
     append(Transcript.error("Not signed in — type /login and press Enter to authenticate."))
     onStateChange?()
+  }
+
+  // MARK: Mods
+
+  /// The panes this session's mods have open (`ModSurface`), as the engine last listed them. Each
+  /// is a tab on the session's desk; the window keeps the two in step (`onModPanesChange`).
+  private(set) var modRoster = ModSurface.Roster()
+  /// The roster changed: a pane opened, closed, was retitled, or asked to be shown.
+  var onModPanesChange: (() -> Void)?
+  /// The engine said something a pane draws has changed: every open pane asks for its tree again.
+  var onModInvalidate: (() -> Void)?
+  /// Whether this session's engine has hukan attached as a surface.
+  private(set) var isModSurfaceAttached = false
+  /// The room the panes have, in cells — the desk's, as last measured by a pane.
+  var modViewport = ModSurface.Viewport(columns: 100, rows: 40)
+
+  /// Take a roster. `force` tells the desk even when nothing changed — after a close the desk
+  /// took its tab down early, and a refused close comes back as the same roster. Internal so
+  /// tests can seed a roster without an engine.
+  func setModRoster(_ roster: ModSurface.Roster, force: Bool = false) {
+    guard force || roster != modRoster else { return }
+    // A refusal answers the request standing when it was sent: once the roster no longer carries
+    // that request, the same pane asking again is a new request, refused afresh if it must be.
+    if roster.focusRequestedID != refusedModFocusRequest { refusedModFocusRequest = nil }
+    modRoster = roster
+    onModPanesChange?()
+  }
+
+  /// Ask the engine, and hear the answer only if it is still the engine that was asked: a reply
+  /// that lands after the process exited or was replaced is about panes nothing draws any more.
+  private func askMod(
+    _ subtype: String, _ request: [String: Any], completion: @escaping ([String: Any]?) -> Void
+  ) {
+    guard let runner else { return completion(nil) }
+    runner.ask(subtype, request) { [weak self, weak runner] reply in
+      guard let self, let runner, self.runner === runner else { return completion(nil) }
+      completion(reply)
+    }
+  }
+
+  private func readModRoster(force: Bool = false) {
+    askMod("ui_panes", ["client_id": ModSurface.clientID]) { [weak self] reply in
+      if let reply, let roster = ModSurface.Roster(reply) {
+        self?.setModRoster(roster, force: force)
+      } else if force {
+        self?.onModPanesChange?()
+      }
+    }
+  }
+
+  /// Attach as this engine's surface, then read the panes it already has: a mod that opened one
+  /// at `session.start` did so before anything was attached, and the pane waited for a surface.
+  private func attachModSurface() {
+    askMod("ui_attach", ModSurface.attach(modViewport)) { [weak self] reply in
+      guard let self, reply != nil else { return }
+      self.isModSurfaceAttached = true
+      // Forced: a pane's request for the keyboard may have been met or refused before the attach
+      // was answered, when nothing could be told the engine — the desk settles it again now.
+      self.readModRoster(force: true)
+      // The engine pushes its roster before it answers the attach, so a pane's tab can be up and
+      // asked once already — answered with nothing, there being no surface yet. Ask again now.
+      self.onModInvalidate?()
+      self.refreshModBand()
+    }
+  }
+
+  /// What the mods draw above the composer (`AbovePrompt`), as the engine last answered — nil
+  /// when no mod draws there. Kept here rather than in the column, so a reload of the column only
+  /// draws it and never asks for it.
+  private(set) var modBand: ModSurface.Node? {
+    didSet { modBandRevision += 1 }
+  }
+  /// Counts the band's trees, so the column draws one only when it is new.
+  private(set) var modBandRevision = 0
+  /// How the band's last tree laid out and where its window stands, as the column drawing it
+  /// says — what a band render carries for a plugin's `$.ui.scroll` to land.
+  var modBandLayout: () -> ModSurface.Layout? = { nil }
+  /// The mods' status lines, a line per plugin in the order they first spoke (`$.ui.status`).
+  private(set) var modStatuses: [(plugin: String, text: String)] = []
+  /// The band or a status line changed.
+  var onModBandChange: (() -> Void)?
+  /// How wide the band is, in cells — the column's, as last measured.
+  var modBandColumns = 80
+  /// Whether the band was last drawn for a working turn: what a progress band reads, so a change
+  /// of it is a reason to draw the band again.
+  private var modBandWorking: Bool?
+  /// One band render at a time; an ask that lands while one is out is answered by one more after
+  /// it, a beat later — a hook that invalidates as it draws must not keep the engine asked forever
+  /// at the speed of the wire.
+  private var isRenderingModBand = false
+  private var modBandDirty = false
+
+  /// Ask for the band again — after attaching, on an invalidation, and when a turn starts or ends.
+  func refreshModBand() {
+    guard runner != nil, isModSurfaceAttached else { return }
+    if isRenderingModBand {
+      modBandDirty = true
+      return
+    }
+    isRenderingModBand = true
+    let working = isWorking
+    modBandWorking = working
+    askMod(
+      "ui_render",
+      ModSurface.renderBand(columns: modBandColumns, isWorking: working, layout: modBandLayout())
+    ) {
+      [weak self] reply in
+      guard let self else { return }
+      self.isRenderingModBand = false
+      self.modBand = ModSurface.tree(reply)
+      self.onModBandChange?()
+      guard self.modBandDirty else { return }
+      self.modBandDirty = false
+      DispatchQueue.main.asyncAfter(deadline: .now() + ModSurface.redrawInterval) {
+        [weak self] in self?.refreshModBand()
+      }
+    }
+  }
+
+  /// Draw the band again if the turn has started or ended since it was last drawn.
+  func refreshModBandIfWorkingChanged() {
+    guard isModSurfaceAttached, modBandWorking != isWorking else { return }
+    refreshModBand()
+  }
+
+  /// Ask for a pane's tree. Nil when there is no engine, it refused, or no mod draws the pane.
+  func renderModPane(
+    _ pane: ModSurface.Pane, viewport: ModSurface.Viewport, isFocused: Bool = false,
+    layout: ModSurface.Layout? = nil, completion: @escaping (ModSurface.Node?) -> Void
+  ) {
+    guard runner != nil, isModSurfaceAttached else { return completion(nil) }
+    askMod(
+      "ui_render",
+      ModSurface.render(pane: pane, viewport: viewport, isFocused: isFocused, layout: layout)
+    ) { reply in completion(ModSurface.tree(reply)) }
+  }
+
+  /// A plugin moved a pane's window (`$.ui.scroll`); the window hands it to the pane.
+  var onModScroll: ((ModSurface.ScrollMove) -> Void)?
+  /// A plugin moved a pane's focus ring (`$.ui.focus`); the window hands it to the pane.
+  var onModFocus: ((ModSurface.FocusMove) -> Void)?
+
+  /// The person scrolled a pane: the engine answers with the offset it holds — the reported one,
+  /// a hook's rewrite, or the one it kept when a hook denied the move — and whether the window
+  /// keeps to the end.
+  func scrollMod(
+    _ request: [String: Any], done: @escaping (_ offset: Int?, _ followsEnd: Bool) -> Void
+  ) {
+    guard isModSurfaceAttached else { return done(nil, false) }
+    askMod("ui_scroll", request) { reply in
+      done((reply?["offset"] as? NSNumber)?.intValue, reply?["follow_end"] as? Bool == true)
+    }
+  }
+
+  /// The keyboard moved in a pane: the engine answers with the element it holds the ring on,
+  /// which a hook may have redirected.
+  func focusMod(
+    site: ModSurface.Site, isHeld: Bool, element: ModSurface.Element?, by: String = "person",
+    done: @escaping (ModSurface.Element?) -> Void = { _ in }
+  ) {
+    guard isModSurfaceAttached else { return done(element) }
+    askMod("ui_focus", ModSurface.focus(site: site, isHeld: isHeld, element: element, by: by)) {
+      reply in done(reply == nil ? element : ModSurface.focusedElement(reply))
+    }
+  }
+
+  /// Which pane holds the keyboard as last told to the engine; nil for the composer.
+  private var toldModPaneFocus: String??
+
+  /// The keyboard went to a pane, or left the panes (nil). Told once per change; telling it also
+  /// settles a pane's standing request for the keyboard, granted or not.
+  func focusModPane(_ id: String?) {
+    guard isModSurfaceAttached, toldModPaneFocus != .some(id) else { return }
+    toldModPaneFocus = .some(id)
+    askMod("ui_pane_focus", ModSurface.paneFocus(id)) { _ in }
+  }
+
+  /// Refuse a pane's standing request for the keyboard, once per request.
+  private var refusedModFocusRequest: String?
+
+  func refuseModFocusRequest(_ id: String) {
+    guard isModSurfaceAttached, refusedModFocusRequest != id else { return }
+    refusedModFocusRequest = id
+    toldModPaneFocus = .some(nil)
+    askMod("ui_pane_focus", ModSurface.paneFocus(nil)) { _ in }
+  }
+
+  /// Whether a pane may take the keyboard it asked for (`$.ui.open({ focus: true })`): only
+  /// while the composer is empty, nothing is running, and nothing waits on the person — a pane
+  /// that opens while someone is typing must not take their keystrokes.
+  var canGrantModFocus: Bool {
+    draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isWorking
+      && pendingApproval == nil && pendingQuestion == nil && pendingGrant == nil
+  }
+
+  /// Hand the engine a press, a field's text or a pick, with the render of the site it came from
+  /// (`render`, a `ui_render` request), and say when it has been handled with the tree as the
+  /// handler left it — nil when the engine could not draw it, and the site asks on its own.
+  /// A handler that keeps its state in a variable pushes no invalidation, so this tree is the
+  /// only word that the press changed anything.
+  func pressMod(
+    _ press: ModSurface.Press, href: String? = nil, render: [String: Any]? = nil,
+    done: @escaping (ModSurface.Node?) -> Void
+  ) {
+    askMod("ui_press", ModSurface.press(press, href: href, render: render)) { reply in
+      done(ModSurface.drawn(reply))
+    }
+  }
+
+  func inputMod(
+    _ press: ModSurface.Press, value: String, submit: Bool, site: ModSurface.Site,
+    render: [String: Any]? = nil, done: @escaping (ModSurface.Node?) -> Void
+  ) {
+    askMod(
+      "ui_input",
+      ModSurface.input(press, value: value, submit: submit, site: site, render: render)
+    ) { reply in done(ModSurface.drawn(reply)) }
+  }
+
+  func selectMod(
+    _ press: ModSurface.Press, value: String, site: ModSurface.Site,
+    render: [String: Any]? = nil, done: @escaping (ModSurface.Node?) -> Void
+  ) {
+    askMod("ui_select", ModSurface.select(press, value: value, site: site, render: render)) {
+      reply in done(ModSurface.drawn(reply))
+    }
+  }
+
+  /// The band's render request, for an action taken in it to bring back.
+  var modBandRender: [String: Any] {
+    ModSurface.renderBand(columns: modBandColumns, isWorking: isWorking, layout: modBandLayout())
+  }
+
+  /// Take the band's tree as an action in it brought it back.
+  func takeModBand(_ tree: ModSurface.Node) {
+    modBand = tree
+    onModBandChange?()
+  }
+
+  /// The person closed a pane's tab. The engine may refuse (a mod's `ui.close` hook can), so the
+  /// roster is read again and handed to the desk whether or not it moved: the tab went down
+  /// already, and a pane still open has to come back.
+  func closeModPane(_ id: String) {
+    askMod("ui_close", ["id": id, "client_id": ModSurface.clientID]) { [weak self] _ in
+      self?.readModRoster(force: true)
+    }
+  }
+
+  /// The person brought a pane's tab forward: the engine's word for which pane is shown follows,
+  /// so a mod reading `$.ui.panes()` sees what the person is looking at. Said once per change.
+  private var shownModPane: String?
+
+  func showModPane(_ id: String) {
+    guard isModSurfaceAttached, shownModPane != id else { return }
+    shownModPane = id
+    askMod(
+      "ui_pane_show", ["id": id, "surface": ModSurface.surface, "client_id": ModSurface.clientID]
+    ) { _ in }
   }
 
   /// Append an out-of-band note to the transcript. Used by the window for events that originate
@@ -2504,6 +2778,48 @@ final class AgentSession {
       refreshContextUsage()
       hasEndedTurn = true
       onTurnEnded?(event.payload["result"] as? String, failed)
+
+    case "system" where event.subtype == "ui_panes":
+      if let roster = ModSurface.Roster(event.payload) { setModRoster(roster) }
+
+    case "system" where event.subtype == "ui_invalidate":
+      onModInvalidate?()
+      refreshModBand()
+
+    case "system" where event.subtype == "ui_scroll":
+      if let move = ModSurface.ScrollMove(event.payload) { onModScroll?(move) }
+
+    case "system" where event.subtype == "ui_focus":
+      if let move = ModSurface.FocusMove(event.payload) { onModFocus?(move) }
+
+    case "system" where event.subtype == "ui_status":
+      // A mod's line under the band: one per plugin, replaced by its next, gone when empty.
+      if let plugin = event.payload["plugin"] as? String {
+        let text = (event.payload["text"] as? String) ?? ""
+        // In the order the plugins first spoke: a line updated keeps its place.
+        if text.isEmpty {
+          modStatuses.removeAll { $0.plugin == plugin }
+        } else if let index = modStatuses.firstIndex(where: { $0.plugin == plugin }) {
+          modStatuses[index].text = text
+        } else {
+          modStatuses.append((plugin, text))
+        }
+        onModBandChange?()
+      }
+
+    case "system" where event.subtype == "ui_toast":
+      // A toast is a word from a mod about something it did: said once, in the conversation it
+      // happened in, under the plugin's name.
+      if let text = event.payload["text"] as? String, !text.isEmpty {
+        let plugin = event.payload["plugin"] as? String
+        append(Transcript.note(plugin.map { "\($0): \(text)" } ?? text))
+      }
+
+    case "system" where event.subtype == "ui_log":
+      // A mod's own diagnostics, for its author — the console, not the conversation.
+      if let text = event.payload["text"] as? String {
+        NSLog("hukan: mod \(event.payload["plugin"] as? String ?? "?"): \(text)")
+      }
 
     case "system" where event.subtype == "init":
       // The starting point, before any worktree the agent may create. Moves are detected separately.

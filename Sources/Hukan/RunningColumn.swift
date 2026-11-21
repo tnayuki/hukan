@@ -53,6 +53,127 @@ final class RunningColumnViewController: NSViewController {
   /// up (an approval or an AskUserQuestion). The decision sits nearest the field because it is
   /// the one stopped on you; the task list is state, and stays out of the way above it.
   private var cards: [NSView] = []
+  /// The mods' card over the composer — the band's site and the status lines under it — kept
+  /// across reloads, as long as it is the same session's: the band's site holds a scroll position
+  /// and may hold the keyboard, and rebuilding it on every status line or turn would drop both.
+  private var modBandCardView: LayerSurface?
+  private var modBandStack: NSStackView?
+  private var modBandSite: ModSiteView?
+  private weak var modBandSession: AgentSession?
+  /// The band tree the site last drew (`AgentSession.modBandRevision`).
+  private var modBandDrawn: Int?
+  /// The constraints that seat the cards, renewed on every reload: the band's card stays put
+  /// across one, and so must lose its old seat itself.
+  private var cardPlacement: [NSLayoutConstraint] = []
+
+  private func dropModBandCard() {
+    modBandCardView?.removeFromSuperview()
+    modBandCardView = nil
+    modBandStack = nil
+    modBandSite = nil
+    modBandDrawn = nil
+  }
+
+  /// The mods' band and status lines as one quiet card, or nil when no mod draws either.
+  private func modBandCard(for session: AgentSession) -> NSView? {
+    if modBandSession !== session {
+      dropModBandCard()
+      modBandSession = session
+    }
+    guard session.modBand != nil || !session.modStatuses.isEmpty else {
+      dropModBandCard()
+      return nil
+    }
+    let card: LayerSurface
+    let stack: NSStackView
+    if let existing = modBandCardView, let existingStack = modBandStack {
+      card = existing
+      stack = existingStack
+    } else {
+      card = LayerSurface()
+      card.wantsLayer = true
+      card.layer?.cornerRadius = 8
+      card.paintLayer = { $0.backgroundColor = NSColor.quaternarySystemFill.cgColor }
+      stack = NSStackView()
+      stack.orientation = .vertical
+      stack.alignment = .leading
+      stack.spacing = 4
+      stack.translatesAutoresizingMaskIntoConstraints = false
+      card.addSubview(stack)
+      stack.pin(to: card, insets: NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10))
+      modBandCardView = card
+      modBandStack = stack
+    }
+    if let tree = session.modBand {
+      let site: ModSiteView
+      if let existing = modBandSite {
+        site = existing
+      } else {
+        site = ModSiteView(
+          session: session, site: .band, inset: 0, maxRows: ModSurface.bandRows)
+        // An action in the band brings the band back with its answer, drawn as the handler left
+        // it.
+        site.renderRequest = { [weak session] in session?.modBandRender ?? [:] }
+        site.onTook = { [weak session] tree in
+          if let tree { session?.takeModBand(tree) } else { session?.refreshModBand() }
+        }
+        site.onEscape = { [weak self] in self?.focusInput() }
+        site.onOpenURL = { [weak self] url in _ = self?.onOpenURL?(url) }
+        session.modBandLayout = { [weak site] in site?.siteLayout() }
+        stack.insertArrangedSubview(site, at: 0)
+        site.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        modBandSite = site
+      }
+      if modBandDrawn != session.modBandRevision {
+        modBandDrawn = session.modBandRevision
+        site.draw(tree)
+      }
+    } else if let site = modBandSite {
+      site.removeFromSuperview()
+      modBandSite = nil
+      modBandDrawn = nil
+      session.modBandLayout = { nil }
+    }
+    // The status lines are only words: drawn afresh each time.
+    for line in stack.arrangedSubviews where line !== modBandSite { line.removeFromSuperview() }
+    for status in session.modStatuses {
+      let line = NSTextField(labelWithString: status.text)
+      line.font = .systemFont(ofSize: 11)
+      line.textColor = .secondaryLabelColor
+      line.lineBreakMode = .byTruncatingTail
+      line.toolTip = "\(status.plugin): \(status.text)"
+      line.setContentCompressionResistancePriority(.init(rawValue: 200), for: .horizontal)
+      stack.addArrangedSubview(line)
+      line.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+    }
+    return card
+  }
+
+  /// How wide the band is, in cells: the column less the card's margins and padding.
+  private var bandColumns: Int {
+    max(Int((view.bounds.width - 44) / ModRenderer.Metrics.standard.ch), 20)
+  }
+
+  /// A band is drawn to its width in cells, which a mod may branch on: a column resized by a
+  /// column's worth asks for it again (coalesced by the session).
+  override func viewDidLayout() {
+    super.viewDidLayout()
+    if let session = attached { syncBandColumns(session) }
+  }
+
+  /// Record the band's width, and when it moved by a column ask for the band again: the one place
+  /// that does both, so a session brought on screen at another width is not left drawn for the
+  /// old one with the new width already written down.
+  private func syncBandColumns(_ session: AgentSession) {
+    guard session.modBandColumns != bandColumns else { return }
+    session.modBandColumns = bandColumns
+    if session.modBand != nil { session.refreshModBand() }
+  }
+
+  /// A plugin moved the band's window or ring.
+  func takeModBand(_ move: ModSurface.ScrollMove) { modBandSite?.take(move) }
+  func takeModBand(_ move: ModSurface.FocusMove) { modBandSite?.take(move) }
+
   /// The question whose Other row has already been handed the focus. The card claims the
   /// keyboard once, when the question lands — never again, or a rebuild would take it back from
   /// the composer you deliberately moved to (which is how you interrupt a question now).
@@ -1048,7 +1169,11 @@ final class RunningColumnViewController: NSViewController {
     // was. The card about to be built is a different object showing the same question, so this
     // is what lets a rebuild land under someone mid-word without them noticing.
     let questionFocus = cards.compactMap { ($0 as? QuestionCard)?.otherFocus }.first
-    for card in cards { card.removeFromSuperview() }
+    // The band's card stays where it is across a reload — taking it out would take the keyboard
+    // from a control in it — and is only reseated; the rest are built afresh.
+    NSLayoutConstraint.deactivate(cardPlacement)
+    cardPlacement = []
+    for card in cards where card !== modBandCardView { card.removeFromSuperview() }
     cards = []
     emptyState?.removeFromSuperview()
     emptyState = nil
@@ -1057,6 +1182,7 @@ final class RunningColumnViewController: NSViewController {
     guard let workspace, let worktreeID = workspace.selectedWorktreeID,
       workspace.worktree(id: worktreeID) != nil
     else {
+      dropModBandCard()
       attach(nil)
       scrollView.isHidden = true
       bottomArea.isHidden = true
@@ -1106,7 +1232,10 @@ final class RunningColumnViewController: NSViewController {
 
     // Only the session on screen, since the cards sit above its own composer. Decisions
     // waiting in other sessions show as a badge in the rail.
-    guard let session = attached else { return }
+    guard let session = attached else {
+      dropModBandCard()
+      return
+    }
     if session.hasOpenTasks {
       cards.append(
         TaskCard(tasks: session.tasks, expanded: session.tasksExpanded) {
@@ -1116,6 +1245,10 @@ final class RunningColumnViewController: NSViewController {
           self?.reload()
         })
     }
+    // What the session's mods draw above the prompt, then their status lines — under the task
+    // list and above a decision, which stays nearest the field.
+    syncBandColumns(session)
+    if let band = modBandCard(for: session) { cards.append(band) }
     if let grant = session.pendingGrant {
       cards.append(
         GrantCard(grant: grant) { [weak session] level in session?.resolveGrant(level) })
@@ -1145,16 +1278,20 @@ final class RunningColumnViewController: NSViewController {
     var gap: CGFloat = 10
     for card in cards {
       card.translatesAutoresizingMaskIntoConstraints = false
-      bottomArea.addSubview(card)
-      NSLayoutConstraint.activate([
+      if card.superview !== bottomArea { bottomArea.addSubview(card) }
+      let seat = [
         card.leadingAnchor.constraint(equalTo: bottomArea.leadingAnchor, constant: 12),
         card.trailingAnchor.constraint(equalTo: bottomArea.trailingAnchor, constant: -12),
         card.topAnchor.constraint(equalTo: above, constant: gap),
-      ])
+      ]
+      NSLayoutConstraint.activate(seat)
+      cardPlacement += seat
       above = card.bottomAnchor
       gap = 8
     }
-    queuedCard.topAnchor.constraint(equalTo: above, constant: 8).isActive = true
+    let queued = queuedCard.topAnchor.constraint(equalTo: above, constant: 8)
+    queued.isActive = true
+    cardPlacement.append(queued)
 
     // The keyboard goes to the question, and it goes there once: a card that has just landed
     // claims it, and every rebuild after that only puts back what the card it replaced had. A

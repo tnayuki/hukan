@@ -294,6 +294,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     running.onOpenURL = { [weak self] url in self?.openFromTranscript(url) ?? false }
     running.onOpenFile = { [weak self] url in self?.openPath(url) }
+    // A link in a mod pane opens on its session's desk, by the transcript's rule.
+    files.desk.onModPaneReleasesKeyboard = { [weak self] in self?.focusComposer() }
+    files.desk.onOpenModURL = { [weak self] deskID, url in
+      guard let self, let session = self.workspace.session(id: deskID) else { return }
+      self.openTag(url, of: session)
+    }
     workspace.onSessionsChanged = { [weak self] in self?.reload() }
     rail.onSelectWorktree = { [weak self] worktreeID in
       guard let self else { return }
@@ -1991,6 +1997,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       // Hold the machine awake while any agent is mid-turn (dropped when none are).
       SleepGuard.shared.refresh()
       self.sideSessionStateChanged(session)
+      // A band that shows progress reads whether a turn is running.
+      session.refreshModBandIfWorkingChanged()
     }
     // Held changes must reach the rail even for a session created before any discovery pass wires
     // it (`discoverSessions` wires the rest). Reload is enough — the row's grey rides on `heldByPID`.
@@ -2052,6 +2060,38 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       } else {
         self.files.desk.performBrowserTool(call, for: session, completion: done)
       }
+    }
+    // A mod's panes are tabs on the session's desk, opened and closed as its engine lists them.
+    session.onModPanesChange = { [weak self, weak session] in
+      guard let self, let session else { return }
+      self.files.desk.syncModPanes(for: session)
+    }
+    session.onModInvalidate = { [weak self, weak session] in
+      guard let self, let session else { return }
+      self.files.desk.invalidateModPanes(in: session.id)
+    }
+    // A plugin's own scroll and focus moves land on the pane they name.
+    // The band's land on the column, when it is this session's band on screen.
+    session.onModScroll = { [weak self, weak session] move in
+      guard let self, let session else { return }
+      if move.site == .band {
+        if self.workspace.selectedSession === session { self.running.takeModBand(move) }
+      } else {
+        self.files.desk.modPane(move.site.instance, in: session.id)?.take(move)
+      }
+    }
+    session.onModFocus = { [weak self, weak session] move in
+      guard let self, let session else { return }
+      if move.site == .band {
+        if self.workspace.selectedSession === session { self.running.takeModBand(move) }
+      } else {
+        self.files.desk.modPane(move.site.instance, in: session.id)?.take(move)
+      }
+    }
+    // The band and the status lines sit over the composer, so only the session on screen redraws.
+    session.onModBandChange = { [weak self, weak session] in
+      guard let self, let session, self.workspace.selectedSession === session else { return }
+      self.running.reload()
     }
     session.onNeedsStart = { [weak self] in self?.startSession(session) }
     session.onInstructed = { [weak self] in self?.unarchiveOnInstruction(session) }

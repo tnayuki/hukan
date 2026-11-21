@@ -428,6 +428,15 @@ selection, and its transcript says which session started it. After that they spe
 Claude Code's own messaging between sessions, and a message one sends another is drawn under the
 sender's name, never as something you typed.
 
+**Mods.** A Claude Code plugin that draws a pane (a mod) draws it on the session's desk, as a
+tab beside the conversation: hukan attaches to the session's engine as a surface, the way the
+desktop app and VS Code do, and draws the pane with native controls — boxes, text, buttons, fields,
+pop-up menus, progress bars, links, Markdown and code in the editor's colours. Closing the tab
+closes the pane. Click a pane's background, or the band's, to give it the keyboard: Tab walks
+its controls, Return presses one, a button's key presses it, and Escape returns to the composer. What a mod draws above the prompt, and its status line, show in a card above the
+composer. Install a mod as you would any plugin; one under development loads from
+`CLAUDE_CODE_PLUGIN_DIRS`.
+
 ### Virtual machines
 
 A session can have a macOS or Linux guest of its own, running inside hukan on
