@@ -27,7 +27,8 @@ final class WindowsResolutionTests: XCTestCase {
     try machine.save()
     let pane = MachinePaneViewController(
       restoring: .init(
-        deskID: UUID(), machineID: machine.id.uuidString, name: "Fixture", title: "Windows",
+        tabID: UUID(), deskID: UUID(), machineID: machine.id.uuidString, name: "Fixture",
+        title: "Windows",
         stopped: true))
     XCTAssertTrue(pane.runsOnQEMU)
     var notices = 0

@@ -1339,7 +1339,7 @@ final class Workspace {
     coder.encode(commitTabs.map(\.oid) as NSArray, forKey: Key.commitOids)
 
     coder.encode(
-      machineTabs.map { $0.tabID?.uuidString ?? "" } as NSArray, forKey: Key.machineTabIDs)
+      machineTabs.map(\.tabID.uuidString) as NSArray, forKey: Key.machineTabIDs)
     coder.encode(machineTabs.map(\.deskID.uuidString) as NSArray, forKey: Key.machineDeskIDs)
     coder.encode(machineTabs.map(\.machineID) as NSArray, forKey: Key.machineIDs)
     coder.encode(machineTabs.map(\.name) as NSArray, forKey: Key.machineNames)
@@ -1591,12 +1591,15 @@ final class Workspace {
     let machinesStopped = strings(coder, Key.machinesStopped)
     pendingRestoredMachineTabs = []
     for (index, idString) in machineDesks.enumerated()
-    where index < machineIDs.count && index < machineNames.count && index < machineTitles.count {
-      guard let deskID = UUID(uuidString: idString), !machineIDs[index].isEmpty else { continue }
+    where index < machineIDs.count && index < machineNames.count && index < machineTitles.count
+      && index < machineTabIDs.count
+    {
+      guard let deskID = UUID(uuidString: idString), !machineIDs[index].isEmpty,
+        let tabID = UUID(uuidString: machineTabIDs[index])
+      else { continue }
       pendingRestoredMachineTabs.append(
         MachineTabState(
-          tabID: index < machineTabIDs.count ? UUID(uuidString: machineTabIDs[index]) : nil,
-          deskID: deskID, machineID: machineIDs[index], name: machineNames[index],
+          tabID: tabID, deskID: deskID, machineID: machineIDs[index], name: machineNames[index],
           title: machineTitles[index],
           stopped: index < machinesStopped.count && machinesStopped[index] == "1"))
     }

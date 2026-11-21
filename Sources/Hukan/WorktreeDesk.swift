@@ -671,18 +671,14 @@ final class WorktreeDeskViewController: NSViewController {
   /// machine is saved beside its disk, so the tab only has to find it again.
   func restoreMachineTabs(_ states: [MachineTabState]) {
     loadViewIfNeeded()
-    // A machine already on a desk — adopted from the disk by a reload that ran first — is not
-    // given a second tab: two tabs on one copy is two machines' worth of closing, and closing
-    // either deletes the copy the other is showing. Nor is one whose copy is gone, which would
-    // only be a tab saying so.
-    let shown = Set(machinePanes.compactMap(\.machineID))
+    // Not one whose copy is gone, which would only be a tab saying so. Nothing is on a desk yet to
+    // collide with: a copy is adopted from the disk only once launching, and this, is over.
     for state in states where workspace?.session(id: state.deskID) != nil {
-      guard !shown.contains(state.machineID),
-        UUID(uuidString: state.machineID).flatMap(MachineStore.session(id:)) != nil
+      guard UUID(uuidString: state.machineID).flatMap(MachineStore.session(id:)) != nil
       else { continue }
       adoptedMachineIDs.insert(state.machineID)
       let tab = MachineTab(
-        pane: MachinePaneViewController(restoring: state), id: state.tabID ?? UUID())
+        pane: MachinePaneViewController(restoring: state), id: state.tabID)
       wire(tab, in: state.deskID)
       machineTabsByDesk[state.deskID, default: []].append(tab)
     }
@@ -694,7 +690,10 @@ final class WorktreeDeskViewController: NSViewController {
   /// directories, and a machine is adopted only once per launch so closing its tab's view of it
   /// cannot be undone by the next reload.
   func adoptSessionMachines() {
-    guard let workspace else { return }
+    // Not before the app has finished launching: window restoration, which runs before that,
+    // brings a machine's tab back under the id its agent was given, and a reload that adopted the
+    // copy first gave it a new tab under a new id, which the restored one then deferred to.
+    guard Self.launched, let workspace else { return }
     let shown = Set(machineTabsByDesk.values.flatMap { $0.compactMap(\.pane.machineID) })
     for machine in MachineStore.sessions() {
       let id = machine.id.uuidString
@@ -702,16 +701,20 @@ final class WorktreeDeskViewController: NSViewController {
         !shown.contains(id), !adoptedMachineIDs.contains(id)
       else { continue }
       adoptedMachineIDs.insert(id)
-      let tab = MachineTab(
-        pane: MachinePaneViewController(
-          restoring: MachineTabState(
-            deskID: session, machineID: id, name: id, title: machine.manifest.title)))
+      let state = MachineTabState(
+        tabID: UUID(), deskID: session, machineID: id, name: id, title: machine.manifest.title)
+      let tab = MachineTab(pane: MachinePaneViewController(restoring: state), id: state.tabID)
       wire(tab, in: session)
       machineTabsByDesk[session, default: []].append(tab)
     }
   }
 
   private var adoptedMachineIDs: Set<String> = []
+
+  /// Whether the app has finished launching, and so window restoration with it
+  /// (`adoptSessionMachines`). Set once, by the app delegate, which then reloads every window so
+  /// that its desk takes up the session machines it did not get back.
+  static var launched = false
 
   /// Every commit tab, across every desk, in strip order.
   var restorableCommitTabs: [CommitTabState] {

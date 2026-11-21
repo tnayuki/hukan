@@ -12,7 +12,11 @@ and the reasoning behind it; read the file before changing the area it covers.
   the only way to free a slot was to delete a copy or quit. The agent's tools are the same verbs —
   `vm_create`, `vm_start`, `vm_suspend`, `vm_delete` — and a session may hold several machines. **Deleting its session deletes it too, and closing its repository does not**: a repository
   reopened brings its sessions back to adopt their copies, while a deleted session never returns,
-  so a copy it left would be found only in the Virtual Machines window. **Templates are made with
+  so a copy it left would be found only in the Virtual Machines window. **A machine tab keeps its
+  id across a relaunch**, as a web tab does, through the window's saved state: it is the id the
+  agent's `vm_*` calls name. A copy is adopted from the disk only once launching is over, for a
+  reload that adopted it before restoration gave it a new tab, and the restored one under the
+  agent's id then deferred to it. **Templates are made with
   nothing to answer**, SIP off through Recovery, because a permission prompt with nobody there is a
   wall: a template is for automation and holds nothing worth protecting.
   **Window ▸ Virtual Machines is the store, not a settings window**: every row is a thing on disk,

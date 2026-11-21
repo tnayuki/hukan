@@ -8,7 +8,7 @@ import Virtualization
 struct MachineTabState: Equatable {
   /// The tab's own id, which is what the agent was given, so it names the same tab after a
   /// relaunch.
-  var tabID: UUID?
+  var tabID: UUID
   var deskID: UUID
   var machineID: String
   var name: String

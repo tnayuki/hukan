@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // Window restoration is over; a desk may adopt the session machines it did not get back.
+    WorktreeDeskViewController.launched = true
+    for controller in WorkspaceWindowController.all { controller.reload() }
     // Under XCTest the app is only a host for the unit tests — don't open a window, ask for
     // notification permission, or steal focus. (Xcode sets this env var for the test run.)
     if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
