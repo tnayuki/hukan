@@ -237,6 +237,12 @@ and the reasoning behind it; read the file before changing the area it covers.
   still has them mapped, and a guest touching a page taken out from under it stopped the whole
   machine with an internal Virtualization error — and what the guest was waiting on is answered
   with an error. The desktop stops drawing until the guest restarts, which brings a new renderer.
+  **A guest's semaphore export is answered with one fence per device.** There is no sync fd on
+  macOS, so the patch answers an export with a fence signalled from the start; it made a new one
+  per export and never destroyed it, and each is a `MTLSharedEvent` of KosmicKrisp's, of which a
+  process gets 65,510. After that every new one is nil and every wait fails at once, so the renderer
+  aborted on a `VK_TIMEOUT` (or crashed in a wait) after some twenty minutes of drawing. One fence a
+  device, never reset, passes any number of waits and goes with its device.
   **Such a machine suspends like any other.** gfxstream snapshots its Vulkan state, captured from
   the renderer's start, beside the machine's own state; the device saves which blobs were mapped
   where, and a restored machine resumes only once the new renderer has handed each of them over

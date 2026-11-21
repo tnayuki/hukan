@@ -153,7 +153,7 @@ index 71eccae..5e433ed 100644
          return std::nullopt;
      }
 diff --git a/host/vulkan/vk_decoder_global_state.cpp b/host/vulkan/vk_decoder_global_state.cpp
-index 0ac4480..4da9e16 100644
+index 0ac4480..5a16efc 100644
 --- a/host/vulkan/vk_decoder_global_state.cpp
 +++ b/host/vulkan/vk_decoder_global_state.cpp
 @@ -502,6 +502,25 @@ class VkDecoderGlobalState::Impl {
@@ -230,7 +230,18 @@ index 0ac4480..4da9e16 100644
  
          if (mLogging) {
              GFXSTREAM_INFO("%s: init vulkan dispatch from device (end)", __func__);
-@@ -3496,7 +3538,7 @@ class VkDecoderGlobalState::Impl {
+@@ -3452,6 +3494,10 @@ class VkDecoderGlobalState::Impl {
+         if (m_vkEmulation) {
+             m_vkEmulation->getDeviceLostHelper().onDeviceDestroyed(device);
+         }
++#ifdef __APPLE__
++        // Its shared export fence goes with its other fences below.
++        forgetSemaphoreSyncFence(device);
++#endif
+ 
+         deviceInfo.decompPipelines->clear();
+ 
+@@ -3496,7 +3542,7 @@ class VkDecoderGlobalState::Impl {
          // Run the underlying API call.
          {
              AutoLock lock(*graphicsDriverLock());
@@ -239,7 +250,7 @@ index 0ac4480..4da9e16 100644
          }
  
          GFXSTREAM_INFO("Destroyed VkDevice:%p", device);
-@@ -3719,6 +3761,21 @@ class VkDecoderGlobalState::Impl {
+@@ -3719,6 +3765,21 @@ class VkDecoderGlobalState::Impl {
          auto device = unbox_VkDevice(boxed_device);
          auto vk = dispatch_VkDevice(boxed_device);
  
@@ -261,7 +272,7 @@ index 0ac4480..4da9e16 100644
          if (pCreateInfo->format == VK_FORMAT_UNDEFINED) {
              // VUID-VkImageCreateInfo-pNext-01975:
              // If the pNext chain does not include a VkExternalFormatANDROID structure, or does
-@@ -3805,7 +3862,7 @@ class VkDecoderGlobalState::Impl {
+@@ -3805,7 +3866,7 @@ class VkDecoderGlobalState::Impl {
              cmpInfo->createCompressedMipmapImages(vk, *pCreateInfo);
  
              if (deviceInfo->useAstcCpuDecompression && cmpInfo->isAstc()) {
@@ -270,7 +281,7 @@ index 0ac4480..4da9e16 100644
              }
          }
  
-@@ -5108,11 +5165,68 @@ class VkDecoderGlobalState::Impl {
+@@ -5108,11 +5169,99 @@ class VkDecoderGlobalState::Impl {
          return result;
      }
  
@@ -280,6 +291,23 @@ index 0ac4480..4da9e16 100644
 +    // syncId (GFXSTREAM_CREATE_EXPORT_SYNC_VK) waits on that fence instead of on an OS handle.
 +    std::mutex mSemaphoreSyncMutex;
 +    std::unordered_map<uint64_t, uint64_t> mSemaphoreSyncFences;  // syncId -> boxed VkFence
++    // One such fence per device, made once and handed out for every export: it is signalled from
++    // the start and never reset, so any number of waits on it pass. A fence made per export was
++    // never destroyed, and each is a MTLSharedEvent of KosmicKrisp's — a process gets 65,510 of
++    // them, after which every new one is nil and every wait on one fails at once (VK_TIMEOUT), the
++    // renderer's own included: it aborted after some twenty minutes of drawing.
++    std::unordered_map<VkDevice, uint64_t> mSemaphoreSyncDeviceFences;  // unboxed -> boxed VkFence
++
++    void forgetSemaphoreSyncFence(VkDevice device) {
++        std::lock_guard<std::mutex> lock(mSemaphoreSyncMutex);
++        auto it = mSemaphoreSyncDeviceFences.find(device);
++        if (it == mSemaphoreSyncDeviceFences.end()) return;
++        const uint64_t fence = it->second;
++        mSemaphoreSyncDeviceFences.erase(it);
++        for (auto syncIt = mSemaphoreSyncFences.begin(); syncIt != mSemaphoreSyncFences.end();) {
++            syncIt = syncIt->second == fence ? mSemaphoreSyncFences.erase(syncIt) : ++syncIt;
++        }
++    }
 +
 +    VkResult signalFenceForSemaphore(gfxstream::base::BumpPool* pool, VkDevice boxed_device,
 +                                     VkSemaphore semaphore, uint64_t syncId) {
@@ -306,6 +334,16 @@ index 0ac4480..4da9e16 100644
 +            std::lock_guard<std::mutex> qlock(*queueMutex);
 +            vk->vkQueueWaitIdle(queue);
 +        }
++        // Made outside mSemaphoreSyncMutex: making a fence takes mMutex, which a device's
++        // destruction holds while it takes mSemaphoreSyncMutex (forgetSemaphoreSyncFence).
++        {
++            std::lock_guard<std::mutex> lock(mSemaphoreSyncMutex);
++            auto made = mSemaphoreSyncDeviceFences.find(device);
++            if (made != mSemaphoreSyncDeviceFences.end()) {
++                mSemaphoreSyncFences[syncId] = made->second;
++                return VK_SUCCESS;
++            }
++        }
 +        const VkFenceCreateInfo fci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr,
 +                                       VK_FENCE_CREATE_SIGNALED_BIT};
 +        VkFence boxedFence = VK_NULL_HANDLE;
@@ -313,7 +351,11 @@ index 0ac4480..4da9e16 100644
 +                                      nullptr, &boxedFence);
 +        if (r != VK_SUCCESS) return r;
 +        std::lock_guard<std::mutex> lock(mSemaphoreSyncMutex);
-+        mSemaphoreSyncFences[syncId] = reinterpret_cast<uint64_t>(boxedFence);
++        // Should two exports race to make it, the first made is the one kept; the other is a
++        // fence of the device like any, and goes with it.
++        auto made =
++            mSemaphoreSyncDeviceFences.emplace(device, reinterpret_cast<uint64_t>(boxedFence));
++        mSemaphoreSyncFences[syncId] = made.first->second;
 +        return VK_SUCCESS;
 +    }
 +
@@ -339,7 +381,7 @@ index 0ac4480..4da9e16 100644
          }
  
          auto vk = dispatch_VkDevice(boxed_device);
-@@ -12466,7 +12580,7 @@ class VkDecoderGlobalState::Impl {
+@@ -12466,7 +12615,7 @@ class VkDecoderGlobalState::Impl {
              }
          }
  
@@ -348,7 +390,7 @@ index 0ac4480..4da9e16 100644
          GFXSTREAM_INFO("Destroyed VkInstance:%p for application:'%s' engine:'%s'.", instance,
                         instanceInfo.applicationName.c_str(), instanceInfo.engineName.c_str());
  
-@@ -13241,6 +13355,12 @@ VkResult VkDecoderGlobalState::on_vkGetSemaphoreFdKHR(gfxstream::base::BumpPool*
+@@ -13241,6 +13390,12 @@ VkResult VkDecoderGlobalState::on_vkGetSemaphoreFdKHR(gfxstream::base::BumpPool*
      return mImpl->on_vkGetSemaphoreFdKHR(pool, apiCallHandle, device, pGetFdInfo, pFd);
  }
  
