@@ -229,7 +229,9 @@ and the reasoning behind it; read the file before changing the area it covers.
   hunk). The device in this process only forwards requests, over a socket; guest RAM goes to the
   renderer once, as a Mach memory entry handed over through a bootstrap name only it is told (the
   rendezvous Chromium uses). **The guest's screen is read back into two IOSurfaces**, taken in
-  turn, which the tab's layer shows. **VZ's own screen stays, for input only**:
+  turn, which the tab's layer shows; a device reset takes the layer down, frame and cursor, until
+  the new renderer's first frame, and VZ's screen beneath shows meanwhile — the old driver's last
+  frame stayed up through the reboot otherwise. **VZ's own screen stays, for input and for a reset**:
   `VZVirtualMachineView` hands the keyboard and pointer to a guest only through a screen of VZ's,
   so it is kept, left alone by the guest — mutter is told by udev tags at each boot to take the
   GPU's card as its primary and ignore VZ's — and the GPU follows its size, which keeps fit, fixed

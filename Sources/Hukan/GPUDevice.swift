@@ -111,6 +111,9 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
   var onFrame: ((IOSurfaceRef) -> Void)?
   var onCursorImage: ((CGImage?, Int, Int) -> Void)?
   var onCursorMove: ((Int, Int) -> Void)?
+  /// Told on the main queue when the guest resets the device: what was on the screen was the old
+  /// driver's, and the next frame is the new renderer's.
+  var onReset: (() -> Void)?
   /// The renderer's IOSurfaces by id; touched on the main queue only.
   private var surfaces: [IOSurfaceID: IOSurfaceRef] = [:]
 
@@ -588,6 +591,7 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
     GPULink.note("GPU \(identity): reset")
     // A reboot resets the device; what the old driver made goes with its renderer.
     stopRenderer()
+    DispatchQueue.main.async { [weak self] in self?.onReset?() }
   }
 
   func customVirtioDeviceWillStop(_ device: VZCustomVirtioDevice) {
@@ -709,6 +713,17 @@ final class GPUScreenView: NSView {
     gpu.onCursorMove = { [weak self] x, y in
       self?.cursorPosition = (x, y)
       self?.placeCursor()
+    }
+    // A reset: the old driver's last frame and cursor go, and VZ's screen beneath shows until the
+    // new renderer's first frame — the firmware's, and the boot's until the guest draws on the GPU.
+    gpu.onReset = { [weak self] in
+      guard let self else { return }
+      self.hasFrame = false
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      self.screen.contents = nil
+      self.cursor.contents = nil
+      CATransaction.commit()
     }
   }
 
