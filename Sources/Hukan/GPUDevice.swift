@@ -82,6 +82,8 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
     var request: Data
   }
   private var elements: [UInt64: Pending] = [:]
+  /// The capset requests this device sent a new renderer itself (`GPUCapsets.probes`), by tag.
+  private var capsetProbes: [UInt64: Data] = [:]
   private var nextTag: UInt64 = 1
 
   /// A blob in the guest: where in the region, how much, and this process's mapping of its pages.
@@ -205,6 +207,14 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
       self?.stopRenderer(leavingGuestPages: true)
     }
 
+    // Its capsets asked for at once, so that they are known before the guest's kernel asks.
+    for probe in GPUCapsets.probes {
+      let tag = nextTag
+      nextTag += 1
+      capsetProbes[tag] = probe
+      writer?.send(GPULink.encode(.request, value: 0, tag: tag, payload: probe))
+    }
+
     let source = DispatchSource.makeReadSource(fileDescriptor: pair[0], queue: queue)
     source.setEventHandler { [weak self] in
       guard let self, self.renderer == pid else { return }
@@ -296,6 +306,7 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
       for pending in elements.values { pending.element.returnToQueue() }
     }
     elements = [:]
+    capsetProbes = [:]
   }
 
   /// The machine has stopped for good.
@@ -323,7 +334,13 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
   private func handle(_ frame: GPULink.Frame) -> GPULink.Frame? {
     switch frame.kind {
     case .response:
-      guard let element = elements.removeValue(forKey: frame.tag)?.element else { return nil }
+      if let probe = capsetProbes.removeValue(forKey: frame.tag) {
+        GPUCapsets.learn(frame.payload, for: probe)
+        return nil
+      }
+      guard let pending = elements.removeValue(forKey: frame.tag) else { return nil }
+      GPUCapsets.learn(frame.payload, for: pending.request)
+      let element = pending.element
       answer(element, with: frame.payload)
     case .frame:
       let id = frame.value
@@ -588,6 +605,13 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
         element.returnToQueue()
         continue
       }
+      // A capset the guest's kernel asks for is answered here once known: the kernel waits five
+      // seconds for it and then boots on without the GPU, and a renderer, started again at each
+      // of the boot's resets, took up to twelve.
+      if let known = GPUCapsets.answer(to: request) {
+        answer(element, with: known)
+        continue
+      }
       guard socket >= 0 else {
         // No renderer to ask: a command is answered with an error rather than left unanswered,
         // which a guest waits on for ever — its boot stopped there when a renderer could not start.
@@ -604,7 +628,7 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
       }
       let tag = nextTag
       nextTag += 1
-      elements[tag] = Pending(element: element, request: request.prefix(24))
+      elements[tag] = Pending(element: element, request: request.prefix(32))
       writer?.send(
         GPULink.encode(.request, value: UInt32(queue.queueIndex), tag: tag, payload: request))
     }
@@ -719,5 +743,70 @@ final class GPUScreenView: NSView {
       x: origin.x + left, y: origin.y + h * scale - top - size.height, width: size.width,
       height: size.height)
     CATransaction.commit()
+  }
+}
+
+/// The GPU's capsets, as its renderer answers them: the same for every renderer this process starts,
+/// so known once and answered by the device itself. A guest's kernel asks for them as virtio_gpu
+/// loads and waits five seconds; a renderer started again at each of a boot's device resets took up
+/// to twelve to start, and a guest it was late for booted on llvmpipe. Asked for by the device as
+/// each renderer starts (`probes`), and learnt from the answers to the guest's own requests too. In
+/// memory only: the first renderer a boot starts, at the firmware's DRIVER_OK, has answered them
+/// before the kernel's own reset and question, and a file would only have had to be told apart per
+/// build and per Mac.
+enum GPUCapsets {
+  private static let lock = NSLock()
+  private static var known: [String: Data] = [:]
+
+  /// GET_CAPSET_INFO for capset index 0 and GET_CAPSET for gfxstream's Vulkan at version 0, the
+  /// two a guest asks for.
+  static let probes: [Data] = {
+    var info = Data()
+    for value in [GPURenderer.Command.getCapsetInfo.rawValue, 0, 0, 0, 0, 0, 0, 0] as [UInt32] {
+      info.put32(value)
+    }
+    var capset = Data()
+    for value in [
+      GPURenderer.Command.getCapset.rawValue, 0, 0, 0, 0, 0, GPURenderer.capsetGfxstreamVulkan, 0,
+    ] as [UInt32] {
+      capset.put32(value)
+    }
+    return [info, capset]
+  }()
+
+  /// What a capset request is answered with, once known; nil for any other request, and for a
+  /// fenced one, whose answer the renderer's timeline orders.
+  static func answer(to request: Data) -> Data? {
+    guard let key = key(for: request), request.u32(4) & GPURenderer.flagFence == 0 else {
+      return nil
+    }
+    lock.lock()
+    defer { lock.unlock() }
+    guard let body = known[key] else { return nil }
+    var response = Data()
+    response.put32(key.hasPrefix("info") ? GPURenderer.okCapsetInfo : GPURenderer.okCapset)
+    response.put32(0)
+    response.append(request[request.startIndex + 8..<request.startIndex + 24])
+    response.append(body)
+    return response
+  }
+
+  static func learn(_ response: Data, for request: Data) {
+    guard let key = key(for: request), response.count > 24 else { return }
+    let status = response.u32(0)
+    guard status == GPURenderer.okCapsetInfo || status == GPURenderer.okCapset else { return }
+    let body = response.subdata(in: response.startIndex + 24..<response.endIndex)
+    lock.lock()
+    known[key] = body
+    lock.unlock()
+  }
+
+  private static func key(for request: Data) -> String? {
+    guard request.count >= 32 else { return nil }
+    switch GPURenderer.Command(rawValue: request.u32(0)) {
+    case .getCapsetInfo: return "info \(request.u32(24))"
+    case .getCapset: return "capset \(request.u32(24)) \(request.u32(28))"
+    default: return nil
+    }
   }
 }

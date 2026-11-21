@@ -233,6 +233,12 @@ and the reasoning behind it; read the file before changing the area it covers.
   ends: a full socket must leave the queue free to read replies and handle a reset or stop. A
   reset replaces the renderer; releasing the VM owner also shuts its GPU down permanently, so a
   late DRIVER_OK cannot start it again. The renderer watches its parent's exit on its own.
+  **The device answers the guest's capset questions itself** once it knows them: the guest's
+  kernel waits five seconds for them and then boots on llvmpipe, and a boot resets the device
+  several times, each a new renderer that took two to twelve seconds to start. The device asks
+  each renderer for them as it starts and keeps them in memory, which a boot's first renderer, at
+  the firmware's DRIVER_OK, has answered before the kernel asks; a file would have had to be told
+  apart per build and per Mac.
   **A renderer that dies leaves the machine running**: its blobs stay in the region — the guest
   still has them mapped, and a guest touching a page taken out from under it stopped the whole
   machine with an internal Virtualization error — and what the guest was waiting on is answered
