@@ -10,9 +10,12 @@ and the reasoning behind it; read the file before changing the area it covers.
   it. **Suspend on the tab's right-click is the same save by hand**, Start in its place once the
   machine is stopped, because macOS runs two macOS guests at once, across every app, and without it
   the only way to free a slot was to delete a copy or quit. The agent's tools are the same verbs —
-  `vm_create`, `vm_start`, `vm_suspend`, `vm_delete` — and a session may hold several machines. **Deleting its session deletes it too, and closing its repository does not**: a repository
-  reopened brings its sessions back to adopt their copies, while a deleted session never returns,
-  so a copy it left would be found only in the Virtual Machines window. **A machine tab keeps its
+  `vm_create`, `vm_start`, `vm_suspend`, `vm_delete` — and a session may hold several machines. **Deleting its session deletes it too, and so does closing its repository or its window**,
+  each asking first — the window apart from its unsaved-edit prompt, which a quit asks too while
+  saving the machines. Keeping the copy for the repository's return was the earlier rule, since
+  a reopened repository brings its sessions back to adopt their copies; dropped because a copy
+  saved and left behind is out of sight until then, and a copy of tens of gigabytes is forgotten
+  that way. A window closed without being asked — never by the person — saves them instead. **A machine tab keeps its
   id across a relaunch**, as a web tab does, through the window's saved state: it is the id the
   agent's `vm_*` calls name. A copy is adopted from the disk only once launching is over, for a
   reload that adopted it before restoration gave it a new tab, and the restored one under the

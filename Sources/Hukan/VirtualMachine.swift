@@ -1258,13 +1258,14 @@ final class MachinePaneViewController: NSViewController {
   }
 
   /// The tab was closed and the deletion confirmed: the machine goes, disk and all.
-  func deleteMachine() {
+  func deleteMachine(completion: @escaping () -> Void = {}) {
     let machine = machineID.flatMap(UUID.init(uuidString:)).flatMap(MachineStore.session(id:))
     screen.virtualMachine = nil
     detachGPUScreen()
     let finish = { [weak self] in
       self?.runner = nil
       if let machine { try? MachineStore.delete(machine) }
+      completion()
     }
     qemuScreen.disconnect()
     if let qemu {
@@ -1278,6 +1279,34 @@ final class MachinePaneViewController: NSViewController {
       finish()
     }
   }
+
+  /// The tab is gone and its machine with it — saved, or deleted. The pane is what finishes either:
+  /// the runner doing the save or the stop is its, and a QEMU runner keeps the completion it is to
+  /// call rather than the pane. So it is held here until that is done, since a pane let go of
+  /// mid-save left the machine unsaved, and one let go of mid-delete left its copy on disk.
+  func retire(deleting: Bool) {
+    Self.retiring.append(self)
+    let done = { [weak self] in
+      Self.retiring.removeAll { $0 === self }
+      guard Self.retiring.isEmpty else { return }
+      let waiting = Self.waitingForRetirements
+      Self.waitingForRetirements = []
+      for completion in waiting { completion() }
+    }
+    if deleting { deleteMachine(completion: done) } else { suspendMachine(completion: done) }
+  }
+
+  /// Called once no pane is still saving or deleting the machine its tab let go of — a quit waits
+  /// for these as well as for the machines still on a desk, since those are not on any desk.
+  static func afterRetirements(_ completion: @escaping () -> Void) {
+    guard !retiring.isEmpty else { return completion() }
+    waitingForRetirements.append(completion)
+  }
+
+  static var isRetiring: Bool { !retiring.isEmpty }
+
+  private static var retiring: [MachinePaneViewController] = []
+  private static var waitingForRetirements: [() -> Void] = []
 
   @objc private func actionPressed() {
     start()

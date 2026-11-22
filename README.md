@@ -441,7 +441,7 @@ The tab's `+` copies a template for that session (an APFS clone, so it costs onl
 with the session's worktree as `/Volumes/My Shared Files/worktree` — and the next one there when the
 session moves to another, the machine running or not. The machine is
 saved when hukan quits and resumes after a relaunch; closing its tab deletes it, after asking, and
-so does deleting its session — closing the repository keeps it for when it is opened again. Its
+so do deleting its session, closing its repository and closing the window. Its
 right-click menu sets the resolution — following the tab, or held at a size the tab scales — and
 suspends it: saved where it was and stopped, which frees one of the two macOS guests a Mac runs at
 once without deleting the copy. A stopped machine's menu offers Start in its place. The same menu

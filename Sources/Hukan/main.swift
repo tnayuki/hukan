@@ -85,14 +85,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       return .terminateCancel
     }
     // The machines on the desks run in this process, so they are saved before it goes — a machine
-    // not saved by then is a power cut — and a relaunch resumes each where it was. Waited for,
-    // and done here rather than as the windows close: closing lets go of the tabs that know
-    // which machines they are.
+    // not saved by then is a power cut — and a relaunch resumes each where it was. Waited for, and
+    // so is a tab already let go of that is still saving or deleting its machine, on no desk.
     let machines = WorkspaceWindowController.all.flatMap(\.deskForScripting.machinePanes)
       .filter(\.isRunning)
-    guard !machines.isEmpty else { return .terminateNow }
+    guard !machines.isEmpty || MachinePaneViewController.isRetiring else { return .terminateNow }
     MachinePaneViewController.suspendAll(machines) {
-      NSApp.reply(toApplicationShouldTerminate: true)
+      MachinePaneViewController.afterRetirements {
+        NSApp.reply(toApplicationShouldTerminate: true)
+      }
     }
     return .terminateLater
   }

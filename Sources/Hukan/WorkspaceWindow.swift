@@ -305,11 +305,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     rail.onAdoptRepository = { [weak self] source, id, destination in
       self?.adoptRepository(id, from: source, at: destination) ?? false
     }
-    rail.onCloseRepository = { [weak self] repositoryID in
-      guard let self, self.confirmClosingEdits(inRepository: repositoryID) else { return }
-      self.workspace.closeRepository(repositoryID)
-      self.reload()
-    }
+    rail.onCloseRepository = { [weak self] repositoryID in self?.closeRepository(id: repositoryID) }
     // The workspace has already been rearranged by the drop; reload redraws the rail and records
     // the new order, which rides the worktree paths it was already saving.
     rail.onReorderRepositories = { [weak self] in self?.reload() }
@@ -1549,7 +1545,34 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
   /// tab gets. A Cancel keeps the window — and the app's own quit asks every window this same
   /// question first (see the delegate).
   func windowShouldClose(_ sender: NSWindow) -> Bool {
-    confirmClosingWindow()
+    guard confirmClosingWindow(), confirmDeletingMachines() else { return false }
+    deletesMachinesOnClose = true
+    return true
+  }
+
+  /// Set once the person closing the window has agreed to its machines going with it. A window
+  /// closed some other way — never by the person, so never asked — saves them instead.
+  private var deletesMachinesOnClose = false
+
+  /// Closing the window is closing every session's desk for good, the machines included: one saved
+  /// and left behind is out of sight until its repository is opened again, which is how a copy of
+  /// tens of gigabytes is forgotten. Not part of `confirmClosingWindow`, which a quit asks too —
+  /// a quit saves the machines, and a relaunch resumes them.
+  private func confirmDeletingMachines() -> Bool {
+    let machines = workspace.sessions.reduce(0) { $0 + MachineStore.sessions(of: $1.id).count }
+    guard machines > 0 else { return true }
+    let alert = NSAlert()
+    alert.messageText =
+      machines == 1
+      ? "Delete the virtual machine in this window?"
+      : "Delete the \(machines) virtual machines in this window?"
+    alert.informativeText =
+      (machines == 1 ? "It is" : "They are")
+      + " stopped and deleted from this Mac, with everything done inside. The templates are not"
+      + " touched."
+    alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+    alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+    return alert.runModal() == .alertFirstButtonReturn
   }
 
   /// The unsaved-edit prompt for everything this window holds. Its own method so the app's quit
@@ -1586,6 +1609,13 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
 
   func windowWillClose(_ notification: Notification) {
     WorkspaceWindowController.all.removeAll { $0 === self }
+    // While the tabs that run the machines are still on their desks: the teardown below lets go
+    // of the sessions, and a desk with no session forgets its tabs.
+    if deletesMachinesOnClose {
+      for session in workspace.sessions { files.desk.deleteMachines(ofSession: session.id) }
+    } else {
+      files.desk.suspendMachines()
+    }
     // The window is the only way to anything running in it, so closing it has to take the
     // processes with it: the engines and the terminals' shells are hukan's own children, and the
     // app outlives its last window (`applicationShouldTerminateAfterLastWindowClosed`), so
@@ -2178,26 +2208,49 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     guard let worktreeID = workspace.selectedWorktreeID,
       let worktree = workspace.worktree(id: worktreeID)
     else { return }
-    let repository = worktree.repositoryID
-    let name = worktree.repositoryName
+    closeRepository(id: worktree.repositoryID)
+  }
 
-    let running = workspace.worktrees
+  /// The File menu's close and the rail's, one path: what it stops, what it deletes and what
+  /// it leaves unsaved are asked the same way from either.
+  private func closeRepository(id repository: String) {
+    guard
+      let name = workspace.worktrees.first(where: { $0.repositoryID == repository })?
+        .repositoryName
+    else { return }
+    let sessions = workspace.worktrees
       .filter { $0.repositoryID == repository }
       .flatMap { workspace.sessions(inWorktree: $0.id) }
-      .filter(\.isRunning)
-    if !running.isEmpty {
+    let running = sessions.filter(\.isRunning).count
+    // The machines go with an explicit close: one saved and left behind is out of sight until the
+    // repository is opened again, which is how a copy of tens of gigabytes is forgotten.
+    let machines = sessions.reduce(0) { $0 + MachineStore.sessions(of: $1.id).count }
+    if running > 0 || machines > 0 {
       let alert = NSAlert()
       alert.messageText = "Close \(name)?"
-      alert.informativeText =
-        running.count == 1
-        ? "One agent is still running and will be stopped. Nothing on disk is removed."
-        : "\(running.count) agents are still running and will be stopped. Nothing on disk is removed."
-      alert.addButton(withTitle: "Close")
-      alert.addButton(withTitle: "Cancel")
+      let stopped =
+        switch running {
+        case 0: ""
+        case 1: "One agent is still running and will be stopped. "
+        default: "\(running) agents are still running and will be stopped. "
+        }
+      let deleted =
+        switch machines {
+        case 0: "Nothing on disk is removed."
+        case 1: "Its virtual machine is deleted from this Mac, with everything done inside it."
+        default:
+          "Its \(machines) virtual machines are deleted from this Mac, with everything done"
+            + " inside them."
+        }
+      alert.informativeText = stopped + deleted
+      alert.addButton(withTitle: "Close").hasDestructiveAction = machines > 0
+      alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
       guard alert.runModal() == .alertFirstButtonReturn else { return }
     }
     guard confirmClosingEdits(inRepository: repository) else { return }
 
+    // Before the close, while the tabs that run them are still on their desks.
+    for session in sessions { files.desk.deleteMachines(ofSession: session.id) }
     workspace.closeRepository(repository)
     reload()
   }

@@ -1180,11 +1180,23 @@ final class WorktreeDeskViewController: NSViewController {
   /// would only ever be found in the Virtual Machines window. A copy with no tab yet (one the
   /// saved state did not bring back and no reload has adopted) is not running, and goes at once.
   func deleteMachines(ofSession session: UUID) {
-    for tab in machineTabsByDesk[session] ?? [] { removeMachineTab(tab.id, in: session) }
+    // Read before the tabs go: a copy that had one is deleted by its pane once it has stopped, and
+    // counted after, it read as a copy with no tab and went from under the running guest.
     let shown = Set(machinePanes.compactMap(\.machineID))
+    for tab in machineTabsByDesk[session] ?? [] { removeMachineTab(tab.id, in: session) }
     for machine in MachineStore.sessions(of: session) where !shown.contains(machine.id.uuidString) {
       try? MachineStore.delete(machine)
     }
+  }
+
+  /// The window is closing without having asked to delete its machines — a close the person did
+  /// not make. They are saved, as a quit saves them, and come back when their repository does.
+  func suspendMachines() {
+    for tab in machineTabsByDesk.values.flatMap({ $0 }) {
+      tab.pane.retire(deleting: false)
+      tab.pane.removeFromParent()
+    }
+    machineTabsByDesk = [:]
   }
 
   /// The machine tab goes and its machine is deleted — asked already, by an alert or a card.
@@ -1195,7 +1207,7 @@ final class WorktreeDeskViewController: NSViewController {
     // Its directory goes a moment later, after the machine stops; until then the next reload
     // must not take it for a machine whose tab went missing.
     if let machineID = pane.machineID { adoptedMachineIDs.insert(machineID) }
-    pane.deleteMachine()
+    pane.retire(deleting: true)
     pane.removeFromParent()
     tabs.remove(at: index)
     machineTabsByDesk[deskID] = tabs
@@ -2476,7 +2488,7 @@ final class WorktreeDeskViewController: NSViewController {
     // is, and has already taken them (`deleteMachines(ofSession:)`) before this runs.
     for key in machineTabsByDesk.keys where !live.contains(key) {
       for tab in machineTabsByDesk[key] ?? [] {
-        tab.pane.suspendMachine()
+        tab.pane.retire(deleting: false)
         tab.pane.removeFromParent()
       }
       machineTabsByDesk[key] = nil
