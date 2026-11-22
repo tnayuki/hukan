@@ -554,11 +554,13 @@ as `<https://…>`. The rail's filter finds a session by
 its tags as well as its title. They are the window's, kept with it across a relaunch, and nothing
 outside hukan knows of them.
 
-The same right-click also names a session two ways, for handing to something outside the window:
-*Copy Transcript Path* gives the jsonl Claude Code is writing, and *Copy Session ID* the id it is
-writing under. Both answer for a session another process is holding, and for one that has yet to
-write anything — reading a row is not acting on it, and a conversation with no file yet still has
-a name waiting for it.
+The same right-click also names a session three ways, for handing to something outside the window:
+*Copy Transcript Path* gives the jsonl Claude Code is writing, *Copy Session ID* the id it is
+writing under, and *Copy Agent Name* the name another Claude session sends it a message by. All
+three answer for a session another process is holding — reading a row is not acting on it. The
+path and the id answer for one that has yet to write anything too, since a conversation with no
+file yet still has a name waiting for it; the agent name belongs to the running engine, so it is
+there only while one is up, and it changes when the engine restarts.
 
 ---
 

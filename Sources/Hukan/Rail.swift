@@ -1950,8 +1950,8 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       }
       menu.addItem(.separator())
     }
-    // The ways to name a session: the tags it is labelled with, the file to read it out of, and
-    // the id to resume it by. They sit between the lifecycle items and the Archive/Delete pair, which is where the files
+    // The ways to name a session: the tags it is labelled with, the file to read it out of, the
+    // id to resume it by, and the name other sessions message it by. They sit between the lifecycle items and the Archive/Delete pair, which is where the files
     // panel puts Copy Path — after what merely acts on the thing, before what destroys it — and
     // nothing may come between Archive and Delete, since the pair is read as one choice.
     if !sessions.isEmpty {
@@ -1982,6 +1982,17 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
       copy(
         count == 1 ? "Copy Session ID" : "Copy \(count) Session IDs",
         #selector(copyClickedSessionIDs(_:)))
+      // Counted by what will be copied rather than by the rows: only a session whose engine is up
+      // has a name, and a batch of five with two running copies two. Off when none has one —
+      // starting an engine to read a name off it would be acting where this item only reads.
+      let names = agentNames(of: sessions).count
+      copy(
+        names <= 1 ? "Copy Agent Name" : "Copy \(names) Agent Names",
+        #selector(copyClickedAgentNames(_:)))
+      if names == 0, let item = menu.items.last {
+        item.action = nil
+        item.toolTip = "A session has a name only while it is running."
+      }
       menu.addItem(.separator())
     }
     if !clicked.isEmpty {
@@ -2134,6 +2145,30 @@ final class SessionRailViewController: NSViewController, NSOutlineViewDataSource
   @objc private func copyClickedSessionIDs(_ sender: NSMenuItem) {
     guard let sessions = sender.representedObject as? [AgentSession] else { return }
     put(sessionIDs(of: sessions))
+  }
+
+  @objc private func copyClickedAgentNames(_ sender: NSMenuItem) {
+    guard let sessions = sender.representedObject as? [AgentSession] else { return }
+    // Read again rather than taken from the menu: the name is the process's, and a restart while
+    // the menu was open draws a new one. An engine that exited in that time leaves nothing to
+    // copy, and the beep is what keeps the pasteboard's older contents from passing for its name.
+    let names = agentNames(of: sessions)
+    guard !names.isEmpty else { return NSSound.beep() }
+    put(names)
+  }
+
+  /// The names other Claude sessions address these by — what `ListAgents` lists and `SendMessage`
+  /// takes — read off Claude Code's registry at the moment they are asked for, since the name is
+  /// the running process's and a restart draws a new one. A session with no engine up has none
+  /// and drops out; one held by another process is named like the rest, naming being a read.
+  ///
+  /// Not the session id: `SendMessage` reads a bare id as a name and matches nothing, so the id
+  /// cannot stand in for this, nor this for the id, which outlives every process.
+  func agentNames(
+    of sessions: [AgentSession], registry: URL = ClaudeSessionStore.registryDirectory
+  ) -> [String] {
+    let owners = ClaudeSessionStore.liveProcessOwners(in: registry)
+    return sessions.compactMap { owners[$0.id]?.name }
   }
 
   /// Where each session's conversation is written, absolute and in that order.

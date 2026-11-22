@@ -2,8 +2,8 @@ import XCTest
 
 @testable import Hukan
 
-/// What the rail's two copy items put on the pasteboard. The menu itself is built from
-/// `clickedRow`, which only exists during a click, so what is asserted here is the pair of
+/// What the rail's copy items put on the pasteboard. The menu itself is built from
+/// `clickedRow`, which only exists during a click, so what is asserted here is the
 /// derivations behind the items — which is where the whole of the decision lives anyway.
 final class RailCopyTests: XCTestCase {
   /// A rail over one repository with `count` sessions in its main worktree, and those sessions.
@@ -72,5 +72,30 @@ final class RailCopyTests: XCTestCase {
     let id = try XCTUnwrap(rail.sessionIDs(of: sessions).first)
     XCTAssertEqual(id, id.lowercased())
     XCTAssertEqual(UUID(uuidString: id), sessions[0].id)
+  }
+
+  /// The name is read off Claude Code's registry, and only a session with a live record has one:
+  /// a stopped session drops out rather than answering with a name it no longer goes by, and a
+  /// record with no name (an older CLI's) is the same as none.
+  func testAnAgentNameIsTheRunningProcesssOwn() throws {
+    let (rail, sessions) = rail(sessions: 3)
+    let registry = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("hukan-registry-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: registry, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: registry) }
+
+    // This test's own process stands in for the engine: the read only asks that the pid be alive.
+    let pid = Int(getpid())
+    let records: [[String: Any]] = [
+      ["pid": pid, "sessionId": sessions[0].id.uuidString.lowercased(), "name": "hukan-81"],
+      ["pid": pid, "sessionId": sessions[2].id.uuidString.lowercased()],
+    ]
+    for (index, record) in records.enumerated() {
+      try JSONSerialization.data(withJSONObject: record).write(
+        to: registry.appendingPathComponent("\(pid + index).json"))
+    }
+
+    XCTAssertEqual(rail.agentNames(of: sessions, registry: registry), ["hukan-81"])
+    XCTAssertEqual(rail.agentNames(of: [sessions[1]], registry: registry), [])
   }
 }

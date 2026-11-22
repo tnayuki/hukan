@@ -255,18 +255,25 @@ and the reasoning behind it; read the file before changing the area it covers.
   its row instead. One session at a time — replacing five lists with one is a different act from
   labelling a row. The rail's filter matches the tags as it matches the title, since a ticket id is
   exactly what gets typed into it.
-- **A session is named out of the window two ways, and both are reads.** The rail's right-click
-  copies the transcript's path and the session's id — the file to read the conversation out of,
-  and the id to resume it by — because what is done with either is done somewhere else: handed to
-  an agent, grepped for, passed to `claude`. One item each rather than the files panel's
-  relative/absolute pair, since a transcript lives in Claude Code's store and has nothing in the
-  worktree to be relative to. They sit between the lifecycle items and the Archive/Delete pair,
+- **A session is named out of the window three ways, and all are reads.** The rail's right-click
+  copies the transcript's path, the session's id and its agent name — the file to read the
+  conversation out of, the id to resume it by, and the name another Claude session messages it by
+  — because what is done with any of them is done somewhere else: handed to an agent, grepped
+  for, passed to `claude`, put in `SendMessage`'s `to`. **The name is the one that does not last**:
+  it is the running process's, in Claude Code's registry, drawn from the directory afresh at every
+  start unless the session was renamed, and gone when the process is. So it is read at the click
+  and never kept, a session with no engine up has none — the item is off rather than starting one
+  to read a name off it — and a batch counts the names it will copy, not its rows. The id cannot
+  stand in for it: `SendMessage` reads a bare id as a name and matches nothing, and its explicit
+  addresses are sockets, which die with the process too. The path is one item rather than the
+  files panel's relative/absolute pair, since a transcript lives in Claude Code's store and has
+  nothing in the worktree to be relative to. They sit between the lifecycle items and the Archive/Delete pair,
   which is where the panel puts Copy Path, and nothing may fall between Archive and Delete, whose
   order is what says which of them is the reversible one. **The rest of that menu narrows a batch
-  to the sessions hukan owns; these two do not** — the narrowing is about acting on another
-  process's engine, and naming a session is only reading it. A session that has never run is named
-  as well: its file not existing yet is a fact about the conversation, not about the path, which
-  the id and the worktree already decide.
+  to the sessions hukan owns; these do not** — the narrowing is about acting on another
+  process's engine, and naming a session is only reading it. A session that has never run is given
+  its path and id as well: its file not existing yet is a fact about the conversation, not about
+  the path, which the id and the worktree already decide.
 - **A session id is spelt the way Claude Code spells its own.** The CLI names the ids it mints in
   lower case; Swift's `UUID` renders in upper, and hukan supplies the id for every session started
   here, so the store held two spellings of the same kind of thing. Nothing ever opened the wrong

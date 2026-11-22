@@ -1142,13 +1142,19 @@ enum ClaudeSessionStore {
     /// hukan enum, so a kind added later arrives unrecognised instead of being coerced into the
     /// wrong one.
     let kind: String?
+    /// What other Claude sessions address this one by — the name `ListAgents` lists and
+    /// `SendMessage` takes as `to`. It is the process's, not the conversation's: one drawn from the
+    /// directory changes at every start, and it is gone once the process is, which is why it is
+    /// read here and never kept. A renamed session's is the name it was given.
+    let name: String?
 
     /// `kind` defaults to nil because an older CLI's record does not carry one, and the reading of
     /// its absence is "an ordinary session" — the kinds worth excluding are ones the engine names.
-    init(pid: pid_t, cwd: URL?, kind: String? = nil) {
+    init(pid: pid_t, cwd: URL?, kind: String? = nil, name: String? = nil) {
       self.pid = pid
       self.cwd = cwd
       self.kind = kind
+      self.name = name
     }
 
     /// Whether this record stands for a conversation the rail should carry. The rail is a resume
@@ -1181,7 +1187,8 @@ enum ClaudeSessionStore {
       // Every kind is kept here, including the ones no row is made for: the hold this answers is
       // about a second engine writing one transcript, which is true whoever is holding it.
       owners[id] = SessionOwner(
-        pid: pid_t(pid), cwd: cwd, kind: record["kind"] as? String)
+        pid: pid_t(pid), cwd: cwd, kind: record["kind"] as? String,
+        name: (record["name"] as? String).flatMap { $0.isEmpty ? nil : $0 })
     }
     return owners
   }
