@@ -228,7 +228,13 @@ and the reasoning behind it; read the file before changing the area it covers.
   through the loader's table are patched, `Vendor/gfxstream-hukan.patch`, which says why hunk by
   hunk). The device in this process only forwards requests, over a socket; guest RAM goes to the
   renderer once, as a Mach memory entry handed over through a bootstrap name only it is told (the
-  rendezvous Chromium uses). **The guest's screen is read back into two IOSurfaces**, taken in
+  rendezvous Chromium uses). **Guest RAM is mapped anew at each device reset**: a guest rebooting
+  in place is given its RAM elsewhere, and a mapping kept across the reset showed the new boot the
+  last one's memory wherever the guest drew in its own — the boot splash and the cursor came up
+  as noise; one kept for the life of the device was the fix for a restored machine that could not
+  map it again, which it can once the first mapping is let go. Right after a reset the new RAM
+  cannot be mapped for a moment, so the device asks again every 50 ms for up to five seconds and
+  holds the guest's requests meanwhile, rather than answering them with errors. **The guest's screen is read back into two IOSurfaces**, taken in
   turn, which the tab's layer shows; a device reset takes the layer down, frame and cursor, until
   the new renderer's first frame, and VZ's screen beneath shows meanwhile — the old driver's last
   frame stayed up through the reboot otherwise. **VZ's own screen stays, for input and for a reset**:

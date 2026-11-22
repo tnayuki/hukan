@@ -82,6 +82,11 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
     var request: Data
   }
   private var elements: [UInt64: Pending] = [:]
+  /// Requests that came while a renderer could not start yet — guest RAM not mappable for a moment
+  /// after a reset — held, with the queue each came on, to go to it once it has.
+  private var held: [(element: VZVirtioQueueElement, request: Data, queue: UInt16)] = []
+  /// Attempts left at mapping guest RAM for the renderer being started; nil when none is waiting.
+  private var ramAttemptsLeft: Int?
   /// The capset requests this device sent a new renderer itself (`GPUCapsets.probes`), by tag.
   private var capsetProbes: [UInt64: Data] = [:]
   private var nextTag: UInt64 = 1
@@ -136,16 +141,35 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
   /// Start the renderer: guest RAM to it as a memory entry, through a bootstrap name only it is told.
   private func startRenderer(on device: VZCustomVirtioDevice) {
     guard !shutDownPermanently, renderer == 0 else { return }
-    // Guest RAM is mapped once and kept until the device stops: it stays where it is across a
-    // reset, and a machine resumed from a saved state could not map it a second time — its first
-    // reboot left the GPU without a renderer.
+    // Guest RAM is mapped once per boot and kept until the device resets or stops, for every
+    // renderer the boot starts: a machine resumed from a saved state could not map it a second
+    // time while the first mapping stood — its first reboot left the GPU without a renderer.
+    // Right after a reset the guest's new RAM cannot be mapped for a moment (it failed for the
+    // first two DRIVER_OKs of a reboot): asked again every 50 ms for up to five seconds, the
+    // guest's requests held meanwhile rather than answered with errors.
     guard
       let ram = self.ram
         ?? device.guestMemoryMapping(atPhysicalAddress: Self.ramBase, length: Int(memorySize))
     else {
-      GPULink.note("could not map guest RAM")
+      let left = (ramAttemptsLeft ?? 100) - 1
+      guard left > 0 else {
+        GPULink.note("GPU \(identity): could not map guest RAM")
+        ramAttemptsLeft = nil
+        for waiting in held { answer(waiting.element, with: Self.unanswerable(waiting.request)) }
+        held = []
+        return
+      }
+      ramAttemptsLeft = left
+      queue.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+        guard let self, self.ramAttemptsLeft != nil else { return }
+        self.startRenderer(on: device)
+      }
       return
     }
+    if let left = ramAttemptsLeft {
+      GPULink.note("GPU \(identity): guest RAM mapped after \(100 - left) attempts")
+    }
+    ramAttemptsLeft = nil
     var entrySize = memory_object_size_t(memorySize)
     var entry: mach_port_t = 0
     guard
@@ -216,6 +240,12 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
       nextTag += 1
       capsetProbes[tag] = probe
       writer?.send(GPULink.encode(.request, value: 0, tag: tag, payload: probe))
+    }
+    // What the guest asked while guest RAM could not be mapped yet, in the order it asked.
+    let waiting = held
+    held = []
+    for request in waiting {
+      forward(request.element, request: request.request, queue: request.queue)
     }
 
     let source = DispatchSource.makeReadSource(fileDescriptor: pair[0], queue: queue)
@@ -310,6 +340,15 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
     }
     elements = [:]
     capsetProbes = [:]
+    ramAttemptsLeft = nil
+    for waiting in held {
+      if leavingGuestPages {
+        answer(waiting.element, with: Self.unanswerable(waiting.request))
+      } else {
+        waiting.element.returnToQueue()
+      }
+    }
+    held = []
   }
 
   /// The machine has stopped for good.
@@ -589,8 +628,12 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
 
   func customVirtioDeviceWillReset(_ device: VZCustomVirtioDevice) {
     GPULink.note("GPU \(identity): reset")
-    // A reboot resets the device; what the old driver made goes with its renderer.
+    // A reboot resets the device; what the old driver made goes with its renderer. So does the
+    // mapping of guest RAM: a guest rebooting in place is given its RAM anew, elsewhere, and a
+    // renderer handed the old pages read the last boot's memory for whatever the guest drew in its
+    // own — the boot splash and the cursor, as noise.
     stopRenderer()
+    ram = nil
     DispatchQueue.main.async { [weak self] in self?.onReset?() }
   }
 
@@ -616,26 +659,33 @@ final class GPUDevice: NSObject, VZCustomVirtioDeviceConfigurationDelegate,
         answer(element, with: known)
         continue
       }
+      if ramAttemptsLeft != nil {
+        held.append((element, request, queue.queueIndex))
+        continue
+      }
       guard socket >= 0 else {
         // No renderer to ask: a command is answered with an error rather than left unanswered,
         // which a guest waits on for ever — its boot stopped there when a renderer could not start.
         answer(element, with: Self.unanswerable(request))
         continue
       }
-      // A blob leaving the guest leaves the region here, where it was put in; the renderer is
-      // told too, and answers.
-      if size >= 28 {
-        let command = GPURenderer.Command(rawValue: request.u32(0))
-        if command == .resourceUnmapBlob || command == .resourceUnref {
-          unmapBlob(request.u32(24))
-        }
-      }
-      let tag = nextTag
-      nextTag += 1
-      elements[tag] = Pending(element: element, request: request.prefix(32))
-      writer?.send(
-        GPULink.encode(.request, value: UInt32(queue.queueIndex), tag: tag, payload: request))
+      forward(element, request: request, queue: queue.queueIndex)
     }
+  }
+
+  private func forward(_ element: VZVirtioQueueElement, request: Data, queue: UInt16) {
+    // A blob leaving the guest leaves the region here, where it was put in; the renderer is told
+    // too, and answers.
+    if request.count >= 28 {
+      let command = GPURenderer.Command(rawValue: request.u32(0))
+      if command == .resourceUnmapBlob || command == .resourceUnref {
+        unmapBlob(request.u32(24))
+      }
+    }
+    let tag = nextTag
+    nextTag += 1
+    elements[tag] = Pending(element: element, request: request.prefix(32))
+    writer?.send(GPULink.encode(.request, value: UInt32(queue), tag: tag, payload: request))
   }
 }
 
