@@ -349,8 +349,9 @@ is a worktree, which the rail shows like any other. Opened, its conversation kee
 arrives as it is written, a rollback it makes included.
 
 **Slash commands.** A `/` at the head of the composer opens the engine's own command list — its
-built-ins beside every skill and user command it found — filtered as you type, taken with `⏎` or
-`⇥`. A skill added on disk shows up once an engine has restarted; nothing here keeps a copy.
+built-ins beside every skill and user command it found, and the commands a mod registers —
+filtered as you type, taken with `⏎` or `⇥`. A skill added on disk shows up once an engine has
+restarted; nothing here keeps a copy.
 
 **Past prompts, by their reading.** With the input method off, two or more letters in the composer
 offer what you have already asked this repository, matched by how it reads: `kentou` finds

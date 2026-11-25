@@ -303,6 +303,10 @@ final class AgentSession {
   /// a completion is most wanted is the first `/` typed into a session that has not started yet.
   private(set) var availableCommands: [ClaudeCommand] = []
 
+  /// Whether `availableCommands` is this session's own engine's answer rather than the window's
+  /// seed. Only a seed may be replaced by another seed.
+  private var hasOwnCommands = false
+
   /// What the engine says about Remote Control, from that same reply.
   ///
   /// This is a fact about the *install*, not about this conversation — every session in a window
@@ -1115,11 +1119,7 @@ final class AgentSession {
       self?.availableModels = models
       self?.onStateChange?()
     }
-    session.onCommands = { [weak self] commands in
-      self?.availableCommands = commands
-      self?.onCommands?(commands)
-      self?.onStateChange?()
-    }
+    session.onCommands = { [weak self] commands in self?.takeCommands(commands) }
     session.onRemoteControl = { [weak self] availability in
       guard let self else { return }
       // This engine's own answer wins over anything the window seeded in.
@@ -2004,11 +2004,23 @@ final class AgentSession {
   }
 
   /// Show a command list this session has not been told yet — the one the window last heard from
-  /// any of its sessions. Same rule as the roster: never overwrite a live list, because the
-  /// engine's own answer is about *this* worktree and a seeded one is only a good guess.
+  /// any of its sessions. Never overwrite a live list, because the engine's own answer is about
+  /// *this* worktree and a seeded one is only a good guess — but a seed does give way to a later
+  /// seed, since the window's list grows after initialize (a mod registers its commands from
+  /// `session.start`) and a session that has not started would otherwise keep the first answer.
   func seedCommands(_ commands: [ClaudeCommand]) {
-    guard availableCommands.isEmpty, !commands.isEmpty else { return }
+    guard !hasOwnCommands, !commands.isEmpty else { return }
     availableCommands = commands
+  }
+
+  /// This session's own engine's list — from its initialize reply, or a `commands_changed` push
+  /// that replaces it whole, as the engine asks a client to.
+  private func takeCommands(_ commands: [ClaudeCommand]) {
+    guard !commands.isEmpty else { return }
+    hasOwnCommands = true
+    availableCommands = commands
+    onCommands?(commands)
+    onStateChange?()
   }
 
   /// Take the window's answer about Remote Control, for a session with no engine of its own to
@@ -2778,6 +2790,13 @@ final class AgentSession {
       refreshContextUsage()
       hasEndedTurn = true
       onTurnEnded?(event.payload["result"] as? String, failed)
+
+    case "system" where event.subtype == "commands_changed":
+      // The full list after a mid-session change — a mod's `$.command.register`, which runs after
+      // initialize, or a skill found as the agent works in a subdirectory.
+      if let raw = event.payload["commands"] as? [[String: Any]] {
+        takeCommands(ClaudeCommand.list(raw))
+      }
 
     case "system" where event.subtype == "ui_panes":
       if let roster = ModSurface.Roster(event.payload) { setModRoster(roster) }

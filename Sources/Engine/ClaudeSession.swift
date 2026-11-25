@@ -64,6 +64,18 @@ struct ClaudeCommand {
   /// marks them — and hukan's own interception of `/login` and `/logout` means those two are
   /// added by hand rather than read from here.
   var isTypeable: Bool { !name.hasPrefix("__") }
+
+  /// The engine's list as it spells it, in the initialize reply and in `commands_changed` alike.
+  static func list(_ raw: [[String: Any]]) -> [ClaudeCommand] {
+    raw.compactMap { entry in
+      guard let name = entry["name"] as? String else { return nil }
+      return ClaudeCommand(
+        name: name,
+        description: entry["description"] as? String ?? "",
+        argumentHint: entry["argumentHint"] as? String ?? "",
+        aliases: entry["aliases"] as? [String] ?? [])
+    }
+  }
 }
 
 /// What the engine says about Remote Control — the bridge that puts this conversation on
@@ -971,18 +983,13 @@ final class ClaudeSession {
       }
     }
     // The slash-command list rides in the same reply, beside the roster. Built-ins and skills
-    // arrive together and undistinguished, which is exactly what a completion list wants.
+    // arrive together and undistinguished, which is exactly what a completion list wants. What
+    // joins it later — a mod's `$.command.register`, a skill found mid-session — comes as a
+    // `commands_changed` push, which `AgentSession` reads off the event stream.
     if let inner = response["response"] as? [String: Any],
       let raw = inner["commands"] as? [[String: Any]]
     {
-      let commands = raw.compactMap { entry -> ClaudeCommand? in
-        guard let name = entry["name"] as? String else { return nil }
-        return ClaudeCommand(
-          name: name,
-          description: entry["description"] as? String ?? "",
-          argumentHint: entry["argumentHint"] as? String ?? "",
-          aliases: entry["aliases"] as? [String] ?? [])
-      }
+      let commands = ClaudeCommand.list(raw)
       if !commands.isEmpty {
         DispatchQueue.main.async { [weak self] in self?.onCommands?(commands) }
       }

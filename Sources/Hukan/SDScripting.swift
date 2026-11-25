@@ -493,6 +493,15 @@ final class SDSession: NSObject {
     guard let approval = agentSession?.pendingApproval else { return "" }
     return approval.detail.isEmpty ? approval.toolName : "\(approval.toolName): \(approval.detail)"
   }
+
+  /// What a `/` would complete in this session's composer — the engine's names, the hand-supplied
+  /// `/login` and `/logout` left out. Hidden: it exists so the list is checkable, a mod's commands
+  /// included, without opening the panel.
+  @objc var slashCommands: String {
+    (agentSession?.availableCommands ?? []).filter(\.isTypeable).map(\.name)
+      .joined(separator: "\n")
+  }
+
   /// The agent's own task list, one line a task — `[x]` done, `[~]` in flight, `[ ]` still to
   /// do. The whole list, where the card shows only what is left: a script is reading data, not
   /// glancing at a card, and the finished tasks are half of what it might be checking.

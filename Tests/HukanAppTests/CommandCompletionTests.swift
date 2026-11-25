@@ -69,6 +69,36 @@ final class CommandCompletionTests: XCTestCase {
     XCTAssertTrue(CommandCompletion.matches("__", in: roster).isEmpty)
   }
 
+  // MARK: where the list comes from
+
+  /// A mod registers its commands from `session.start`, after initialize answered, so they reach
+  /// hukan only as the engine's `commands_changed` push — the whole list, to replace the old.
+  func testACommandsChangedPushReplacesTheList() {
+    let session = AgentSession(worktreeID: UUID())
+    session.apply(commandsChanged(["clear", "compact"]))
+    session.apply(commandsChanged(["clear", "compact", "modernize"]))
+    XCTAssertEqual(session.availableCommands.map(\.name), ["clear", "compact", "modernize"])
+  }
+
+  /// The window's list is a guess for a session with no engine yet, so a later guess replaces an
+  /// earlier one; it never replaces what the session's own engine said.
+  func testASeedGivesWayToALaterSeedButNotToTheEngine() {
+    let session = AgentSession(worktreeID: UUID())
+    session.seedCommands(Array(roster.prefix(2)))
+    session.seedCommands(roster)
+    XCTAssertEqual(session.availableCommands.count, roster.count, "a later seed is newer")
+
+    session.apply(commandsChanged(["clear"]))
+    session.seedCommands(roster)
+    XCTAssertEqual(session.availableCommands.map(\.name), ["clear"], "the engine's own stands")
+  }
+
+  private func commandsChanged(_ names: [String]) -> ClaudeEvent {
+    ClaudeEvent(
+      type: "system", subtype: "commands_changed",
+      payload: ["commands": names.map { ["name": $0, "description": "", "argumentHint": ""] }])
+  }
+
   // MARK: what a pick puts in the field
 
   /// A command that takes an argument leaves the caret past a space, ready for it; one that takes

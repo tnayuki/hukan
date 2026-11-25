@@ -17,7 +17,13 @@ and the reasoning behind it; read the file before changing the area it covers.
   up answers for the rest — which is what makes a `/` typed into a session that has never started
   complete anything at all — while a list read at launch would be a stale answer for as long as
   the window lived, and offering a skill that has since been removed is worse than offering
-  nothing. `/login` and `/logout` are the exception hukan supplies itself: the engine lists only
+  nothing. **The startup reply is not the whole list, though.** A mod registers its commands from
+  `session.start`, after initialize has answered, and a skill can turn up as the agent works in a
+  subdirectory; both reach hukan as the engine's `commands_changed` push, the full list, which
+  replaces the old one, as the engine tells a client to. Reading the reply alone left every mod's
+  commands out. So a session that has not started takes each newer list the window hears, not
+  only the first, while a session whose own engine has answered keeps that answer.
+  `/login` and `/logout` are the exception hukan supplies itself: the engine lists only
   commands it would run, and those two it hands back to be run in a terminal, so the one command
   a signed-out session needs is the one its engine could never have named.
 - **What has already been asked completes too, and the bridge is the reading.** The composer is

@@ -78,6 +78,9 @@
             <property name="pending approval" code="pApr" type="text" access="r" description="The tool call the session is waiting on, or an empty string">
                 <cocoa key="pendingApproval"/>
             </property>
+            <property name="slash commands" code="pSlC" type="text" access="r" hidden="yes" description="What a `/` typed into this session's composer would complete, one command name a line, in the engine's order">
+                <cocoa key="slashCommands"/>
+            </property>
             <property name="tasks" code="pTsk" type="text" access="r" description="The agent's task list, one line a task ([x] done, [~] in flight, [ ] still to do)">
                 <cocoa key="tasks"/>
             </property>
