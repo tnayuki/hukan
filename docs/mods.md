@@ -81,6 +81,37 @@ and the reasoning behind it; read the file before changing the area it covers.
   shifts for it. A row of `flexWrap: "wrap"` breaks onto new lines when the width runs out. A
   button's `hotkey` presses it while the pane has the keyboard, which a click on the pane's
   background gives it, as a click in a terminal's pane does.
+- **A box is laid out by Yoga, not by constraints.** A tree's props are flexbox's own words, and
+  the desktop app turns each into the CSS of the same name and leaves the layout to the browser
+  (read from the app's bundle, 7.37095, 2026-11: a `Box` is `display:flex` in a `row` unless it
+  says otherwise, growing and shrinking only as CSS defaults have it; a wrapping `Text` is
+  `white-space:pre-wrap; overflow-wrap:anywhere`, so it gives way to any width). Yoga is the
+  flexbox engine Ink lays the same tree out with in a terminal, a package Xcode resolves
+  (`docs/build.md`), and it is handed the props as they are named: direction and its reverses,
+  wrapping, justification, `alignItems` and `alignSelf`, gaps, padding, margin, sizes in cells or
+  percent, `flexGrow`, `flexShrink`, and `position: "absolute"`. The measures are the app's
+  too: across, a cell is a character; down, a gap, a padding or a margin counts in *half* lines
+  and only a height or an offset in whole ones; a spacing named `xs` to `xl` is the app's
+  token; a bordered box is padded 12 points down and 16 across wherever the mod names no padding,
+  inside a line of 1, 2 (`bold`) or 3 (`double`) points on an 8-point corner, 12 for `round`.
+  `overflowX: "scroll"` is a box whose children scroll sideways inside its border and padding,
+  every text among them on its one line. A text that does not wrap is cut at its *end* whichever end it names, CSS having no
+  other ellipsis; `bold` is drawn semibold and a dimmed colour at three fifths, as the app mixes
+  them; `dir: "rtl"` reads and starts from the right. A `Progress` never arrives: the engine
+  lowers it to boxes for this surface. **It replaced stack views and
+  priorities**, which drew most trees and could not be made to draw the rest: Auto Layout has no
+  way to say that two texts short of room shrink in proportion, and a wrapping label left to
+  itself measures its width off whatever frame it had last — so the same tree drew a bordered box
+  at the pane's width one time, at a first pass's sliver the next, and at its text's one-line
+  length, running out of the pane, the time after. Now text is asked what it measures at a
+  width, by its cell, and only the outermost box meets Auto Layout: it is as tall as its tree
+  comes out at the width it is given. What cannot shrink — a control keeps its width — sets a
+  floor under the tree's width, and past it the pane scrolls sideways rather than pushing its
+  column wider. The app's own rules for the leaves are kept by hand, Yoga
+  knowing only boxes: text and code shrink and a control does not (`flex-shrink:0` on its
+  button); in a column a button, a link, a pick and a one-line field keep their own widths
+  (`width:fit-content`, and a text input's twenty characters) while a field of several lines
+  fills; and a row that names no `alignItems` centres its leaves.
 - **Where the hosts differ, hukan draws as the desktop app does**, the surface it attaches as. The
   app's drawing is web code served to it rather than shipped in it; it was read from the assets a
   signed-in app loads (2026-11), and run beside hukan with the same mod. From it: body text is 14
@@ -88,8 +119,7 @@ and the reasoning behind it; read the file before changing the area it covers.
   scale; a hotkey is a small key cap inside the button, before a plain button's words and after a
   bordered one's — the terminal writes `n: Next`, VS Code shows and takes no key; a plain button
   is words alone, on a ground that lights under the pointer as the app's ghost button does;
-  `variant: "primary"` is the accent fill. A `flexGrow` box takes a row's spare room whatever it
-  holds — its lines let go of their own widths — and a spacer takes none it is not given. **A row that names no `alignItems`
+  `variant: "primary"` is the accent fill. **A row that names no `alignItems`
   centres its leaves** — text, buttons, links, fields — on its height and stretches only the boxes
   in it, which is what puts a status dot and a row's button on the middle of a two-line title. A
   `Text` takes a `hover` too, lit by its own scope or by the box with a hover it sits in. VS Code

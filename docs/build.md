@@ -20,7 +20,11 @@ vendoring rule: pulled as Xcode-managed package dependencies (pinned in `project
 whole graph locked in the tracked `Package.resolved`), *not* committed binaries like
 `Clibgit2.xcframework`. SwiftTerm pins an exact version; SwiftTreeSitter rides its `main`
 branch, because that is how ChimeHQ ships it, so `Package.resolved` is what actually holds it
-still.
+still. **Yoga**, the flexbox engine a mod's tree is laid out by (`docs/mods.md`), is the third,
+pinned to an exact version: it is C++ with a C API, but its repository carries a `Package.swift`
+and a module map of that API alone, so Xcode builds it and Swift imports it as it is — a
+`Cyoga.xcframework` built by a Vendor script was tried first and came to nothing the package
+does not do.
 That does not resurrect the rejected "SwiftPM as the build system" — the build is still
 `xcodebuild`, hukan still has no `Package.swift`; they are pure-Swift libraries, which a
 hand-built static `xcframework` fights (SwiftTerm's plugin breaks a universal `swift build`), so
@@ -169,7 +173,7 @@ the app, which is why looking at the window is `WindowPreviewTests` drawing it b
 
 **What hukan ships and did not write ships with its license, in `Resources/Licenses`.** Every
 such piece — libgit2, gfxstream with protobuf and abseil, Mesa (the guest's driver included), the tree-sitter grammars, the Swift packages
-linked in (SwiftTerm, SwiftTreeSitter, tree-sitter), and Zig's standard library inside the guest
+linked in (SwiftTerm, SwiftTreeSitter, tree-sitter, Yoga), and Zig's standard library inside the guest
 agents — is under a license whose condition for redistribution is shipping its text, and for a
 while none of them was shipped. One file per source, headed by its name, version and where it
 came from, then the text as the source has it; the folder is bundled as it is, and nothing in the

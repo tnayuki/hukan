@@ -1,4 +1,5 @@
 import AppKit
+import yoga
 
 /// One mod pane as a desk tab: the tree the engine hands back for it (`ModSurface`), drawn in a
 /// `ModSiteView`, and asked for when the tab is shown, when the engine says something in it
@@ -336,13 +337,13 @@ final class ModSiteView: NSView {
       ) { tree in self.onTook(tree) }
     }
     renderer.onOpenURL = { [weak self] url in self?.onOpenURL(url) }
-    let drawn: NSView
+    let root: NSView
     if let tree, let view = renderer.view(for: tree) {
-      drawn = view
+      root = view
     } else {
       let label = NSTextField(labelWithString: empty ?? "")
       label.textColor = .secondaryLabelColor
-      drawn = label
+      root = label
     }
     self.renderer = renderer
     // The boxes the pointer was on are gone; the new ones under it light as the old did.
@@ -354,6 +355,7 @@ final class ModSiteView: NSView {
       responderChanged()
     }
     content?.removeFromSuperview()
+    let drawn = ModRenderer.boxed(root)
     drawn.translatesAutoresizingMaskIntoConstraints = false
     document.addSubview(drawn)
     NSLayoutConstraint.activate([
@@ -639,6 +641,8 @@ final class ModRenderer {
 
   let pane: String
   let metrics = Metrics.standard
+  /// Down, the desktop app counts a gap, a padding or a margin in half lines.
+  private var rowUnit: CGFloat { metrics.lh / 2 }
   var onPress: (ModSurface.Press, String?) -> Void = { _, _ in }
   var onInput: (ModSurface.Press, String, Bool) -> Void = { _, _, _ in }
   var onSelect: (ModSurface.Press, String) -> Void = { _, _ in }
@@ -774,7 +778,9 @@ final class ModRenderer {
         for (key, value) in hover where key != "scope" { lit[key] = value }
         let litText = attributed(children, style(lit))
         join(scope) { [weak field] isLit in
-          field?.attributedStringValue = isLit ? litText : plain
+          guard let field else { return }
+          field.attributedStringValue = isLit ? litText : plain
+          ModFlexView.changed(field)
         }
       }
       return field
@@ -813,13 +819,93 @@ final class ModRenderer {
     return CGFloat(n / 100)
   }
 
-  /// The first of `keys` that is set, in cells of `unit`: `paddingLeft`, then `paddingX`, then
-  /// `padding`, the way Ink reads them.
-  private func side(_ props: [String: Any], _ keys: [String], unit: CGFloat) -> CGFloat {
-    for key in keys { if let value = cells(props[key], unit: unit) { return value } }
-    return 0
+  /// A gap, a padding or a margin, as the desktop app measures one: a number is cells — a
+  /// character across, half a line down — and a name (`xs` to `xl`) is the app's own spacing
+  /// token, a gap's for a gap and a margin and a pad's for a padding.
+  private func space(_ value: Any?, across: Bool, pad: Bool) -> CGFloat? {
+    if let name = value as? String, let step = ["xs", "sm", "md", "lg", "xl"].firstIndex(of: name) {
+      let tokens: [CGFloat] = pad ? [6, 8, 12, 16, 24] : [8, 12, 16, 28, 40]
+      return tokens[step]
+    }
+    return cells(value, unit: across ? metrics.ch : rowUnit)
   }
 
+  /// What a child says of its own place in its box's flow, which is a `Box`'s to say and, for the
+  /// sizes, any element's: how it grows and shrinks, and how wide and tall it is, in cells.
+  private func size(_ node: YGNodeRef, _ props: [String: Any], sized: Bool = true) {
+    if let grow = (props["flexGrow"] as? NSNumber)?.floatValue {
+      YGNodeStyleSetFlexGrow(node, grow)
+    }
+    if let shrink = (props["flexShrink"] as? NSNumber)?.floatValue {
+      YGNodeStyleSetFlexShrink(node, shrink)
+    }
+    // A picture's numbers are points, which it sizes itself by; read here as cells they would
+    // fight its own.
+    guard sized else { return }
+    if let width = cells(props["width"], unit: metrics.ch) {
+      YGNodeStyleSetWidth(node, Float(width))
+    } else if let fraction = percent(props["width"]) {
+      YGNodeStyleSetWidthPercent(node, Float(fraction * 100))
+    }
+    if let height = cells(props["height"], unit: metrics.lh) {
+      YGNodeStyleSetHeight(node, Float(height))
+    }
+    if let width = cells(props["minWidth"], unit: metrics.ch) {
+      YGNodeStyleSetMinWidth(node, Float(width))
+    }
+    if let height = cells(props["minHeight"], unit: metrics.lh) {
+      YGNodeStyleSetMinHeight(node, Float(height))
+    }
+  }
+
+  private static func align(_ value: Any?) -> YGAlign? {
+    switch value as? String {
+    case "flex-start": YGAlign.flexStart
+    case "center": YGAlign.center
+    case "flex-end": YGAlign.flexEnd
+    case "stretch": YGAlign.stretch
+    default: nil
+    }
+  }
+
+  /// A floating box's place over its box: `top` or else `bottom`, `left` or else `right`, in cells.
+  private func float(_ node: YGNodeRef, _ props: [String: Any]) {
+    YGNodeStyleSetPositionType(node, YGPositionType.absolute)
+    let top = cells(props["top"], unit: metrics.lh)
+    let left = cells(props["left"], unit: metrics.ch)
+    let right = cells(props["right"], unit: metrics.ch)
+    let bottom = cells(props["bottom"], unit: metrics.lh)
+    let fromBottom = top == nil && bottom != nil
+    let fromRight = left == nil && right != nil
+    YGNodeStyleSetPosition(node, YGEdge.top, fromBottom ? .nan : Float(top ?? 0))
+    YGNodeStyleSetPosition(node, YGEdge.bottom, fromBottom ? Float(bottom ?? 0) : .nan)
+    YGNodeStyleSetPosition(node, YGEdge.left, fromRight ? .nan : Float(left ?? 0))
+    YGNodeStyleSetPosition(node, YGEdge.right, fromRight ? Float(right ?? 0) : .nan)
+  }
+
+  /// Whether an element is text, which gives way when the room runs out — wrapping, or cut —
+  /// where a control keeps its width.
+  private static func isText(_ type: String) -> Bool {
+    ["text", "Text", "span", "b", "Markdown", "Code"].contains(type)
+  }
+
+  /// The box a site lays its root out in, as the desktop app's host is a block around its tree:
+  /// a root box is as wide as the site and keeps its own margin, and a root that is no box — a
+  /// lone text, the line a site shows in place of a tree — is laid out as a box lays a child out.
+  static func boxed(_ view: NSView) -> ModFlexView {
+    let box = ModFlexView()
+    YGNodeStyleSetFlexDirection(box.node, YGFlexDirection.column)
+    let node = box.add(view)
+    if view is ModFlexView { return box }
+    YGNodeStyleSetAlignItems(box.node, YGAlign.flexStart)
+    if view is NSTextField || view is ModWidthMeasured { YGNodeStyleSetFlexShrink(node, 1) }
+    return box
+  }
+
+  /// A `Box`: flexbox, with the props handed to Yoga as they are named (`ModFlexView`) — its
+  /// direction, wrapping, justification and alignment, its gaps, padding and margin, and for each
+  /// child how it grows, shrinks and is sized. Around its children it draws its border and
+  /// background, lays over itself what is `position: "absolute"`, and answers its hover.
   private func box(_ props: [String: Any], _ children: [ModSurface.Node]) -> NSView? {
     let hover = props["hover"] as? [String: Any]
     // Drawn `display: "none"` is drawn not at all — unless its hover says `display: "flex"`, which
@@ -834,312 +920,177 @@ final class ModRenderer {
     // no scope lights with this box, as the desktop app reads it.
     let ownScope = hover.map { $0["scope"] as? String ?? "box-\(UUID().uuidString)" }
     if let ownScope { hoverScopes.append(ownScope) }
-    var all: [(view: NSView, props: [String: Any], type: String)] = children.compactMap {
+    let all: [(view: NSView, props: [String: Any], type: String)] = children.compactMap {
       child in
       guard let view = view(for: child) else { return nil }
       if case .element(let type, let props, _, _) = child { return (view, props, type) }
       return (view, [:], "text")
     }
     if ownScope != nil { hoverScopes.removeLast() }
-    if direction.hasSuffix("reverse") { all.reverse() }
-    // An absolutely positioned child leaves the flow and is laid over the box, as CSS does it.
-    let floating = all.filter { $0.props["position"] as? String == "absolute" }
-    let items = all.filter { $0.props["position"] as? String != "absolute" }
 
-    if isRow, props["flexWrap"] as? String == "wrap" {
-      return wrapped(
-        props, items.map(\.view), floating: floating, hover: hover, scope: ownScope,
-        revealed: revealed)
+    // A box that scrolls sideways is two: the box itself — its border, padding and place among
+    // its parent's children — and inside it the flow, at its own width, in a viewport.
+    let scrolls = props["overflowX"] as? String == "scroll"
+    let box = ModFlexView()
+    let node = box.node
+    let flowBox = scrolls ? ModFlexView() : box
+    let flowNode = flowBox.node
+    let flow: YGFlexDirection =
+      switch direction {
+      case "column": .column
+      case "column-reverse": .columnReverse
+      case "row-reverse": .rowReverse
+      default: .row
+      }
+    YGNodeStyleSetFlexDirection(flowNode, flow)
+    switch props["flexWrap"] as? String {
+    case "wrap": YGNodeStyleSetFlexWrap(flowNode, YGWrap.wrap)
+    case "wrap-reverse": YGNodeStyleSetFlexWrap(flowNode, YGWrap.wrapReverse)
+    default: break
     }
-
-    let stack = NSStackView()
-    stack.orientation = isRow ? .horizontal : .vertical
-    stack.distribution = .fill
-    let gap =
-      isRow
-      ? cells(props["columnGap"], unit: metrics.ch) ?? cells(props["gap"], unit: metrics.ch)
-      : cells(props["rowGap"], unit: metrics.lh) ?? cells(props["gap"], unit: metrics.lh)
-    stack.spacing = gap ?? 0
-    let insets = NSEdgeInsets(
-      top: side(props, ["paddingTop", "paddingY", "padding"], unit: metrics.lh),
-      left: side(props, ["paddingLeft", "paddingX", "padding"], unit: metrics.ch),
-      bottom: side(props, ["paddingBottom", "paddingY", "padding"], unit: metrics.lh),
-      right: side(props, ["paddingRight", "paddingX", "padding"], unit: metrics.ch))
-    let bordered = props["borderStyle"] is String
-    // A border sits inside the box, and the text a cell in from it, as a terminal draws one.
-    stack.edgeInsets = NSEdgeInsets(
-      top: insets.top + (bordered ? 4 : 0), left: insets.left + (bordered ? metrics.ch : 0),
-      bottom: insets.bottom + (bordered ? 4 : 0), right: insets.right + (bordered ? metrics.ch : 0))
-    let align = props["alignItems"] as? String ?? "stretch"
+    let justify: YGJustify =
+      switch props["justifyContent"] as? String {
+      case "flex-end": .flexEnd
+      case "center": .center
+      case "space-between": .spaceBetween
+      case "space-around": .spaceAround
+      case "space-evenly": .spaceEvenly
+      default: .flexStart
+      }
+    YGNodeStyleSetJustifyContent(flowNode, justify)
     // A row that names no `alignItems` centres its leaves — text, buttons, links, fields — on its
     // height and stretches only the boxes in it: the desktop app's rule, which is what puts a
     // status dot and a row's button on the middle of a two-line title.
     let centresLeaves = isRow && props["alignItems"] == nil
-    switch (isRow, align) {
-    case (true, "center"): stack.alignment = .centerY
-    case (true, "flex-end"): stack.alignment = .bottom
-    case (true, _): stack.alignment = centresLeaves ? .centerY : .top
-    case (false, "center"): stack.alignment = .centerX
-    case (false, "flex-end"): stack.alignment = .trailing
-    case (false, _): stack.alignment = .leading
-    }
-
-    let justify = props["justifyContent"] as? String ?? "flex-start"
-    let grows = items.contains { ($0.props["flexGrow"] as? NSNumber)?.doubleValue ?? 0 > 0 }
-    var spacers: [NSView] = []
-    func spacer() -> NSView {
-      let view = NSView()
-      view.translatesAutoresizingMaskIntoConstraints = false
-      // Weaker than anything but a child that grows: spare room goes to a `flexGrow` child
-      // anywhere in the row before it goes to a spacer inside a box beside it.
-      view.setContentHuggingPriority(.init(rawValue: 2), for: isRow ? .horizontal : .vertical)
-      view.setContentCompressionResistancePriority(
-        .init(rawValue: 1), for: isRow ? .horizontal : .vertical)
-      // A spacer has no size of its own, so hugging alone does not hold it: without this it was
-      // free to take a row's spare room from inside a box beside the child that grows.
-      let none =
-        isRow
-        ? view.widthAnchor.constraint(equalToConstant: 0)
-        : view.heightAnchor.constraint(equalToConstant: 0)
-      none.priority = .init(rawValue: 1)
-      none.isActive = true
-      spacers.append(view)
-      return view
-    }
-    var arranged: [NSView] = []
-    let main = items.map(\.view)
-    switch grows ? "flex-start-grow" : justify {
-    case "flex-end": arranged = [spacer()] + main
-    case "center": arranged = [spacer()] + main + [spacer()]
-    case "space-between":
-      for (index, view) in main.enumerated() {
-        if index > 0 { arranged.append(spacer()) }
-        arranged.append(view)
-      }
-    case "space-around", "space-evenly":
-      arranged.append(spacer())
-      for view in main { arranged += [view, spacer()] }
-    case "flex-start-grow": arranged = main
-    default: arranged = main + (isRow ? [spacer()] : [])
-    }
-    for view in arranged { stack.addArrangedSubview(view) }
-    for pair in spacers.dropFirst() {
-      let a = isRow ? pair.widthAnchor : pair.heightAnchor
-      let b = isRow ? spacers[0].widthAnchor : spacers[0].heightAnchor
-      a.constraint(equalTo: b).isActive = true
-    }
-
-    for (view, childProps, type) in items {
-      let grow = (childProps["flexGrow"] as? NSNumber)?.doubleValue ?? 0
-      let shrinkable = (childProps["flexShrink"] as? NSNumber)?.doubleValue ?? 1
-      // A child that grows takes the room; its siblings hold to their own size, firmly — a
-      // wrapping label's own hugging is weak enough to win the room otherwise.
-      view.setContentHuggingPriority(
-        grow > 0 ? .init(rawValue: 1) : grows ? .defaultHigh : .init(rawValue: 250),
-        for: isRow ? .horizontal : .vertical)
-      // Hugging on the child alone cannot hand it the room: a box is a stack that hugs its own
-      // content, and a column holds each line it stretches to its own width, so a label's
-      // hugging bound the column to its text. A growing box lets go of all that, and reaches for
-      // the room, more weakly than anything else holds its own size.
-      if grow > 0 {
-        Self.letGo(view, isRow ? .horizontal : .vertical)
-        let reach =
-          isRow
-          ? view.widthAnchor.constraint(equalToConstant: 100_000)
-          : view.heightAnchor.constraint(equalToConstant: 100_000)
-        reach.priority = .init(rawValue: 5)
-        reach.isActive = true
-      }
-      if shrinkable == 0 {
-        view.setContentCompressionResistancePriority(
-          .required, for: isRow ? .horizontal : .vertical)
-      }
-      // A column stretches its children across, which is Ink's default and most trees' intent —
-      // but a control keeps its own width, as it does in a terminal: a button across the pane is
-      // a bar, not a button.
-      if centresLeaves, type == "Box" || type == "div", childProps["height"] == nil {
-        view.heightAnchor.constraint(
-          equalTo: stack.heightAnchor, constant: -(stack.edgeInsets.top + stack.edgeInsets.bottom)
-        ).isActive = true
-      }
-      let keepsOwnWidth = ["Button", "Select", "Link", "Svg"].contains(type)
-      if !isRow, align == "stretch", childProps["width"] == nil, !keepsOwnWidth {
-        view.widthAnchor.constraint(
-          equalTo: stack.widthAnchor, constant: -(stack.edgeInsets.left + stack.edgeInsets.right)
-        ).isActive = true
-      }
-      // A picture's numbers are points, which it sizes itself by; read here as cells they would
-      // fight its own.
-      if type == "Svg" { continue }
-      if let width = cells(childProps["width"], unit: metrics.ch) {
-        view.widthAnchor.constraint(equalToConstant: width).isActive = true
-      } else if let fraction = percent(childProps["width"]) {
-        // A share of the content box, inside the padding, as CSS reads it.
-        let insets = stack.edgeInsets.left + stack.edgeInsets.right
-        view.widthAnchor.constraint(
-          equalTo: stack.widthAnchor, multiplier: fraction, constant: -insets * fraction
-        ).isActive = true
-      }
-      if let height = cells(childProps["height"], unit: metrics.lh) {
-        view.heightAnchor.constraint(equalToConstant: height).isActive = true
-      }
-      if let width = cells(childProps["minWidth"], unit: metrics.ch) {
-        view.widthAnchor.constraint(greaterThanOrEqualToConstant: width).isActive = true
-      }
-      if let height = cells(childProps["minHeight"], unit: metrics.lh) {
-        view.heightAnchor.constraint(greaterThanOrEqualToConstant: height).isActive = true
-      }
-    }
-
-    return finish(
-      props, stack, floating: floating, hover: hover, scope: ownScope, revealed: revealed)
-  }
-
-  /// Drops the hugging that ties a growing box to its content along `axis`: its own stack's, and
-  /// that of each line a stack across the axis stretches to its width — a label, a nested box —
-  /// down through boxes stacked that way. A stack along the axis lays its own children out, and
-  /// is let go of without being entered.
-  static func letGo(_ view: NSView, _ axis: NSLayoutConstraint.Orientation) {
-    let weak = NSLayoutConstraint.Priority(rawValue: 2)
-    if let stack = view as? NSStackView {
-      stack.setHuggingPriority(weak, for: axis)
-      let across: NSUserInterfaceLayoutOrientation = axis == .horizontal ? .vertical : .horizontal
-      if stack.orientation == across {
-        for child in stack.arrangedSubviews { letGo(child, axis) }
-      }
-    } else if let field = view as? NSTextField {
-      field.setContentHuggingPriority(weak, for: axis)
-    } else if view is ModHoverSurface || type(of: view) == NSView.self {
-      for child in view.subviews { letGo(child, axis) }
-    }
-  }
-
-  /// A row of `flexWrap: "wrap"`: its children at their own sizes, left to right, onto a new line
-  /// when the width runs out. Justification and growth have no meaning across lines here.
-  private func wrapped(
-    _ props: [String: Any], _ views: [NSView],
-    floating: [(view: NSView, props: [String: Any], type: String)],
-    hover: [String: Any]?, scope: String?, revealed: Bool
-  ) -> NSView {
-    let flow = ModFlowView(
-      views,
-      spacing: NSSize(
-        width: cells(props["columnGap"], unit: metrics.ch)
-          ?? cells(props["gap"], unit: metrics.ch) ?? 0,
-        height: cells(props["rowGap"], unit: metrics.lh)
-          ?? cells(props["gap"], unit: metrics.lh) ?? 0))
-    let insets = NSEdgeInsets(
-      top: side(props, ["paddingTop", "paddingY", "padding"], unit: metrics.lh),
-      left: side(props, ["paddingLeft", "paddingX", "padding"], unit: metrics.ch),
-      bottom: side(props, ["paddingBottom", "paddingY", "padding"], unit: metrics.lh),
-      right: side(props, ["paddingRight", "paddingX", "padding"], unit: metrics.ch))
-    let padded = NSView()
-    flow.translatesAutoresizingMaskIntoConstraints = false
-    padded.addSubview(flow)
-    flow.pin(to: padded, insets: insets)
-    return finish(props, padded, floating: floating, hover: hover, scope: scope, revealed: revealed)
-  }
-
-  /// What every box gets around its children: its border and background, what it lays over
-  /// itself (`position: "absolute"`), its hover, and its margin.
-  private func finish(
-    _ props: [String: Any], _ content: NSView,
-    floating: [(view: NSView, props: [String: Any], type: String)],
-    hover: [String: Any]?, scope ownScope: String?, revealed: Bool
-  ) -> NSView {
-    let bordered = props["borderStyle"] is String
-    let background = color(props["backgroundColor"])
-    var outer: NSView = content
-    // A box with a hover gets a surface even with nothing to paint yet: the hover may paint it,
-    // and the surface is what tracks the pointer.
-    if bordered || background != nil || props["overflow"] as? String == "hidden" || hover != nil
-      || !floating.isEmpty
+    let align = Self.align(props["alignItems"]) ?? YGAlign.stretch
+    YGNodeStyleSetAlignItems(flowNode, centresLeaves ? YGAlign.center : align)
+    if let gap = space(props["columnGap"], across: true, pad: false)
+      ?? space(props["gap"], across: true, pad: false)
     {
-      let frame = ModHoverSurface()
-      frame.wantsLayer = true
-      frame.layer?.cornerRadius = props["borderStyle"] as? String == "round" ? 6 : 0
-      frame.layer?.cornerCurve = .continuous
-      frame.layer?.masksToBounds = props["overflow"] as? String == "hidden"
+      YGNodeStyleSetGap(flowNode, YGGutter.column, Float(gap))
+    }
+    if let gap = space(props["rowGap"], across: false, pad: false)
+      ?? space(props["gap"], across: false, pad: false)
+    {
+      YGNodeStyleSetGap(flowNode, YGGutter.row, Float(gap))
+    }
+    // A bordered box is padded by the desktop app's own measure, 12 points down and 16 across,
+    // wherever the mod names no padding for that side; its line takes its own width besides.
+    let style = props["borderStyle"] as? String ?? ""
+    let bordered = !style.isEmpty
+    let line: CGFloat = !bordered ? 0 : style == "bold" ? 2 : style == "double" ? 3 : 1
+    if bordered { YGNodeStyleSetBorder(node, YGEdge.all, Float(line)) }
+    func edges(
+      _ name: String, _ set: (YGNodeRef, YGEdge, Float) -> Void, _ pad: Bool, on node: YGNodeRef
+    ) {
+      let sides: [(YGEdge, String, String, Bool, CGFloat)] = [
+        (YGEdge.top, "Top", "Y", false, 12), (YGEdge.bottom, "Bottom", "Y", false, 12),
+        (YGEdge.left, "Left", "X", true, 16), (YGEdge.right, "Right", "X", true, 16),
+      ]
+      for (edge, own, axis, across, inset) in sides {
+        let named = [name + own, name + axis, name].lazy.compactMap {
+          self.space(props[$0], across: across, pad: pad)
+        }.first
+        let value = named ?? (pad && bordered ? inset : 0)
+        if value > 0 { set(node, edge, Float(value)) }
+      }
+    }
+    edges("padding", YGNodeStyleSetPadding, true, on: node)
+    edges("margin", YGNodeStyleSetMargin, false, on: node)
+    size(node, props)
+    if let own = Self.align(props["alignSelf"]) { YGNodeStyleSetAlignSelf(node, own) }
+    // Boxes shrink as CSS has them, unless they say otherwise.
+    if props["flexShrink"] == nil { YGNodeStyleSetFlexShrink(node, 1) }
+
+    // The flow first and what floats after it: an absolutely positioned child leaves the flow
+    // and is laid over the box, as CSS does it.
+    let floats: ([String: Any]) -> Bool = { $0["position"] as? String == "absolute" }
+    for (view, childProps, type) in all.filter({ !floats($0.props) })
+      + all.filter({ floats($0.props) })
+    {
+      let child = flowBox.add(view)
+      if view is ModFlexView {
+        if centresLeaves, childProps["height"] == nil, childProps["alignSelf"] == nil {
+          YGNodeStyleSetAlignSelf(child, YGAlign.stretch)
+        }
+      } else {
+        YGNodeStyleSetFlexShrink(child, Self.isText(type) ? 1 : 0)
+        if isRow, Self.isText(type), childProps["width"] == nil { flowBox.basisIsItsLine(view) }
+        size(child, childProps, sized: type != "Svg")
+        // A column stretches its children across — but a control keeps its own width, as the
+        // desktop app's does (`width:fit-content` on its button and link, a one-line field at a
+        // text input's own twenty characters): a button across the pane is a bar, not a button.
+        // A field of several lines is the one that fills.
+        let oneLine = type == "Input" && (childProps["rows"] as? NSNumber)?.intValue ?? 1 <= 1
+        if !isRow, align == YGAlign.stretch,
+          ["Button", "Select", "Link", "Svg"].contains(type) || oneLine
+        {
+          YGNodeStyleSetAlignSelf(child, YGAlign.flexStart)
+        }
+      }
+      guard floats(childProps) else { continue }
+      float(child, childProps)
+      // A hover may move a floating box — the one kind it may move, since nothing in the flow
+      // shifts for it — to the offsets it names while its group is lit.
+      let sides = ["top", "left", "right", "bottom"]
+      guard let hover = childProps["hover"] as? [String: Any],
+        let scope = hover["scope"] as? String, sides.contains(where: { hover[$0] != nil })
+      else { continue }
+      var moved = childProps
+      for side in sides where hover[side] != nil { moved[side] = hover[side] }
+      join(scope) { [weak self, weak flowBox] isLit in
+        guard let self, let flowBox else { return }
+        self.float(child, isLit ? moved : childProps)
+        flowBox.changed()
+      }
+    }
+
+    // Its border and background. A box with a hover is painted even with nothing to paint yet:
+    // the hover may paint it.
+    let background = color(props["backgroundColor"])
+    if bordered || background != nil || props["overflow"] as? String == "hidden" || hover != nil {
+      box.wantsLayer = true
+      // The app's radius, 8 points, on a bordered box, and 4 more on a `round` one.
+      box.layer?.cornerRadius = !bordered ? 0 : style == "round" ? 12 : 8
+      box.layer?.cornerCurve = .continuous
+      box.layer?.masksToBounds = props["overflow"] as? String == "hidden"
       let border =
         (color(props["borderColor"]) ?? .separatorColor).withAlphaComponent(
           props["borderDimColor"] as? Bool == true ? 0.5 : 1)
       let litBackground = color(hover?["backgroundColor"])
       let litBorder = color(hover?["borderColor"])
       let litBordered = hover?["borderStyle"] is String
-      frame.paintLayer = { [weak frame] layer in
-        let lit = frame?.isLit ?? false
-        layer.borderWidth = bordered || (lit && litBordered) ? 1 : 0
+      box.paintLayer = { [weak box] layer in
+        let lit = box?.isLit ?? false
+        layer.borderWidth = bordered ? line : lit && litBordered ? 1 : 0
         layer.borderColor = ((lit ? litBorder : nil) ?? border).cgColor
         layer.backgroundColor = ((lit ? litBackground : nil) ?? background)?.cgColor
       }
-      content.translatesAutoresizingMaskIntoConstraints = false
-      frame.addSubview(content)
-      content.pin(to: frame)
-      for (view, childProps, _) in floating {
-        view.translatesAutoresizingMaskIntoConstraints = false
-        frame.addSubview(view)
-        let placed = place(view, in: frame, childProps)
-        NSLayoutConstraint.activate(placed)
-        // A hover may move a floating box — the one kind it may move, since nothing in the flow
-        // shifts for it — to the offsets it names while its group is lit.
-        let sides = ["top", "left", "right", "bottom"]
-        guard let hover = childProps["hover"] as? [String: Any],
-          let scope = hover["scope"] as? String, sides.contains(where: { hover[$0] != nil })
-        else { continue }
-        var moved = childProps
-        for side in sides where hover[side] != nil { moved[side] = hover[side] }
-        let lit = place(view, in: frame, moved)
-        join(scope) { isLit in
-          NSLayoutConstraint.deactivate(isLit ? placed : lit)
-          NSLayoutConstraint.activate(isLit ? lit : placed)
-        }
+    }
+    if hover != nil, let scope = ownScope {
+      // Its own group when it names none: a box lights while the pointer is on it.
+      box.onHover = { [weak self] inside in self?.hovered(scope, inside) }
+      join(scope) { [weak box] lit in
+        box?.isLit = lit
+        box?.needsDisplay = true
       }
-      if hover != nil, let scope = ownScope {
-        // Its own group when it names none: a box lights while the pointer is on it.
-        frame.onHover = { [weak self] inside in self?.hovered(scope, inside) }
-        join(scope) { [weak frame] lit in
-          frame?.isLit = lit
-          frame?.needsDisplay = true
-        }
-      }
-      outer = frame
     }
     if revealed, let scope = hover?["scope"] as? String {
-      outer.isHidden = true
-      join(scope) { [weak outer] lit in outer?.isHidden = !lit }
+      box.isHidden = true
+      YGNodeStyleSetDisplay(node, YGDisplay.none)
+      join(scope) { [weak box] lit in
+        guard let box else { return }
+        box.isHidden = !lit
+        YGNodeStyleSetDisplay(box.node, lit ? YGDisplay.flex : YGDisplay.none)
+        box.changed()
+      }
     }
-    let margin = NSEdgeInsets(
-      top: side(props, ["marginTop", "marginY", "margin"], unit: metrics.lh),
-      left: side(props, ["marginLeft", "marginX", "margin"], unit: metrics.ch),
-      bottom: side(props, ["marginBottom", "marginY", "margin"], unit: metrics.lh),
-      right: side(props, ["marginRight", "marginX", "margin"], unit: metrics.ch))
-    if margin.top + margin.left + margin.bottom + margin.right > 0 {
-      let wrapper = NSView()
-      outer.translatesAutoresizingMaskIntoConstraints = false
-      wrapper.addSubview(outer)
-      outer.pin(to: wrapper, insets: margin)
-      outer = wrapper
+    if scrolls {
+      // The viewport is the box's one child, as wide as the box and as tall as the flow.
+      YGNodeStyleSetFlexDirection(node, YGFlexDirection.column)
+      YGNodeStyleSetFlexShrink(box.add(ModScrollBox(flowBox)), 1)
     }
-    return outer
-  }
-
-  /// A floating box's place over its box: `top` or else `bottom`, `left` or else `right`, in cells.
-  private func place(_ view: NSView, in frame: NSView, _ props: [String: Any])
-    -> [NSLayoutConstraint]
-  {
-    let top = cells(props["top"], unit: metrics.lh)
-    let left = cells(props["left"], unit: metrics.ch)
-    let right = cells(props["right"], unit: metrics.ch)
-    let bottom = cells(props["bottom"], unit: metrics.lh)
-    let vertical =
-      top == nil && bottom != nil
-      ? view.bottomAnchor.constraint(equalTo: frame.bottomAnchor, constant: -(bottom ?? 0))
-      : view.topAnchor.constraint(equalTo: frame.topAnchor, constant: top ?? 0)
-    let horizontal =
-      left == nil && right != nil
-      ? view.trailingAnchor.constraint(equalTo: frame.trailingAnchor, constant: -(right ?? 0))
-      : view.leadingAnchor.constraint(equalTo: frame.leadingAnchor, constant: left ?? 0)
-    return [vertical, horizontal]
+    return box
   }
 
   // MARK: Text
@@ -1178,11 +1129,12 @@ final class ModRenderer {
     let size = props["size"] as? String
     let points = size.map { Metrics.scale($0).points } ?? font.pointSize
     let weight: NSFont.Weight? =
-      switch props["weight"] as? String ?? (props["bold"] as? Bool == true ? "bold" : nil) {
+      // The app's weights: `bold` is 600, AppKit's semibold, and `semibold` 580 — and a `bold`
+      // text is drawn semibold, as its `<b>` is.
+      switch props["weight"] as? String ?? (props["bold"] as? Bool == true ? "semibold" : nil) {
       case "regular": .regular
       case "medium": .medium
-      case "semibold": .semibold
-      case "bold": .bold
+      case "semibold", "bold": .semibold
       default: nil
       }
     let isMono =
@@ -1219,11 +1171,12 @@ final class ModRenderer {
     }
     if props["dimColor"] as? Bool == true {
       // Plain text dims to the system's secondary colour — an alpha laid over `labelColor` is
-      // drawn at full strength by a label — and a coloured run fades to two thirds of itself.
+      // drawn at full strength by a label — and a coloured run fades to three fifths of itself, as
+      // the desktop app mixes it.
       if foreground == nil || foreground == .labelColor {
         foreground = .secondaryLabelColor
       } else {
-        foreground = foreground?.withAlphaComponent(0.65)
+        foreground = foreground?.withAlphaComponent(0.6)
       }
     }
     attributes[.foregroundColor] = foreground
@@ -1263,13 +1216,9 @@ final class ModRenderer {
       }
     } else {
       field = NSTextField(labelWithString: "")
-      field.lineBreakMode =
-        switch wrap {
-        case "truncate-start": .byTruncatingHead
-        case "truncate-middle": .byTruncatingMiddle
-        case "clip": .byClipping
-        default: .byTruncatingTail
-        }
+      // One line, cut at its end with an ellipsis whichever end the mod named: the desktop app
+      // cuts with CSS, which has only the one — a terminal's `truncate-start` is its end here.
+      field.lineBreakMode = wrap == "clip" ? .byClipping : .byTruncatingTail
       field.setContentCompressionResistancePriority(.init(rawValue: 200), for: .horizontal)
     }
     // Selectable first, the styled string last: making a label selectable afterwards has it
@@ -1278,14 +1227,20 @@ final class ModRenderer {
     field.allowsEditingTextAttributes = true
     // The line height rides in a paragraph style, whose word wrapping would override the
     // field's truncation: a truncating label gets its break mode put back into the runs.
-    if wrap != "wrap" {
+    let isRightToLeft = props["dir"] as? String == "rtl"
+    if wrap != "wrap" || isRightToLeft {
       let runs = NSMutableAttributedString(attributedString: text)
       runs.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: runs.length)) {
         value, range, _ in
         let paragraph =
           (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
           ?? NSMutableParagraphStyle()
-        paragraph.lineBreakMode = field.lineBreakMode
+        if wrap != "wrap" { paragraph.lineBreakMode = field.lineBreakMode }
+        // `dir: "rtl"` reads from the right, and starts there.
+        if isRightToLeft {
+          paragraph.baseWritingDirection = .rightToLeft
+          paragraph.alignment = .right
+        }
         runs.addAttribute(.paragraphStyle, value: paragraph, range: range)
       }
       field.attributedStringValue = runs
@@ -1445,7 +1400,13 @@ final class ModRenderer {
     row.alignment = rows > 1 ? .top : .firstBaseline
     row.spacing = 6
     field.setContentHuggingPriority(.init(rawValue: 1), for: .horizontal)
-    field.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+    // One line is a text input's own width, twenty characters, as the desktop app leaves it to
+    // the browser; several lines fill the room they are given.
+    if rows > 1 {
+      field.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+    } else {
+      field.widthAnchor.constraint(equalToConstant: 20 * metrics.ch + 16).isActive = true
+    }
     return row
   }
 
@@ -1538,7 +1499,7 @@ final class ModRenderer {
         .foregroundColor, in: NSRange(location: 0, length: rendered.length)
       ) { value, range, _ in
         let color = (value as? NSColor) ?? .labelColor
-        rendered.addAttribute(.foregroundColor, value: color.withAlphaComponent(0.65), range: range)
+        rendered.addAttribute(.foregroundColor, value: color.withAlphaComponent(0.6), range: range)
       }
     }
     return label(rendered, [:])
@@ -1598,17 +1559,7 @@ final class ModRenderer {
           at: min(start, text.length))
       }
     }
-    let field = NSTextField(wrappingLabelWithString: "")
-    field.attributedStringValue = text
-    field.isSelectable = true
-    let frame = LayerSurface()
-    frame.wantsLayer = true
-    frame.layer?.cornerRadius = 6
-    frame.paintLayer = { $0.backgroundColor = NSColor.quaternarySystemFill.cgColor }
-    field.translatesAutoresizingMaskIntoConstraints = false
-    frame.addSubview(field)
-    field.pin(to: frame, insets: NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8))
-    return frame
+    return ModCodeBlock(text)
   }
 
   /// A unified diff's lines without their hunk headers, each with the number it has: a removed
@@ -1832,7 +1783,7 @@ final class ModRenderer {
 /// A box's surface: its border and background, and — when it has a hover — what the pane's
 /// pointer tracking tells of the pointer's coming and going, which lights its hover group
 /// (`ModRenderer.hovered`).
-final class ModHoverSurface: LayerSurface {
+class ModHoverSurface: LayerSurface {
   /// The pointer came onto or left this box — told by the pane (`ModHoverTracker`), which follows
   /// the pointer across all of its boxes at once.
   var onHover: ((Bool) -> Void)?
@@ -1872,57 +1823,85 @@ final class ModHoverTracker {
   func reset() { inside = [:] }
 }
 
-/// Views left to right at their own sizes, onto a new line when the width runs out — a row of
-/// `flexWrap: "wrap"`. Laid out by hand: how many fit on a line is a question of the width.
-final class ModFlowView: NSView {
-  private let items: [NSView]
-  private let spacing: NSSize
-  private lazy var heightConstraint = heightAnchor.constraint(equalToConstant: 0)
-
-  init(_ items: [NSView], spacing: NSSize) {
-    self.items = items
-    self.spacing = spacing
-    super.init(frame: .zero)
-    for item in items {
-      item.translatesAutoresizingMaskIntoConstraints = true
-      addSubview(item)
-    }
-    heightConstraint.isActive = true
-  }
-
-  required init?(coder: NSCoder) { fatalError() }
-
-  override var isFlipped: Bool { true }
-
-  override func layout() {
-    super.layout()
-    let width = bounds.width
-    guard width > 0 else { return }
-    var x: CGFloat = 0
-    var y: CGFloat = 0
-    var lineHeight: CGFloat = 0
-    for item in items where !item.isHidden {
-      item.layoutSubtreeIfNeeded()
-      var size = item.fittingSize
-      size.width = min(size.width, width)
-      if x > 0, x + size.width > width {
-        x = 0
-        y += lineHeight + spacing.height
-        lineHeight = 0
-      }
-      item.frame = NSRect(origin: NSPoint(x: x, y: y), size: size)
-      x += size.width + spacing.width
-      lineHeight = max(lineHeight, size.height)
-    }
-    let total = y + lineHeight
-    if abs(heightConstraint.constant - total) > 0.5 { heightConstraint.constant = total }
-  }
-}
-
 /// The controls' target: a renderer is not an `NSObject`, and a selector needs one.
 private final class ModActionTarget: NSObject {
   weak var renderer: ModRenderer?
   @objc func fire(_ sender: NSControl) { renderer?.fire(sender) }
+}
+
+/// The viewport of a box of `overflowX: "scroll"`: its flow at its own width — every text on its one line —
+/// scrolling sideways inside whatever width the box is given.
+final class ModScrollBox: NSScrollView, ModWidthMeasured {
+  private let content: ModFlexView
+
+  init(_ content: ModFlexView) {
+    self.content = content
+    super.init(frame: .zero)
+    drawsBackground = false
+    hasHorizontalScroller = true
+    hasVerticalScroller = false
+    autohidesScrollers = true
+    verticalScrollElasticity = .none
+    content.translatesAutoresizingMaskIntoConstraints = true
+    documentView = content
+  }
+
+  required init?(coder: NSCoder) { fatalError() }
+
+  func size(forWidth width: CGFloat?, exactly: Bool) -> NSSize {
+    let natural = content.naturalSize
+    guard let width else { return natural }
+    // A scroller that is always shown takes its height out of the viewport.
+    let bar =
+      natural.width > width && NSScroller.preferredScrollerStyle == .legacy
+      ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+    return NSSize(
+      width: exactly ? width : min(natural.width, width), height: natural.height + bar)
+  }
+
+  override func layout() {
+    super.layout()
+    let natural = content.naturalSize
+    let size = NSSize(width: max(natural.width, contentView.bounds.width), height: natural.height)
+    if content.frame.size != size { content.setFrameSize(size) }
+  }
+
+  /// Sideways is this box's; up and down is the pane's.
+  override func scrollWheel(with event: NSEvent) {
+    if abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) {
+      nextResponder?.scrollWheel(with: event)
+    } else {
+      super.scrollWheel(with: event)
+    }
+  }
+}
+
+/// A `Code`'s ground and the text on it, which wraps at the width the block is given.
+final class ModCodeBlock: LayerSurface, ModWidthMeasured {
+  private static let insets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
+  private let field = NSTextField(wrappingLabelWithString: "")
+
+  init(_ text: NSAttributedString) {
+    super.init(frame: .zero)
+    field.attributedStringValue = text
+    field.isSelectable = true
+    wantsLayer = true
+    layer?.cornerRadius = 6
+    paintLayer = { $0.backgroundColor = NSColor.quaternarySystemFill.cgColor }
+    field.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(field)
+    field.pin(to: self, insets: Self.insets)
+  }
+
+  required init?(coder: NSCoder) { fatalError() }
+
+  func size(forWidth width: CGFloat?, exactly: Bool) -> NSSize {
+    let across = Self.insets.left + Self.insets.right
+    let text = ModFlexView.size(
+      of: field, width: width.map { max($0 - across, 0) }, exactly: exactly)
+    return NSSize(
+      width: text.width + across, height: text.height + Self.insets.top + Self.insets.bottom)
+  }
 }
 
 /// A mod's field: each edit handed on as it is typed, Return as the submit.

@@ -183,17 +183,26 @@ final class ModSurfaceTests: XCTestCase {
         ),
       ])
     let view = try XCTUnwrap(ModRenderer(pane: "p").view(for: tree))
-    let stack = try XCTUnwrap(([view] + subviews(of: view)).compactMap { $0 as? NSStackView }.first)
-    XCTAssertEqual(stack.arrangedSubviews.count, 1, "the floating box is not in the flow")
-    XCTAssertTrue(
-      subviews(of: view).contains { ($0 as? NSTextField)?.stringValue == "over" },
-      "but it is drawn")
+    view.frame = NSRect(x: 0, y: 0, width: 300, height: 100)
+    view.layoutSubtreeIfNeeded()
+    let metrics = ModRenderer.Metrics.standard
+    let over = try XCTUnwrap(
+      subviews(of: view).first { ($0 as? NSTextField)?.stringValue == "over" }?.superview)
+    XCTAssertEqual(over.frame.minX, 2 * metrics.ch, accuracy: 0.5, "laid over, two cells in")
+    XCTAssertEqual(over.frame.minY, metrics.lh, accuracy: 0.5, "and a line down")
+    XCTAssertEqual(
+      view.intrinsicContentSize.height, metrics.lh, "and the floating box is not in the flow")
 
     let row = node(
-      "Box", ["flexDirection": "row", "flexWrap": "wrap"],
+      "Box", ["flexDirection": "row", "flexWrap": "wrap", "columnGap": 1],
       (0..<5).map { node("Text", [:], [.text("item \($0)")]) })
     let wrapped = try XCTUnwrap(ModRenderer(pane: "p").view(for: row))
-    XCTAssertTrue(([wrapped] + subviews(of: wrapped)).contains { $0 is ModFlowView })
+    wrapped.frame = NSRect(x: 0, y: 0, width: 120, height: 100)
+    wrapped.layoutSubtreeIfNeeded()
+    let items = subviews(of: wrapped).compactMap { $0 as? NSTextField }
+    XCTAssertEqual(items.count, 5)
+    XCTAssertGreaterThan(Set(items.map(\.frame.minY)).count, 1, "the row broke onto new lines")
+    XCTAssertLessThanOrEqual(items.map(\.frame.maxX).max() ?? 0, 120, "inside its width")
   }
 
   /// A growing column takes a row's spare room, even beside a box that keeps a spacer of its own
@@ -555,6 +564,167 @@ final class ModSurfaceTests: XCTestCase {
         ]))
     column.layoutSubtreeIfNeeded()
     XCTAssertEqual(site.frame.width, 200, accuracy: 0.5, "the column kept its width")
+  }
+
+  /// A bordered box holding wrapped text is as wide as the body, however the text sits in it — a
+  /// wrapping label left to itself measured its width off whatever frame it had last, so the same
+  /// tree drew its box at the body's width one time and far off it the next — and the text
+  /// wraps at that width, as tall as its lines.
+  func testABoxOfWrappedTextIsAsWideAsTheBody() throws {
+    let long = String(repeating: "The review found the session waiting on a decision. ", count: 6)
+    let border: [String: Any] = ["borderStyle": "round", "flexDirection": "column", "paddingX": 1]
+    let text = node("Text", [:], [.text(long)])
+    let shapes = [
+      node("Box", [:], [node("Box", border, [text])]),
+      node("Box", ["flexDirection": "column"], [node("Box", border, [text])]),
+      node("Box", ["flexDirection": "column"], [node("Box", ["borderStyle": "round"], [text])]),
+      node(
+        "Box", ["flexDirection": "column"],
+        [
+          node(
+            "Box", border,
+            [node("Box", [:], [node("Text", [:], [.text("●")]), node("Box", border, [text])])])
+        ]),
+    ]
+    for (index, tree) in shapes.enumerated() {
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 500, height: 600), styleMask: [.titled],
+        backing: .buffered, defer: false)
+      let content = try XCTUnwrap(window.contentView)
+      let site = ModSiteView(session: nil, site: .pane("p"), inset: ModRenderer.inset)
+      site.translatesAutoresizingMaskIntoConstraints = false
+      content.addSubview(site)
+      site.pin(to: content)
+      site.draw(tree)
+      content.layoutSubtreeIfNeeded()
+      let boxes = subviews(of: site).filter { $0.layer?.cornerRadius == 12 }
+      let outer = try XCTUnwrap(boxes.first)
+      XCTAssertEqual(
+        outer.frame.width, 500 - ModRenderer.inset * 2, accuracy: 0.5, "shape \(index)")
+      let label = try XCTUnwrap(
+        subviews(of: site).compactMap { $0 as? NSTextField }.first { $0.stringValue == long })
+      XCTAssertLessThanOrEqual(
+        label.convert(label.bounds, to: site).maxX, 500, "shape \(index) wraps inside")
+      XCTAssertGreaterThan(label.frame.height, 40, "shape \(index) is as tall as its lines")
+    }
+  }
+
+  /// The outermost box keeps its margin, and what a hover showed stops holding the tree wide
+  /// once it is hidden again.
+  func testTheRootKeepsItsMarginAndAHiddenBoxLetsGoOfTheWidth() throws {
+    func site(_ tree: ModSurface.Node) throws -> (ModSiteView, NSWindow) {
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 300, height: 300), styleMask: [.titled],
+        backing: .buffered, defer: false)
+      let content = try XCTUnwrap(window.contentView)
+      let site = ModSiteView(session: nil, site: .pane("p"), inset: ModRenderer.inset)
+      site.translatesAutoresizingMaskIntoConstraints = false
+      content.addSubview(site)
+      site.pin(to: content)
+      site.draw(tree)
+      content.layoutSubtreeIfNeeded()
+      return (site, window)
+    }
+    let metrics = ModRenderer.Metrics.standard
+    let (margined, first) = try site(
+      node("Box", ["borderStyle": "round", "marginLeft": 2, "marginTop": 1], [.text("in")]))
+    let box = try XCTUnwrap(subviews(of: margined).first { $0.layer?.cornerRadius == 12 })
+    let origin = box.convert(box.bounds, to: margined).origin
+    XCTAssertEqual(origin.x, ModRenderer.inset + 2 * metrics.ch, accuracy: 0.5)
+    _ = first
+
+    let wide = node(
+      "Box", ["flexDirection": "column"],
+      [
+        node("Box", ["hover": ["scope": "row"]], [.text("row")]),
+        node(
+          "Box", ["display": "none", "hover": ["scope": "row", "display": "flex"]],
+          (0..<8).map { node("Button", ["label": "a button \($0)"]) }),
+      ])
+    let (revealing, second) = try site(wide)
+    let renderer = try XCTUnwrap(revealing.renderer)
+    let root = try XCTUnwrap(subviews(of: revealing).first { $0 is ModFlexView })
+    renderer.lightEveryHover()
+    second.contentView?.layoutSubtreeIfNeeded()
+    XCTAssertGreaterThan(root.frame.width, 300, "the buttons do not fit, so the tree is wider")
+    let surface = try XCTUnwrap(
+      subviews(of: revealing).compactMap { $0 as? ModHoverSurface }.first { $0.onHover != nil })
+    surface.onHover?(true)
+    surface.onHover?(false)
+    second.contentView?.layoutSubtreeIfNeeded()
+    XCTAssertLessThanOrEqual(root.frame.width, 300, "and as wide as the body again once hidden")
+  }
+
+  /// Spacing is the desktop app's: a gap down is half a line, a named one its token, a bordered
+  /// box pads itself where the mod names no padding; a text is cut at its end whichever end it
+  /// names; and a box of `overflowX: "scroll"` scrolls under what does not fit.
+  func testSpacingTruncationAndSidewaysScrollFollowTheDesktopApp() throws {
+    let metrics = ModRenderer.Metrics.standard
+    func laid(_ tree: ModSurface.Node, width: CGFloat = 300) throws -> NSView {
+      let view = try XCTUnwrap(ModRenderer(pane: "p").view(for: tree))
+      view.frame = NSRect(x: 0, y: 0, width: width, height: 400)
+      view.layoutSubtreeIfNeeded()
+      return view
+    }
+    func labels(_ view: NSView) -> [NSTextField] {
+      subviews(of: view).compactMap { $0 as? NSTextField }
+    }
+    let halfLines = labels(
+      try laid(node("Box", ["flexDirection": "column", "gap": 1], [.text("a"), .text("b")])))
+    XCTAssertEqual(halfLines[1].frame.minY - halfLines[0].frame.maxY, metrics.lh / 2, accuracy: 0.5)
+    let named = labels(
+      try laid(node("Box", ["flexDirection": "column", "rowGap": "md"], [.text("a"), .text("b")])))
+    XCTAssertEqual(named[1].frame.minY - named[0].frame.maxY, 16, accuracy: 0.5)
+    let padded = labels(try laid(node("Box", ["borderStyle": "single"], [.text("in")])))
+    XCTAssertEqual(padded[0].frame.minX, 17, accuracy: 0.5, "16 across and the line")
+    let own = labels(
+      try laid(node("Box", ["borderStyle": "single", "paddingX": 1], [.text("in")])))
+    XCTAssertEqual(own[0].frame.minX, metrics.ch + 1, accuracy: 0.5, "the mod's padding instead")
+
+    let cut = labels(
+      try laid(node("Box", [:], [node("Text", ["wrap": "truncate-start"], [.text("words")])])))
+    XCTAssertEqual(cut.first?.lineBreakMode, .byTruncatingTail)
+
+    let long = String(repeating: "a line that does not fit ", count: 8)
+    let scrolling = try laid(
+      node(
+        "Box", ["flexDirection": "column"],
+        [node("Box", ["overflowX": "scroll"], [node("Text", [:], [.text(long)])])]), width: 200)
+    let scroller = try XCTUnwrap(subviews(of: scrolling).compactMap { $0 as? ModScrollBox }.first)
+    scroller.layoutSubtreeIfNeeded()
+    XCTAssertEqual(scroller.frame.width, 200, accuracy: 0.5, "as wide as it is given")
+    XCTAssertGreaterThan(scroller.documentView?.frame.width ?? 0, 400, "its text on one line")
+    XCTAssertEqual(scroller.frame.height, metrics.lh, accuracy: 0.5)
+
+    // Its border is the box's, which stays put: the viewport is inside the line and padding.
+    let framed = try laid(
+      node(
+        "Box", ["flexDirection": "column"],
+        [
+          node(
+            "Box", ["overflowX": "scroll", "borderStyle": "single"],
+            [node("Text", [:], [.text(long)])])
+        ]), width: 200)
+    let inside = try XCTUnwrap(subviews(of: framed).compactMap { $0 as? ModScrollBox }.first)
+    XCTAssertEqual(inside.superview?.frame.width ?? 0, 200, accuracy: 0.5)
+    XCTAssertEqual(inside.frame.minX, 17, accuracy: 0.5)
+    XCTAssertEqual(inside.frame.width, 200 - 34, accuracy: 0.5)
+  }
+
+  /// Two texts in a row, short of room, shrink in proportion to their lengths, as flexbox has
+  /// it: one three times the other's length keeps three times its width.
+  func testTextsInARowShrinkInProportion() throws {
+    let short = String(repeating: "The review found the session waiting. ", count: 4)
+    let long = String(repeating: short, count: 3)
+    let tree = node(
+      "Box", [:], [node("Text", [:], [.text(short)]), node("Text", [:], [.text(long)])])
+    let view = try XCTUnwrap(ModRenderer(pane: "p").view(for: tree))
+    view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+    view.layoutSubtreeIfNeeded()
+    let labels = subviews(of: view).compactMap { $0 as? NSTextField }
+    XCTAssertEqual(labels.count, 2)
+    XCTAssertEqual(labels[0].frame.width + labels[1].frame.width, 600, accuracy: 1)
+    XCTAssertEqual(labels[1].frame.width / labels[0].frame.width, 3, accuracy: 0.1)
   }
 
   /// A band taller than its rows scrolls rather than squeezing its tree into them; a key on the

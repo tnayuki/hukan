@@ -17,7 +17,7 @@ RESOLVED="$ROOT/hukan.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package
 
 # The packages whose code is linked, by Package.resolved identity. swift-argument-parser is
 # resolved too, but only for a SwiftTerm command-line tool the app does not build.
-for identity in swiftterm swifttreesitter tree-sitter; do
+for identity in swiftterm swifttreesitter tree-sitter yoga; do
   pin="$(jq -e --arg id "$identity" '.pins[] | select(.identity == $id)' "$RESOLVED")" \
     || { echo "no pin for $identity in Package.resolved" >&2; exit 1; }
   location="$(echo "$pin" | jq -r .location | sed 's/\.git$//')"

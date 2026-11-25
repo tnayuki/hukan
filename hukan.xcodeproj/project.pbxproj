@@ -21,6 +21,7 @@
 		AD00000000000000000000C4 /* CtreesitterParsers.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD00000000000000000000C3 /* CtreesitterParsers.xcframework */; };
 		AD00000000000000000000F6 /* Cgfxstream.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD00000000000000000000F5 /* Cgfxstream.xcframework */; };
 		AD00000000000000000000F7 /* Cgfxstream.xcframework in Embed GPU */ = {isa = PBXBuildFile; fileRef = AD00000000000000000000F5 /* Cgfxstream.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		AD00000000000000000000FB /* yoga in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000FC /* yoga */; };
 		AD00000000000000000000D2 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000D1 /* SwiftTerm */; };
 		AD00000000000000000000D4 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000D3 /* SwiftTerm */; };
 		AD00000000000000000000F2 /* SwiftTreeSitter in Frameworks */ = {isa = PBXBuildFile; productRef = AD00000000000000000000F1 /* SwiftTreeSitter */; };
@@ -86,6 +87,7 @@
 				AD00000000000000000000C2 /* Clibgit2.xcframework in Frameworks */,
 				AD00000000000000000000C4 /* CtreesitterParsers.xcframework in Frameworks */,
 				AD00000000000000000000F6 /* Cgfxstream.xcframework in Frameworks */,
+				AD00000000000000000000FB /* yoga in Frameworks */,
 				AD00000000000000000000D2 /* SwiftTerm in Frameworks */,
 				AD00000000000000000000F2 /* SwiftTreeSitter in Frameworks */,
 			);
@@ -188,6 +190,7 @@
 			packageProductDependencies = (
 				AD00000000000000000000D1 /* SwiftTerm */,
 				AD00000000000000000000F1 /* SwiftTreeSitter */,
+				AD00000000000000000000FC /* yoga */,
 			);
 			productName = Hukan;
 			productReference = AC0000000000000000000003 /* Hukan.app */;
@@ -248,6 +251,7 @@
 			packageReferences = (
 				AD00000000000000000000D0 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				AD00000000000000000000F0 /* XCRemoteSwiftPackageReference "SwiftTreeSitter" */,
+				AD00000000000000000000FA /* XCRemoteSwiftPackageReference "yoga" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA0000000000000000000003 /* Products */;
@@ -489,6 +493,14 @@
 				branch = main;
 			};
 		};
+		AD00000000000000000000FA /* XCRemoteSwiftPackageReference "yoga" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/facebook/yoga.git";
+			requirement = {
+				kind = exactVersion;
+				version = 3.2.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -511,6 +523,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AD00000000000000000000F0 /* XCRemoteSwiftPackageReference "SwiftTreeSitter" */;
 			productName = SwiftTreeSitter;
+		};
+		AD00000000000000000000FC /* yoga */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD00000000000000000000FA /* XCRemoteSwiftPackageReference "yoga" */;
+			productName = yoga;
 		};
 /* End XCSwiftPackageProductDependency section */
 
