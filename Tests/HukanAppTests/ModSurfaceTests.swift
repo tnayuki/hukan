@@ -679,7 +679,11 @@ final class ModSurfaceTests: XCTestCase {
     XCTAssertEqual(padded[0].frame.minX, 17, accuracy: 0.5, "16 across and the line")
     let own = labels(
       try laid(node("Box", ["borderStyle": "single", "paddingX": 1], [.text("in")])))
-    XCTAssertEqual(own[0].frame.minX, metrics.ch + 1, accuracy: 0.5, "the mod's padding instead")
+    // A character's width is no whole number, and Yoga rounds a layout to the screen's pixels: on
+    // a 1x screen (CI's) that is a whole point, so the padding may land up to one off.
+    let pixel = 1 / (NSScreen.main?.backingScaleFactor ?? 2)
+    XCTAssertEqual(
+      own[0].frame.minX, metrics.ch + 1, accuracy: max(0.5, pixel), "the mod's padding instead")
 
     let cut = labels(
       try laid(node("Box", [:], [node("Text", ["wrap": "truncate-start"], [.text("words")])])))
