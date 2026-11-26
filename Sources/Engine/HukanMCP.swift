@@ -45,12 +45,18 @@ enum HukanMCP {
     /// past. Claude Code reads it off the listing's `_meta` (`anthropic/alwaysLoad`), the key the
     /// desktop app's in-process servers ride; read off its bundle and the shipped binary (2.1.325).
     var alwaysLoad = false
+    /// Words a deferred tool is found by when the model goes looking (`anthropic/searchHint`),
+    /// the key the desktop app's in-process servers ride beside `alwaysLoad`.
+    var searchHint: String? = nil
   }
 
   /// A `tools/call` as the host receives it.
   struct Call {
     let name: String
     let arguments: [String: Any]
+    /// The hosted server it was made to: `hukan`'s own, or the desktop app's `ccd_window`
+    /// (`WindowMCP`).
+    var server: String = serverName
 
     func string(_ key: String) -> String? {
       guard let value = arguments[key] as? String, !value.isEmpty else { return nil }
@@ -663,7 +669,10 @@ enum HukanMCP {
         "name": tool.name, "description": tool.description, "inputSchema": tool.inputSchema,
       ]
       if let annotations = tool.annotations { entry["annotations"] = annotations }
-      if tool.alwaysLoad { entry["_meta"] = ["anthropic/alwaysLoad": true] }
+      var meta: [String: Any] = [:]
+      if tool.alwaysLoad { meta["anthropic/alwaysLoad"] = true }
+      if let searchHint = tool.searchHint { meta["anthropic/searchHint"] = searchHint }
+      if !meta.isEmpty { entry["_meta"] = meta }
       return entry
     }
   }
@@ -675,11 +684,14 @@ enum HukanMCP {
   /// A notification carries no id and expects no reply, but the control request that delivered
   /// it does: the SDK answers one with an empty result under id 0, and so does this.
   ///
+  /// `server` names which hosted server the message is for, and so what the handshake answers
+  /// with and which server a call says it came to.
+  ///
   /// `tools` and `instructions` are what the outside server (`ExternalMCP`) swaps in: the wire is
   /// the same JSON-RPC whichever end of hukan it is spoken from, and only what is offered differs.
   static func handle(
-    _ message: [String: Any], tools: [[String: Any]] = toolList, instructions: String? = nil,
-    handler: Handler, reply: @escaping ([String: Any]) -> Void
+    _ message: [String: Any], server: String = serverName, tools: [[String: Any]] = toolList,
+    instructions: String? = nil, handler: Handler, reply: @escaping ([String: Any]) -> Void
   ) {
     let id = message["id"]
     guard let method = message["method"] as? String else {
@@ -696,7 +708,7 @@ enum HukanMCP {
       var result: [String: Any] = [
         "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
         "capabilities": ["tools": [String: Any]()],
-        "serverInfo": ["name": serverName, "version": "1"],
+        "serverInfo": ["name": server, "version": "1"],
       ]
       if let instructions { result["instructions"] = instructions }
       reply(response(id: id, result: result))
@@ -709,7 +721,14 @@ enum HukanMCP {
         reply(response(id: id, error: -32602, "tools/call names no tool"))
         return
       }
-      let call = Call(name: name, arguments: params["arguments"] as? [String: Any] ?? [:])
+      // Only what this server lists: a name another server offers is not this one's to run, and
+      // the handler, shared by both servers on a session's stream, cannot tell them apart.
+      guard tools.contains(where: { $0["name"] as? String == name }) else {
+        reply(response(id: id, result: content(for: .error("Unknown tool: \(name)"))))
+        return
+      }
+      let call = Call(
+        name: name, arguments: params["arguments"] as? [String: Any] ?? [:], server: server)
       handler(call) { outcome in reply(response(id: id, result: content(for: outcome))) }
     default:
       reply(response(id: id, error: -32601, "method not found: \(method)"))

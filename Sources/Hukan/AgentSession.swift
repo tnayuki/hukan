@@ -2049,18 +2049,23 @@ final class AgentSession {
     onStateChange?()
   }
 
-  /// One JSON-RPC message for the server hukan hosts, arrived on this session's stream. The
-  /// handshake and the tool list are the protocol's; a call goes to `performTool`. The reply goes to the runner that asked, not whichever is up when the answer comes —
-  /// a call waiting on a card can outlive a restart.
+  /// One JSON-RPC message for a server hukan hosts — its own, or the desktop app's `ccd_window` —
+  /// arrived on this session's stream. The handshake and the tool list are the protocol's; a call
+  /// goes to `performTool` — only for a tool that server lists (`HukanMCP.handle`). The reply goes to the runner that
+  /// asked, not whichever is up when the answer comes — a call waiting on a card can outlive a
+  /// restart.
   private func handleMCPMessage(requestID: String, request: [String: Any]) {
-    guard let runner, request["server_name"] as? String == HukanMCP.serverName,
-      let message = request["message"] as? [String: Any]
+    let server = request["server_name"] as? String
+    let tools =
+      server == HukanMCP.serverName
+      ? HukanMCP.toolList : server == WindowMCP.serverName ? WindowMCP.toolList : nil
+    guard let runner, let server, let tools, let message = request["message"] as? [String: Any]
     else {
       self.runner?.declineControlRequest(id: requestID, cancelled: false)
       return
     }
     HukanMCP.handle(
-      message,
+      message, server: server, tools: tools,
       handler: { [weak self] call, done in
         guard let self else {
           done(.error("the session is gone"))
@@ -2702,7 +2707,11 @@ final class AgentSession {
       // hukan's own tools answer their own permission: the consent that matters is the tab's
       // grant, asked for by the tool itself when it runs, and a generic Allow in front of that
       // would be the same question twice — the first of them saying nothing about which tab.
-      if toolName.hasPrefix("mcp__\(HukanMCP.serverName)__") {
+      // The window-layout tools ask nothing at all: they only change what is on screen, and
+      // refuse whatever the user is in the middle of.
+      if toolName.hasPrefix("mcp__\(HukanMCP.serverName)__")
+        || toolName.hasPrefix("mcp__\(WindowMCP.serverName)__")
+      {
         runner?.respond(requestID: requestID, allow: true, updatedInput: input)
         return
       }

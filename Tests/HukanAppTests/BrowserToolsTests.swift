@@ -88,12 +88,13 @@ final class BrowserToolsTests: XCTestCase {
 
   // MARK: - The server on the stream
 
-  /// The engine is told about the server in the first thing hukan writes to it, and the call
-  /// clock is a person's, not a network's.
+  /// The engine is told about the servers in the first thing hukan writes to it — its own, and
+  /// the desktop app's window-layout one (`WindowMCP`) — and the call clock is a person's, not a
+  /// network's.
   func testTheInitializeRequestNamesTheHostedServer() {
     let request = ClaudeSession.initializeRequest
     XCTAssertEqual(request["subtype"] as? String, "initialize")
-    XCTAssertEqual(request["sdkMcpServers"] as? [String], ["hukan"])
+    XCTAssertEqual(request["sdkMcpServers"] as? [String], ["hukan", "ccd_window"])
     let configs = request["sdkMcpServerConfigs"] as? [String: [String: Any]]
     XCTAssertEqual(configs?["hukan"]?["timeout"] as? Int, 86_400_000)
   }

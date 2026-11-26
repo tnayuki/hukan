@@ -23,6 +23,20 @@ and the reasoning behind it; read the file before changing the area it covers.
   re-verify on upgrades. `desktop` rather than `vscode` because its element table is what a
   window draws, and its panes dock beside the conversation. A pane a mod opens before anything is
   attached waits undrawn and is in the roster read on attach; no turn is needed for any of this.
+- **The desktop app's window tools are hosted under its name, `ccd_window`**, so one mod's code
+  runs in both hosts with no branch on which it is in. The app hosts that server itself, not the
+  engine, and a mod calls it through `$.mcp.call`; without it here a mod's "open this session"
+  failed with no such tool. Its four tools, their schemas, its rules — only the caller and the
+  sessions it started, only while the caller is on screen, never a pane change under a cursor in a
+  text field or terminal — and its result wording are the app's, read off its bundle (7.37095.0).
+  The window is hukan's: one main pane, no split view, no pop-out window. So every
+  `open_session_in` target shows the session where a click on its row would, and says when it was
+  asked for a split or a window; `get_window_layout` answers in the app's shape with one pane;
+  `close_split` always finds nothing to close; `set_sidebar_collapsed` folds the rail, and is
+  refused while a column is maximized, since the rail's toggle would end the person's mode. Answering
+  `split` with a refusal was the alternative, and it would have made a mod handle hukan apart.
+  The agent sees the tools too, as it does in the app, and they ask no approval: they move
+  nothing but the view.
 - **A pane is a tab on its session's desk.** The desk is the session's and stands beside its
   conversation, which is what every host does with a pane: the terminal docks it beside the
   transcript from 110 columns, the desktop app and VS Code beside the chat. The roster decides the

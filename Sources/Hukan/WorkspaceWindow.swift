@@ -2049,7 +2049,9 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
         done(.error("the session is gone"))
         return
       }
-      if call.name == HukanMCP.startSessionTool {
+      if call.server == WindowMCP.serverName {
+        done(self.performWindowTool(call, from: session))
+      } else if call.name == HukanMCP.startSessionTool {
         self.startSideSession(call, from: session, done: done)
       } else if call.name == HukanMCP.handOffTool {
         self.handOff(call, from: session, done: done)
@@ -2443,6 +2445,159 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     }
     detach(target)
     return .text("Session \(target.id.uuidString) is at top level now.")
+  }
+
+  // MARK: - The desktop app's window-layout tools
+
+  /// `ccd_window`'s tools (`WindowMCP`), answered for `caller` in this window. The desktop app's
+  /// rules hold as it states them — only the caller and the sessions it started are arranged, and
+  /// only while the caller is on screen — so a mod or an agent written against that app gets the
+  /// same answers here. What differs is the window: one main pane, no split view and no pop-out,
+  /// so every `open_session_in` is a sidebar click, and there is never a split to close.
+  func performWindowTool(_ call: HukanMCP.Call, from caller: AgentSession)
+    -> HukanMCP.Outcome
+  {
+    switch call.name {
+    case WindowMCP.openSessionInTool:
+      return openSession(call, from: caller)
+    case WindowMCP.closeSplitTool:
+      if call.arguments["session_id"] != nil,
+        WindowMCP.target(call, caller: caller.id.uuidString) == nil
+      {
+        return .error(WindowMCP.badSessionID)
+      }
+      return .text("No change: \(WindowMCP.noSplitToClose)")
+    case WindowMCP.setSidebarCollapsedTool:
+      guard let collapsed = call.arguments["collapsed"] as? Bool else {
+        return .error("collapsed must be true or false.")
+      }
+      if let refusal = layoutRefusal(for: caller) { return .error("Refused: \(refusal)") }
+      // A maximized column is the person's mode, and the rail's toggle ends it — the right thing
+      // for their own click, not for an agent's. The rail is the mode's while it lasts.
+      if maximized != nil { return .error("Refused: \(WindowMCP.sidebarLocked)") }
+      guard railItem.isCollapsed != collapsed else {
+        return .text("No change: the sidebar is already \(collapsed ? "collapsed" : "expanded").")
+      }
+      toggleRail(nil)
+      return .text(
+        collapsed
+          ? "Collapsed the sidebar. Expand it again with collapsed=false when the wide content is "
+            + "done, unless the user has since changed it."
+          : "Expanded the sidebar.")
+    case WindowMCP.getWindowLayoutTool:
+      return .text(windowLayout(for: caller))
+    default:
+      return .error("Unknown tool: \(call.name)")
+    }
+  }
+
+  /// `open_session_in`: show the caller, or a session it started, where a click on its row would.
+  private func openSession(_ call: HukanMCP.Call, from caller: AgentSession) -> HukanMCP.Outcome {
+    let callerID = caller.id.uuidString
+    guard let target = call.string("target"), ["split", "window", "focus"].contains(target) else {
+      return .error("target must be \"split\", \"window\", or \"focus\".")
+    }
+    guard let named = WindowMCP.target(call, caller: callerID) else {
+      return .error(WindowMCP.badSessionID)
+    }
+    let session: AgentSession
+    switch named {
+    case .caller:
+      if target == "split" {
+        return .error(
+          "A session can't be split beside itself. Use \"window\" to also show this session in "
+            + "its own window, or name another session.")
+      }
+      session = caller
+    case .session(let id):
+      guard
+        let found = workspace.sessions.first(where: {
+          $0.id.uuidString.caseInsensitiveCompare(id) == .orderedSame
+        })
+      else {
+        return .error(
+          "No session with id \(id). Use the session_id from start_session's result or "
+            + "list_sessions (cloud-session requests have no id until the app starts them).")
+      }
+      guard isStarted(found, by: caller) else {
+        return .error(
+          "Refused: session \(id) was not started from this session, and this tool only arranges "
+            + "this session and the sessions it started. Ask the user to open it from the sidebar.")
+      }
+      session = found
+    }
+    if let refusal = layoutRefusal(for: caller) { return .error("Refused: \(refusal)") }
+    let subject = WindowMCP.subject(session.id.uuidString, caller: callerID)
+    if workspace.selectedSession === session {
+      return .text("No change: \(subject) is already showing in this window's main pane.")
+    }
+    // Every target is a change of the main pane here, so each is refused where the desktop app
+    // refuses "focus": the composer about to change under the user's keystrokes is the same
+    // hazard whichever word asked for it.
+    if isUserTyping { return .error("Refused: \(WindowMCP.userTyping)") }
+    workspace.selectedWorktreeID = session.worktreeID
+    workspace.selectedSessionID = session.id
+    resumeSelectedSessionIfNeeded()
+    reload()
+    let instead =
+      target == "focus"
+      ? ""
+      : "; this app has no \(target == "split" ? "split view" : "pop-out windows"), so it is in "
+        + "the main pane instead"
+    return .text(
+      "Showing \(subject) in this window's main pane now (it took this session's place on screen; "
+        + "the user can come back via the sidebar)\(instead).")
+  }
+
+  /// `session` is one `caller` started and still holds — the desktop app's "own child".
+  private func isStarted(_ session: AgentSession, by caller: AgentSession) -> Bool {
+    session.origin?.parentID == caller.id && session.origin?.detached == false
+  }
+
+  /// Why the layout is to be left alone for `caller`, or nil when it is on screen to be seen.
+  private func layoutRefusal(for caller: AgentSession) -> String? {
+    guard workspace.selectedSession === caller else { return WindowMCP.callerNotVisible }
+    guard let window, window.isVisible, !window.isMiniaturized, !NSApp.isHidden else {
+      return WindowMCP.windowHidden
+    }
+    return nil
+  }
+
+  /// The keyboard is somewhere a changed pane would redirect it: an editable text view — the
+  /// composer, a file, a field's editor — or a terminal.
+  private var isUserTyping: Bool {
+    guard let responder = window?.firstResponder else { return false }
+    if let text = responder as? NSTextView { return text.isEditable }
+    return responder is HukanTerminalView
+  }
+
+  /// `get_window_layout`, in the desktop app's shape: one main pane holding the session the rail
+  /// has selected, no split panes and no pop-out windows. A session the caller has no reach to is
+  /// shown without its id, as there.
+  private func windowLayout(for caller: AgentSession) -> String {
+    let shown = workspace.selectedSession
+    var pane: [String: Any] = [
+      "index": 0, "col": 0, "row": 0, "kind": shown == nil ? "page" : "session",
+      "focused": window?.isKeyWindow == true,
+    ]
+    if let shown, shown === caller || isStarted(shown, by: caller) {
+      pane["session_id"] = shown.id.uuidString
+    }
+    if shown === caller { pane["is_this_session"] = true }
+    let onScreen = layoutRefusal(for: caller) == nil
+    let layout: [String: Any] = [
+      "main_window": [
+        "tab": "code", "sidebar_collapsed": railItem.isCollapsed, "panes": [pane],
+      ],
+      "popout_windows": ["sessions": [Any](), "other_windows": 0],
+      "this_session": [
+        "session_id": caller.id.uuidString, "on_screen": onScreen,
+        "shown_in": onScreen ? "the main pane" : "not on screen",
+      ],
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: layout, options: [.sortedKeys])
+    else { return "{}" }
+    return String(decoding: data, as: UTF8.self)
   }
 
   /// Move a side session to top level: the rail stops nesting it, and its turns stop reporting.

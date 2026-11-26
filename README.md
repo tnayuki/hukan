@@ -435,7 +435,9 @@ desktop app and VS Code do, and draws the pane with native controls — boxes, t
 pop-up menus, progress bars, links, Markdown and code in the editor's colours. Closing the tab
 closes the pane. Click a pane's background, or the band's, to give it the keyboard: Tab walks
 its controls, Return presses one, a button's key presses it, and Escape returns to the composer. What a mod draws above the prompt, and its status line, show in a card above the
-composer. Install a mod as you would any plugin; one under development loads from
+composer. A mod (or the agent) that opens a session through the desktop app's `ccd_window` tools
+works here too: the session shows in the window's one main pane, since hukan has no split view.
+Install a mod as you would any plugin; one under development loads from
 `CLAUDE_CODE_PLUGIN_DIRS`.
 
 ### Virtual machines

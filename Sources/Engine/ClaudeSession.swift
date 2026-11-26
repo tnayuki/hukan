@@ -542,14 +542,15 @@ final class ClaudeSession {
   }
 
   /// The `initialize` request, the first thing written to a fresh engine. No hooks. What it does
-  /// register is the one MCP server hukan hosts in this process (`HukanMCP`): named here, its
-  /// messages arrive on this stream as `mcp_message` control requests from then on, and its
+  /// register is the MCP servers hukan hosts in this process — its own (`HukanMCP`) and the
+  /// desktop app's window-layout one under that app's name (`WindowMCP`): named here, their
+  /// messages arrive on this stream as `mcp_message` control requests from then on, and hukan's
   /// config sets the per-call clock — a call may be waiting on a person answering a card. Both
   /// keys read off the shipped binary; see `HukanMCP`.
   static let initializeRequest: [String: Any] = [
     "subtype": "initialize",
     "hooks": [String: Any](),
-    "sdkMcpServers": [HukanMCP.serverName],
+    "sdkMcpServers": [HukanMCP.serverName, WindowMCP.serverName],
     "sdkMcpServerConfigs": [
       HukanMCP.serverName: ["timeout": HukanMCP.toolTimeoutMilliseconds]
     ],
