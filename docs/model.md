@@ -109,7 +109,9 @@ and the reasoning behind it; read the file before changing the area it covers.
   answers a different question — mtime moves for the agent's own output, and again for the
   `last-prompt` line a quitting engine appends, which re-stamps every attached session within the
   same second and so reshuffled the day's rows on every restart. Stored stamp wins; mtime is only
-  the seed for a session this window has never seen.
+  the seed for a session this window has never seen. What a session's mods last drew is UI state of
+  the same kind as its last-seen model roster: a picture of the engine's answer, shown until the
+  engine answers again and never read back as a source (`docs/mods.md`).
 - **What the engine knows, the engine is asked — over the stream, and never by sending it a
   message.** The model roster, the slash commands, the account's plan usage and how full the
   context window is are all the engine's own facts, so none of them is a table here or a file to

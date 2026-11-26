@@ -999,9 +999,10 @@ final class ClaudeSession {
     // it at all: a CLI that predates the keys says nothing, and the documented reading of an
     // absent key is false — which lands as unavailable, so the control never appears rather
     // than appearing dead.
-    if let inner = response["response"] as? [String: Any],
-      let capabilities = inner["capabilities"] as? [String]
-    {
+    // A CLI that lists no capabilities speaks none of them: said as an empty list rather than not
+    // at all, so a session showing what its mods drew last time learns no engine will draw again.
+    if let inner = response["response"] as? [String: Any] {
+      let capabilities = inner["capabilities"] as? [String] ?? []
       DispatchQueue.main.async { [weak self] in self?.onCapabilities?(capabilities) }
     }
     if let inner = response["response"] as? [String: Any],

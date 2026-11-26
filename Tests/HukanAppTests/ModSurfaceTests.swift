@@ -949,6 +949,98 @@ final class ModSurfaceTests: XCTestCase {
     XCTAssertEqual(desk.tabCount, 0)
   }
 
+  /// What the mods last drew comes back from the window's state as it went in — the hovers and the
+  /// plugin a box was drawn by back beside its props — with nothing left to press.
+  func testWhatTheModsDrewIsKeptWithoutItsHandles() throws {
+    let press = ModSurface.Press(["plugin": "ledger", "handle": 4])
+    let tree = node(
+      "Box", ["flexDirection": "column", ModSurface.pluginProp: "ledger", "hover": ["bg": "red"]],
+      [node("Button", ["label": "Pay"], [.text("Pay")], press: press), .text("due")])
+    var memory = ModMemory()
+    memory.take(
+      try XCTUnwrap(
+        ModSurface.Roster(["panes": [["id": "bills", "title": "Bills", "plugin": "ledger"]]])))
+    memory.take(tree, forPane: "bills", at: Date(timeIntervalSince1970: 1_000))
+    memory.statuses = [("ledger", "2 due")]
+    memory.band = tree.inert
+
+    let restored = try XCTUnwrap(ModMemory(json: try XCTUnwrap(memory.json)))
+    XCTAssertEqual(restored.panes.map(\.pane), memory.panes.map(\.pane))
+    XCTAssertEqual(restored.statuses.map(\.text), ["2 due"])
+    XCTAssertEqual(restored.drawnAt, Date(timeIntervalSince1970: 1_000))
+    let kept = try XCTUnwrap(restored.tree(forPane: "bills"))
+    XCTAssertEqual(ModRenderer.outline(kept), ModRenderer.outline(tree))
+    guard case .element(_, let props, let children, _) = kept,
+      case .element(_, _, _, let keptPress) = children[0]
+    else { return XCTFail("not the tree that went in") }
+    XCTAssertEqual(props[ModSurface.pluginProp] as? String, "ledger")
+    XCTAssertEqual((props["hover"] as? [String: Any])?["bg"] as? String, "red")
+    XCTAssertNil(keptPress, "a handle is good only for the render that gave it")
+    XCTAssertNotNil(restored.band)
+    XCTAssertNil(ModMemory(json: "{}"), "nothing remembered is no memory")
+  }
+
+  /// A session brought back unstarted shows its panes as they were last drawn, under the notice
+  /// that they are old, with their controls not to be pressed.
+  func testARestoredSessionShowsItsPanesAsTheyWereLastDrawn() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let workspace = Workspace()
+    let worktree = workspace.addWorktree(root)
+    let session = deskSession(in: worktree, of: workspace)
+    var memory = ModMemory()
+    memory.take(
+      try XCTUnwrap(
+        ModSurface.Roster(["panes": [["id": "bills", "title": "Bills", "plugin": "ledger"]]])))
+    let press = ModSurface.Press(["plugin": "ledger", "handle": 4])
+    memory.take(
+      node("Box", [:], [node("Button", ["label": "Pay"], [.text("Pay")], press: press)]),
+      forPane: "bills")
+    memory.statuses = [("ledger", "2 due")]
+    session.restoreModMemory(memory)
+    XCTAssertTrue(session.showsModMemory)
+    XCTAssertEqual(session.shownModStatuses.map(\.text), ["2 due"])
+
+    let desk = WorktreeDeskViewController()
+    desk.workspace = workspace
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 900, height: 500), styleMask: [.titled],
+      backing: .buffered, defer: false)
+    window.contentView = desk.view
+    desk.reload(deskID: session.id)
+    XCTAssertEqual(desk.tabCount, 1)
+    desk.selectTab(at: 0)
+    let pane = try XCTUnwrap(desk.modPane("bills", in: session.id))
+    let deadline = Date().addingTimeInterval(5)
+    while !pane.drawnFromMemory, Date() < deadline {
+      RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+    }
+    XCTAssertEqual(pane.stateDescription, "remembered")
+    XCTAssertTrue(desk.tabStripReport.contains("Pay"), desk.tabStripReport)
+    let views = subviews(of: pane.view)
+    XCTAssertTrue(views.contains { $0 is ModMemoryNotice }, "the notice says it is old")
+    let pay = try XCTUnwrap(views.compactMap { $0 as? ModButton }.first { $0.title == "Pay" })
+    XCTAssertFalse(pay.isEnabled, "nothing remembered can be pressed")
+    var started = false
+    desk.onStartModSession = { started = $0 == session.id }
+    let start = try XCTUnwrap(
+      views.compactMap { $0 as? NSButton }.first { $0.title == "Start Session" })
+    start.performClick(nil)
+    XCTAssertTrue(started)
+
+    // Closed, it stays closed: there is no engine to ask, and nothing to bring it back.
+    session.onModPanesChange = { [weak desk, weak session] in
+      guard let desk, let session else { return }
+      desk.syncModPanes(for: session)
+    }
+    desk.closeTab(at: 0)
+    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.2))
+    XCTAssertEqual(desk.tabCount, 0)
+    XCTAssertTrue(session.modMemory.panes.isEmpty)
+    XCTAssertEqual(session.shownModStatuses.map(\.text), ["2 due"], "the status line stays")
+  }
+
   /// The band above the prompt: asked for under the id every surface gives it, with the props a
   /// band reads, and its tree — captured from the engine — drawn with its `plain` button bare.
   func testTheBandIsAskedForAndDrawn() throws {

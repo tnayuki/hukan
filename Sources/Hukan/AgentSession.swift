@@ -1139,7 +1139,12 @@ final class AgentSession {
     }
     session.onInitializeFailed = { [weak self] _ in self?.handleSignedOut() }
     session.onCapabilities = { [weak self] capabilities in
-      guard let self, capabilities.contains(ModSurface.capability) else { return }
+      guard let self else { return }
+      guard capabilities.contains(ModSurface.capability) else {
+        // An engine that takes no surface will never draw what is remembered again.
+        self.forgetModMemory()
+        return
+      }
       self.attachModSurface()
     }
     session.onExit = { [weak self] status in
@@ -1148,6 +1153,11 @@ final class AgentSession {
       let stderr = self.runner?.lastError
       self.runner = nil
       // The panes were that engine's, drawn by mods it was running: nothing is left to draw them.
+      // What they last showed stays up, marked as old, until an engine draws them again.
+      if !self.modMemory.isEmpty {
+        self.showsModMemory = true
+        self.onModMemoryChange?()
+      }
       self.isModSurfaceAttached = false
       self.setModRoster(ModSurface.Roster())
       self.modBand = nil
@@ -1314,7 +1324,69 @@ final class AgentSession {
     // that request, the same pane asking again is a new request, refused afresh if it must be.
     if roster.focusRequestedID != refusedModFocusRequest { refusedModFocusRequest = nil }
     modRoster = roster
+    if !showsModMemory {
+      modMemory.take(roster)
+      onModMemoryChange?()
+    }
     onModPanesChange?()
+  }
+
+  /// What the mods last drew, kept as they drew it (`ModMemory`): mirrored while an engine draws,
+  /// shown in its place while none does, and saved with the window.
+  private(set) var modMemory = ModMemory()
+  /// Whether the desk and the band show `modMemory` rather than an engine's drawing: from the
+  /// moment the engine goes, or a window comes back with the session not started, until a new
+  /// engine attaches.
+  private(set) var showsModMemory = false {
+    didSet { if showsModMemory != oldValue { modBandRevision += 1 } }
+  }
+
+  /// The panes the desk shows tabs for: the engine's, or the remembered ones while there is none.
+  var modPanes: [ModSurface.Pane] {
+    showsModMemory ? modMemory.panes.map(\.pane) : modRoster.panes
+  }
+  /// The band and status lines the column shows, by the same rule.
+  var shownModBand: ModSurface.Node? { showsModMemory ? modMemory.band : modBand }
+  var shownModStatuses: [(plugin: String, text: String)] {
+    showsModMemory ? modMemory.statuses : modStatuses
+  }
+
+  /// The memory changed: the window's saved state has a newer picture to keep.
+  var onModMemoryChange: (() -> Void)?
+
+  /// A pane drew a tree the engine answered with: remember it as the pane's last. Never the nil
+  /// an unanswered ask is handed as the engine exits, which would wipe what the pane showed.
+  func rememberModPane(_ id: String, tree: ModSurface.Node?) {
+    guard !showsModMemory else { return }
+    modMemory.take(tree, forPane: id)
+    onModMemoryChange?()
+  }
+
+  private func rememberModBand() {
+    guard !showsModMemory, runner != nil else { return }
+    modMemory.band = modBand?.inert
+    modMemory.drawnAt = Date()
+    onModMemoryChange?()
+  }
+
+  /// Take what a restored window kept, for a session that has not started.
+  func restoreModMemory(_ memory: ModMemory) {
+    guard runner == nil, modMemory.isEmpty, !memory.isEmpty else { return }
+    modMemory = memory
+    showsModMemory = true
+    onModPanesChange?()
+    onModBandChange?()
+  }
+
+  /// Drop what is remembered — an engine draws now, or never will.
+  private func forgetModMemory() {
+    guard showsModMemory || !modMemory.isEmpty else { return }
+    let wasShown = showsModMemory
+    modMemory = ModMemory()
+    showsModMemory = false
+    guard wasShown else { return }
+    onModPanesChange?()
+    onModBandChange?()
   }
 
   /// Ask the engine, and hear the answer only if it is still the engine that was asked: a reply
@@ -1345,6 +1417,17 @@ final class AgentSession {
     askMod("ui_attach", ModSurface.attach(modViewport)) { [weak self] reply in
       guard let self, reply != nil else { return }
       self.isModSurfaceAttached = true
+      // This engine draws from here: the memory follows it rather than standing in for it,
+      // keeping the trees of the panes its roster already names until each is drawn afresh.
+      if self.showsModMemory {
+        var memory = self.modMemory
+        memory.take(self.modRoster)
+        memory.band = self.modBand?.inert
+        memory.statuses = self.modStatuses
+        self.modMemory = memory
+        self.showsModMemory = false
+        self.onModBandChange?()
+      }
       // Forced: a pane's request for the keyboard may have been met or refused before the attach
       // was answered, when nothing could be told the engine — the desk settles it again now.
       self.readModRoster(force: true)
@@ -1399,6 +1482,9 @@ final class AgentSession {
       guard let self else { return }
       self.isRenderingModBand = false
       self.modBand = ModSurface.tree(reply)
+      // Only an answer is remembered: the nil every waiting ask is handed as the engine exits
+      // says nothing about what the band showed.
+      if reply != nil { self.rememberModBand() }
       self.onModBandChange?()
       guard self.modBandDirty else { return }
       self.modBandDirty = false
@@ -1423,7 +1509,13 @@ final class AgentSession {
     askMod(
       "ui_render",
       ModSurface.render(pane: pane, viewport: viewport, isFocused: isFocused, layout: layout)
-    ) { reply in completion(ModSurface.tree(reply)) }
+    ) { [weak self] reply in
+      let tree = ModSurface.tree(reply)
+      // An answer drawing nothing is remembered as such; a tree is remembered as the pane draws
+      // it, and an unanswered ask not at all.
+      if reply != nil, tree == nil { self?.rememberModPane(pane.id, tree: nil) }
+      completion(tree)
+    }
   }
 
   /// A plugin moved a pane's window (`$.ui.scroll`); the window hands it to the pane.
@@ -1525,6 +1617,7 @@ final class AgentSession {
   /// Take the band's tree as an action in it brought it back.
   func takeModBand(_ tree: ModSurface.Node) {
     modBand = tree
+    rememberModBand()
     onModBandChange?()
   }
 
@@ -1532,6 +1625,14 @@ final class AgentSession {
   /// roster is read again and handed to the desk whether or not it moved: the tab went down
   /// already, and a pane still open has to come back.
   func closeModPane(_ id: String) {
+    // A remembered pane has no engine to ask: it is put away here, and stays away.
+    if showsModMemory {
+      modMemory.panes.removeAll { $0.pane.id == id }
+      if modMemory.isEmpty { showsModMemory = false }
+      onModMemoryChange?()
+      onModPanesChange?()
+      return
+    }
     askMod("ui_close", ["id": id, "client_id": ModSurface.clientID]) { [weak self] _ in
       self?.readModRoster(force: true)
     }
@@ -2831,6 +2932,11 @@ final class AgentSession {
           modStatuses[index].text = text
         } else {
           modStatuses.append((plugin, text))
+        }
+        if !showsModMemory {
+          modMemory.statuses = modStatuses
+          modMemory.drawnAt = Date()
+          onModMemoryChange?()
         }
         onModBandChange?()
       }

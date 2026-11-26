@@ -405,6 +405,9 @@ final class Workspace {
   private var restoredQueues: [String: [String]] = [:]
   /// Unsent composer drafts restored from disk, keyed by session id. Same philosophy again.
   private var restoredDrafts: [String: String] = [:]
+  /// What each session's mods last drew (`ModMemory`), as JSON keyed by session id: shown on a
+  /// session brought back unstarted, until its engine draws again.
+  private var restoredModMemories: [String: String] = [:]
   /// Each session's tags, keyed by session id. View state with no owner elsewhere, like the
   /// rail's order below — the same map-not-list rule as the drafts.
   private var restoredTags: [String: [String]] = [:]
@@ -533,6 +536,9 @@ final class Workspace {
     }
     if let draft = restoredDrafts[session.id.uuidString] {
       session.draft = draft
+    }
+    if let json = restoredModMemories[session.id.uuidString], let memory = ModMemory(json: json) {
+      session.restoreModMemory(memory)
     }
     if let tags = restoredTags[session.id.uuidString] {
       session.setTags(tags)
@@ -1135,6 +1141,8 @@ final class Workspace {
     static let queueMessages = "queue.messages"
     static let draftSessionIDs = "draft.ids"
     static let draftTexts = "draft.texts"
+    static let modMemorySessionIDs = "modMemory.sessionIDs"
+    static let modMemories = "modMemory.json"
     // Each session's tags, keyed by session id; nested like `queue.messages`.
     // Sessions whose worktree git stopped listing: the worktree, for the row's mark and for where
     // the transcript is filed, and the checkout the session was put on.
@@ -1306,6 +1314,13 @@ final class Workspace {
     let withDraft = sessions.filter { !$0.draft.isEmpty }
     coder.encode(withDraft.map(\.id.uuidString) as NSArray, forKey: Key.draftSessionIDs)
     coder.encode(withDraft.map(\.draft) as NSArray, forKey: Key.draftTexts)
+
+    // What the mods last drew, per session, so a relaunch shows it marked as old rather than
+    // nothing until the session is started. The drafts' map-not-list rule.
+    let memories = sessions.compactMap { session in session.modMemory.json.map { (session.id, $0) }
+    }
+    coder.encode(memories.map(\.0.uuidString) as NSArray, forKey: Key.modMemorySessionIDs)
+    coder.encode(memories.map(\.1) as NSArray, forKey: Key.modMemories)
 
     // A stranding is kept while its session is here, and carried forward untouched while its
     // repository is not open in this window — the archive flags' rule (see `unresolvedArchived`).
@@ -1509,6 +1524,13 @@ final class Workspace {
     restoredDrafts = [:]
     for (index, idString) in draftIDs.enumerated() where index < draftTexts.count {
       restoredDrafts[idString] = draftTexts[index]
+    }
+
+    let memoryIDs = strings(coder, Key.modMemorySessionIDs)
+    let memoryTexts = strings(coder, Key.modMemories)
+    restoredModMemories = [:]
+    for (index, idString) in memoryIDs.enumerated() where index < memoryTexts.count {
+      restoredModMemories[idString] = memoryTexts[index]
     }
 
     // Before discovery, which is what reads them: a stranded session is found nowhere else.

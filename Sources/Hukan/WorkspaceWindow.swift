@@ -296,6 +296,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
     running.onOpenFile = { [weak self] url in self?.openPath(url) }
     // A link in a mod pane opens on its session's desk, by the transcript's rule.
     files.desk.onModPaneReleasesKeyboard = { [weak self] in self?.focusComposer() }
+    files.desk.onStartModSession = { [weak self] deskID in
+      guard let self, let session = self.workspace.session(id: deskID) else { return }
+      self.startSessionFromRail(session)
+    }
+    running.onStartSession = { [weak self] session in self?.startSessionFromRail(session) }
     files.desk.onOpenModURL = { [weak self] deskID, url in
       guard let self, let session = self.workspace.session(id: deskID) else { return }
       self.openTag(url, of: session)
@@ -2096,6 +2101,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSW
       self.running.reload()
     }
     session.onNeedsStart = { [weak self] in self?.startSession(session) }
+    // What the mods last drew is kept in the window's state, so a newer picture marks it dirty.
+    session.onModMemoryChange = { [weak self] in self?.window?.invalidateRestorableState() }
     session.onInstructed = { [weak self] in self?.unarchiveOnInstruction(session) }
     session.onTurnEnded = { [weak self, weak session] report, failed in
       guard let self, let session else { return }

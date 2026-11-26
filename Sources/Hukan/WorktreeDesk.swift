@@ -1059,6 +1059,13 @@ final class WorktreeDeskViewController: NSViewController {
     catchUpWithDisk()
     pruneClosedDesks()
     adoptSessionMachines()
+    // A session a window brought back unstarted is wired only once it is used, so the panes it
+    // remembers are put up here, the first time its desk is shown.
+    if let deskID, modTabsByDesk[deskID] == nil, let session = workspace?.session(id: deskID),
+      session.showsModMemory
+    {
+      syncModPanes(for: session)
+    }
     reconcileSurface()
     rebuildTabBar()
     applySurface()
@@ -1177,7 +1184,11 @@ final class WorktreeDeskViewController: NSViewController {
     addChild(tab.pane)
     tab.pane.onOpenURL = { [weak self] url in self?.onOpenModURL?(deskID, url) }
     tab.pane.onReleaseKeyboard = { [weak self] in self?.onModPaneReleasesKeyboard?() }
+    tab.pane.onStartSession = { [weak self] in self?.onStartModSession?(deskID) }
   }
+
+  /// The notice over a remembered pane asked for its session (the desk) to be started.
+  var onStartModSession: ((UUID) -> Void)?
 
   /// A pane let go of the keyboard (Escape): the window puts it in the composer.
   var onModPaneReleasesKeyboard: (() -> Void)?
@@ -1190,16 +1201,22 @@ final class WorktreeDeskViewController: NSViewController {
   func syncModPanes(for session: AgentSession) {
     loadViewIfNeeded()
     let deskID = session.id
-    let roster = session.modRoster
+    // While the session shows what its mods last drew, the tabs are the remembered panes and the
+    // roster's requests — to be shown, to have the keyboard — are not this desk's to act on.
+    let remembered = session.showsModMemory
+    let roster = remembered ? ModSurface.Roster() : session.modRoster
+    let panes = session.modPanes
     let previous = deskID == self.deskID ? orderedSurfaces : []
     var tabs = modTabsByDesk[deskID] ?? []
-    let wanted = Set(roster.panes.map(\.id))
+    let wanted = Set(panes.map(\.id))
     for tab in tabs where !wanted.contains(tab.pane.pane.id) { tab.pane.removeFromParent() }
     tabs.removeAll { !wanted.contains($0.pane.pane.id) }
     var opened: ModTab?
-    for pane in roster.panes {
+    for pane in panes {
       if let tab = tabs.first(where: { $0.pane.pane.id == pane.id }) {
         tab.pane.update(pane)
+        // The engine went, or a new one came: what the tab shows changes source.
+        if tab.pane.drawnFromMemory != remembered { tab.pane.setNeedsRender() }
         continue
       }
       let tab = ModTab(pane: ModPaneViewController(session: session, pane: pane))

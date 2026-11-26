@@ -80,7 +80,10 @@ final class RunningColumnViewController: NSViewController {
       dropModBandCard()
       modBandSession = session
     }
-    guard session.modBand != nil || !session.modStatuses.isEmpty else {
+    // While the engine is not running, what the mods last drew here, under a notice saying so.
+    let band = session.shownModBand
+    let statuses = session.shownModStatuses
+    guard band != nil || !statuses.isEmpty else {
       dropModBandCard()
       return nil
     }
@@ -104,7 +107,7 @@ final class RunningColumnViewController: NSViewController {
       modBandCardView = card
       modBandStack = stack
     }
-    if let tree = session.modBand {
+    if let tree = band {
       let site: ModSiteView
       if let existing = modBandSite {
         site = existing
@@ -134,12 +137,21 @@ final class RunningColumnViewController: NSViewController {
       modBandDrawn = nil
       session.modBandLayout = { nil }
     }
-    // The status lines are only words: drawn afresh each time.
+    // The status lines and the notice are only words: drawn afresh each time.
     for line in stack.arrangedSubviews where line !== modBandSite { line.removeFromSuperview() }
-    for status in session.modStatuses {
+    if session.showsModMemory {
+      let notice = ModMemoryNotice(drawnAt: session.modMemory.drawnAt) {
+        [weak self, weak session] in
+        if let session { self?.onStartSession?(session) }
+      }
+      stack.insertArrangedSubview(notice, at: 0)
+      notice.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+    }
+    for status in statuses {
       let line = NSTextField(labelWithString: status.text)
       line.font = .systemFont(ofSize: 11)
-      line.textColor = .secondaryLabelColor
+      // A remembered line is a reading that has gone stale, so it is put back a step.
+      line.textColor = session.showsModMemory ? .tertiaryLabelColor : .secondaryLabelColor
       line.lineBreakMode = .byTruncatingTail
       line.toolTip = "\(status.plugin): \(status.text)"
       line.setContentCompressionResistancePriority(.init(rawValue: 200), for: .horizontal)
@@ -258,6 +270,8 @@ final class RunningColumnViewController: NSViewController {
   /// which worktree's desk it belongs on, and whether it belongs in hukan at all, is the
   /// window's, the way forking and rolling back are.
   var onOpenURL: ((URL) -> Bool)?
+  /// The notice over a remembered band asked for the session to be started.
+  var onStartSession: ((AgentSession) -> Void)?
   /// A file named in the transcript, opened from the right-click menu. Where it opens is the
   /// window's, by the one resolution every outside path takes.
   var onOpenFile: ((URL) -> Void)?

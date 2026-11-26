@@ -43,8 +43,21 @@ and the reasoning behind it; read the file before changing the area it covers.
   tabs — a new pane opens a tab, a pane gone closes it, a retitle relabels it — and a new pane the
   mod asked to have shown is brought forward, but the roster moving never takes the desk off what
   the person is reading. Closing the tab asks the engine to close the pane; bringing a tab forward
-  tells the engine it is shown. Panes are never saved: the engine that drew one brings it back.
-  hukan always says `dock` and never `inline` or `widget`: a desk has one seat.
+  tells the engine it is shown. hukan always says `dock` and never `inline` or `widget`: a desk has
+  one seat.
+- **A session whose engine is not running shows what its mods last drew, marked as old** — as a
+  browser shows a page from before a relaunch until it loads it again. Its panes stay as tabs, the
+  band and the status lines stay over the composer, each tree as it was last drawn under a notice
+  giving the time and a Start Session button; no control in it can be pressed or typed into, the
+  handles having been good only for the render that gave them — a link still opens, being an
+  address hukan opens itself, as a cached page's links do — and a status line is put back a
+  step, being a reading gone stale. It is kept in the window's state, so a relaunch shows it too.
+  When an engine attaches, its own roster takes over: a pane it opens again is drawn live in the
+  same tab, and one it does not closes. Drawing it from the engine instead would have meant
+  starting a `claude` for every session looked at, which a restored session deliberately is not;
+  showing nothing left a session's mods invisible until something was sent, and titles alone
+  (a tab saying a pane would come back) promised what a mod opening its pane from a command never
+  keeps. What is kept is the engine's drawing, not its state: the engine still owns the mod.
 - **The tree is drawn with AppKit's own controls, read the way VS Code reads it** — the one host
   whose drawing ships where it can be read. A `Box` is a flexbox whose lengths count in cells, a
   column a character's width and a row a line's height, measured from the font, which is also how

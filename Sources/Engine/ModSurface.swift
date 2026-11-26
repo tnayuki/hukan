@@ -100,6 +100,32 @@ enum ModSurface {
       case .element(_, _, let children, _): return children.map(\.plainText).joined()
       }
     }
+
+    /// The same tree with nothing to press: a tree kept past the render that handed out its
+    /// handles, which the engine would no longer find.
+    var inert: Node {
+      switch self {
+      case .text: return self
+      case .element(let type, let props, let children, _):
+        return .element(type: type, props: props, children: children.map(\.inert), press: nil)
+      }
+    }
+
+    /// The node as the wire spells it, less its press — what `tree` reads back as this node.
+    /// The props that `tree` lifted in from beside them go back where they came from.
+    var wire: Any {
+      switch self {
+      case .text(let text): return text
+      case .element(let type, var props, let children, _):
+        var object: [String: Any] = ["type": type, "children": children.map(\.wire)]
+        if let hover = props.removeValue(forKey: "hover") { object["hover"] = hover }
+        if let plugin = props.removeValue(forKey: ModSurface.pluginProp) {
+          object["part"] = ["plugin": plugin]
+        }
+        object["props"] = props
+        return object
+      }
+    }
   }
 
   /// The most a tree may hold before the rest is dropped: a pane is a page, and a hook gone wrong

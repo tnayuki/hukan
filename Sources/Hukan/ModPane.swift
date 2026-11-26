@@ -12,6 +12,8 @@ final class ModPaneViewController: NSViewController {
   var onOpenURL: ((URL) -> Void)?
   /// Escape: the window puts the keyboard in the composer.
   var onReleaseKeyboard: (() -> Void)?
+  /// The notice over a remembered pane asks for the session to be started.
+  var onStartSession: (() -> Void)?
 
   private var site: ModSiteView { view as! ModSiteView }
   private var lastViewport: ModSurface.Viewport?
@@ -19,6 +21,8 @@ final class ModPaneViewController: NSViewController {
   private var needsRender = false
   /// The last tree, as the `tabs` verb reads it — one line a part.
   private(set) var outline = ""
+  /// Whether what is up is the session's memory of the pane rather than an engine's drawing.
+  private(set) var drawnFromMemory = false
 
   var holdsKeyboard: Bool { isViewLoaded && site.holdsKeyboard }
   var ring: ModSurface.Element? { isViewLoaded ? site.ring : nil }
@@ -26,6 +30,7 @@ final class ModPaneViewController: NSViewController {
   /// Where the pane stands, for the `tabs` verb: a pane that shows nothing says why.
   var stateDescription: String {
     if isRendering { return "drawing" }
+    if drawnFromMemory { return "remembered" }
     if !isViewLoaded || view.window == nil { return "off screen" }
     if lastViewport == nil { return "not drawn yet" }
     if outline.isEmpty {
@@ -124,8 +129,22 @@ final class ModPaneViewController: NSViewController {
       layout: site.siteLayout())
   }
 
-  /// Internal so a test can hand the pane a tree without an engine.
+  /// Internal so a test can hand the pane a tree without an engine. While the session shows its
+  /// memory of the panes, the tree it last drew here is drawn instead, under the notice saying so.
   func draw(_ tree: ModSurface.Node?) {
+    if let session, session.showsModMemory {
+      let remembered = session.modMemory.tree(forPane: pane.id)
+      drawnFromMemory = true
+      outline = remembered.map(ModRenderer.outline) ?? ""
+      site.notice = ModMemoryNotice(drawnAt: session.modMemory.drawnAt) {
+        [weak self] in self?.onStartSession?()
+      }
+      site.draw(remembered, empty: "Nothing was drawn here when the session last ran.")
+      return
+    }
+    drawnFromMemory = false
+    site.notice = nil
+    if let tree { session?.rememberModPane(pane.id, tree: tree) }
     outline = tree.map(ModRenderer.outline) ?? ""
     site.draw(
       tree,
@@ -173,6 +192,31 @@ final class ModSiteView: NSView {
 
   private let scroll = NSScrollView()
   private let document = ModFlippedView()
+  /// Where the body's top is held: the site's own top, or the notice's foot while one is up.
+  private var bodyTop: NSLayoutConstraint!
+
+  /// A strip over the body, outside what scrolls — what says a remembered tree is old.
+  var notice: NSView? {
+    didSet {
+      guard notice !== oldValue else { return }
+      oldValue?.removeFromSuperview()
+      bodyTop.isActive = false
+      if let notice {
+        notice.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(notice)
+        let margin = max(inset, 8)
+        bodyTop = scroll.topAnchor.constraint(equalTo: notice.bottomAnchor, constant: 4)
+        NSLayoutConstraint.activate([
+          notice.topAnchor.constraint(equalTo: topAnchor, constant: margin),
+          notice.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin),
+          notice.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -margin),
+        ])
+      } else {
+        bodyTop = scroll.topAnchor.constraint(equalTo: topAnchor)
+      }
+      bodyTop.isActive = true
+    }
+  }
   private var content: NSView?
   private(set) var renderer: ModRenderer?
   /// The tallest the body grows before it scrolls, for a site sized to its tree (the band); nil
@@ -228,7 +272,12 @@ final class ModSiteView: NSView {
     document.translatesAutoresizingMaskIntoConstraints = false
     scroll.translatesAutoresizingMaskIntoConstraints = false
     addSubview(scroll)
-    scroll.pin(to: self)
+    bodyTop = scroll.topAnchor.constraint(equalTo: topAnchor)
+    NSLayoutConstraint.activate([
+      bodyTop, scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+      scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+      scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
     // The tree is as wide as the body, but only by a wish weaker than the window's columns hold
     // their widths by (250 and up): a tree that cannot be that narrow — a line of text keeps its
     // length at 750 — runs past the body's edge, scrolling sideways, rather than pushing the
@@ -592,6 +641,42 @@ final class ModSiteView: NSView {
 
 extension ModSiteView: ModKeyboard {
   @objc func leaveModPane(_ sender: Any?) { onEscape() }
+}
+
+/// The line over what a session's mods last drew while its engine is not running: how old it is,
+/// and the way to have it drawn live again.
+final class ModMemoryNotice: NSStackView {
+  private var onStart: () -> Void = {}
+
+  convenience init(drawnAt: Date?, onStart: @escaping () -> Void) {
+    self.init(frame: .zero)
+    self.onStart = onStart
+    orientation = .horizontal
+    alignment = .centerY
+    spacing = 8
+    let label = NSTextField(labelWithString: Self.text(drawnAt: drawnAt))
+    label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+    label.textColor = .secondaryLabelColor
+    label.lineBreakMode = .byTruncatingTail
+    label.setContentCompressionResistancePriority(.init(rawValue: 200), for: .horizontal)
+    let button = NSButton(title: "Start Session", target: self, action: #selector(start))
+    button.controlSize = .small
+    button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+    addArrangedSubview(label)
+    addArrangedSubview(button)
+  }
+
+  /// "Last shown Nov 26, 2026 at 14:02", in the reader's own locale, as the toolbar's reset time
+  /// is — a relative "today" would come in the system's language inside an English line.
+  static func text(drawnAt: Date?) -> String {
+    guard let drawnAt else { return "The session is not running" }
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    return "Last shown \(formatter.string(from: drawnAt)) · the session is not running"
+  }
+
+  @objc private func start() { onStart() }
 }
 
 final class ModFlippedView: NSView {
